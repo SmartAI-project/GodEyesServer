@@ -900,68 +900,124 @@ LOGIN_PAGE = """
             align-items: center;
             justify-content: center;
         }
-        .login-page { width: 100%; max-width: 460px; padding: 24px; }
-        .login-card {
-            background: #fff;
-            border: 1px solid #e6e8eb;
-            border-radius: 20px;
-            padding: 40px;
-            box-shadow: 0 18px 50px rgba(20, 25, 30, .08);
+        .login-page {
+            width: 100%;
+            max-width: 520px;
+            padding: 34px 24px;
         }
-        .brand { text-align: center; margin-bottom: 30px; }
+        .login-card {
+            position: relative;
+            background: rgba(255,255,255,.96);
+            border: 1px solid #dce7f2;
+            border-radius: 26px;
+            padding: 42px 42px 30px;
+            box-shadow: 0 28px 70px rgba(27, 74, 116, .14), 0 8px 24px rgba(27, 74, 116, .06);
+            backdrop-filter: blur(10px);
+        }
+        .login-card::before {
+            content: "";
+            position: absolute;
+            inset: 0 0 auto 0;
+            height: 5px;
+            border-radius: 26px 26px 0 0;
+            background: linear-gradient(90deg,#0d73d5,#2ea9ff);
+        }
+        .brand {
+            text-align: center;
+            margin-bottom: 34px;
+        }
         .brand-mark {
-            width: 72px;
-            height: 72px;
-            margin: 0 auto 16px;
-            border-radius: 20px;
-            background: linear-gradient(145deg,#eaf6ff 0%,#cfe9ff 100%);
+            width: 230px;
+            height: 175px;
+            margin: 0 auto 22px;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #126fc8;
-            border: 1px solid #bfe0f8;
-            box-shadow: 0 8px 24px rgba(25,112,187,.12), inset 0 1px 0 rgba(255,255,255,.9);
+            background: linear-gradient(180deg,#f5fbff 0%,#ffffff 100%);
+            border: 1px solid #dcecf9;
+            border-radius: 22px;
+            box-shadow: 0 14px 30px rgba(29,126,202,.10);
+            overflow: hidden;
         }
         .brand-mark svg { width: 43px; height: 43px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-        .brand-logo { overflow: hidden; }
-        .brand-logo img { width: 92px; height: 82px; object-fit: contain; display:block; }
-        .login-card .brand-logo { width: 118px; height: 104px; margin: 0 auto 16px; background: transparent; border: 0; box-shadow: none; border-radius: 0; }
-        .login-card .brand-logo img { width: 118px; height: 104px; }
-        .brand h1 { margin: 0; font-size: 29px; font-weight: 760; }
-        .brand p { margin: 8px 0 0; color: #7a8088; font-size: 14px; }
+        .brand-logo img { width: 218px; height: 164px; object-fit: contain; display: block; }
         .field { margin-bottom: 18px; }
         .field label {
-            display: block;
+            display: flex;
+            align-items: center;
+            gap: 7px;
             margin-bottom: 8px;
-            font-size: 14px;
-            font-weight: 650;
+            font-size: 13px;
+            font-weight: 780;
+            color: #28445f;
+        }
+        .field label::before {
+            content: "";
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: #2f8fe7;
+            box-shadow: 0 0 0 3px #e8f4ff;
         }
         .field input {
             width: 100%;
-            height: 49px;
-            border: 1px solid #d7dbe0;
-            border-radius: 11px;
-            padding: 0 14px;
+            height: 53px;
+            border: 1px solid #cad9e7;
+            border-radius: 13px;
+            padding: 0 15px;
             font-size: 15px;
+            color: #18334d;
+            background: #fbfdff;
             outline: none;
+            transition: border-color .18s, box-shadow .18s, background .18s;
+        }
+        .field input:hover { border-color: #aec7dc; background: #fff; }
+        .field input:focus {
+            border-color: #4b9be2;
+            background: #fff;
+            box-shadow: 0 0 0 4px rgba(60,151,224,.12);
         }
         .login-button {
             width: 100%;
-            height: 50px;
+            height: 54px;
+            margin-top: 4px;
             border: 0;
-            border-radius: 11px;
-            background: #262b30;
+            border-radius: 13px;
+            background: linear-gradient(135deg,#1769d5 0%,#218bea 100%);
             color: #fff;
-            font-size: 15px;
-            font-weight: 720;
+            font-size: 14px;
+            font-weight: 820;
+            letter-spacing: .2px;
             cursor: pointer;
+            box-shadow: 0 10px 22px rgba(23,105,213,.22);
+            transition: transform .15s, box-shadow .15s, filter .15s;
         }
-        .login-button:hover { background: #191d21; }
-        .login-button:disabled { opacity: .6; cursor: default; }
-        .message { min-height: 22px; margin-top: 16px; text-align: center; font-size: 14px; }
+        .login-button:hover {
+            filter: brightness(1.03);
+            transform: translateY(-1px);
+            box-shadow: 0 13px 28px rgba(23,105,213,.27);
+        }
+        .login-button:active { transform: translateY(0); }
+        .login-button:disabled { opacity: .6; cursor: default; transform: none; box-shadow: none; }
+        .message { min-height: 22px; margin-top: 14px; text-align: center; font-size: 13px; }
         .message.error { color: #b4232d; }
         .message.success { color: #1c7545; }
-        .footer { text-align: center; margin-top: 18px; color: #91979e; font-size: 12px; }
+        .login-hint { margin: -4px 0 14px; color:#7f91a4; font-size:11px; line-height:1.45; text-align:center; }
+        .footer {
+            text-align: center;
+            margin-top: 24px;
+            padding-top: 18px;
+            border-top: 1px solid #edf2f6;
+            color: #8a9bad;
+            font-size: 11px;
+        }
+        @media (max-width: 600px) {
+            .login-page { padding: 20px 14px; }
+            .login-card { padding: 34px 22px 24px; border-radius: 22px; }
+            .login-card::before { border-radius: 22px 22px 0 0; }
+            .brand-mark { width: 200px; height: 152px; }
+            .brand-logo img { width: 190px; height: 142px; }
+        }
     </style>
 </head>
 <body>
@@ -969,8 +1025,6 @@ LOGIN_PAGE = """
         <section class="login-card">
             <div class="brand">
                 <div class="brand-mark brand-logo"><img src="/brand/god-eyes-logo.png" alt="God Eyes"></div>
-                <h1>God Eyes</h1>
-                <p>Hệ thống quản lý lớp học</p>
             </div>
 
             <form id="loginForm">
@@ -983,6 +1037,7 @@ LOGIN_PAGE = """
                     <label for="password">Mật khẩu</label>
                     <input id="password" type="password" autocomplete="current-password" required>
                 </div>
+                <div class="login-hint">Đăng nhập để truy cập God Eyes Server và quản lý lớp học.</div>
 
                 <button id="loginButton" class="login-button" type="submit">ĐĂNG NHẬP</button>
                 <div id="message" class="message"></div>
@@ -6819,9 +6874,7 @@ def teacher_app_content(teacher_id: int, status: str = '') -> str:
             <div class="app-flow">
                 <span>Tài khoản hiện tại</span><b>→</b><span>God Eyes</span>
             </div>
-            <form method="post" action="/teacher/app/open" style="margin-top:20px;">
-                <button class="app-primary" type="submit" {open_disabled}>{escape(open_text)}</button>
-            </form>
+            <a class="app-primary" href="godeyes://open" style="margin-top:20px;text-decoration:none;">MỞ ỨNG DỤNG</a>
             <div class="app-note">Không cần nhập lại mật khẩu.</div>
         </article>
 
