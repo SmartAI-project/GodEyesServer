@@ -900,137 +900,68 @@ LOGIN_PAGE = """
             align-items: center;
             justify-content: center;
         }
-        .login-page {
-            width: 100%;
-            max-width: 520px;
-            padding: 34px 24px;
-        }
+        .login-page { width: 100%; max-width: 460px; padding: 24px; }
         .login-card {
-            position: relative;
-            background: rgba(255,255,255,.96);
-            border: 1px solid #dce7f2;
-            border-radius: 26px;
-            padding: 42px 42px 30px;
-            box-shadow: 0 28px 70px rgba(27, 74, 116, .14), 0 8px 24px rgba(27, 74, 116, .06);
-            backdrop-filter: blur(10px);
+            background: #fff;
+            border: 1px solid #e6e8eb;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 18px 50px rgba(20, 25, 30, .08);
         }
-        .login-card::before {
-            content: "";
-            position: absolute;
-            inset: 0 0 auto 0;
-            height: 5px;
-            border-radius: 26px 26px 0 0;
-            background: linear-gradient(90deg,#0d73d5,#2ea9ff);
-        }
-        .brand {
-            text-align: center;
-            margin-bottom: 34px;
-        }
+        .brand { text-align: center; margin-bottom: 30px; }
         .brand-mark {
-            width: 150px;
-            height: 118px;
-            margin: 0 auto 18px;
+            width: 72px;
+            height: 72px;
+            margin: 0 auto 16px;
+            border-radius: 20px;
+            background: linear-gradient(145deg,#eaf6ff 0%,#cfe9ff 100%);
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(180deg,#f5fbff 0%,#ffffff 100%);
-            border: 1px solid #dcecf9;
-            border-radius: 22px;
-            box-shadow: 0 14px 30px rgba(29,126,202,.10);
-            overflow: hidden;
+            color: #126fc8;
+            border: 1px solid #bfe0f8;
+            box-shadow: 0 8px 24px rgba(25,112,187,.12), inset 0 1px 0 rgba(255,255,255,.9);
         }
         .brand-mark svg { width: 43px; height: 43px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-        .brand-logo img { width: 136px; height: 108px; object-fit: contain; display: block; }
-        .brand h1 {
-            margin: 0;
-            font-size: 31px;
-            line-height: 1.1;
-            font-weight: 820;
-            letter-spacing: -.6px;
-            color: #17324d;
-        }
-        .brand p {
-            margin: 9px 0 0;
-            color: #72859a;
-            font-size: 14px;
-        }
+        .brand-logo { overflow: hidden; }
+        .brand-logo img { width: 92px; height: 82px; object-fit: contain; display:block; }
+        .login-card .brand-logo { width: 118px; height: 104px; margin: 0 auto 16px; background: transparent; border: 0; box-shadow: none; border-radius: 0; }
+        .login-card .brand-logo img { width: 118px; height: 104px; }
+        .brand h1 { margin: 0; font-size: 29px; font-weight: 760; }
+        .brand p { margin: 8px 0 0; color: #7a8088; font-size: 14px; }
         .field { margin-bottom: 18px; }
         .field label {
-            display: flex;
-            align-items: center;
-            gap: 7px;
+            display: block;
             margin-bottom: 8px;
-            font-size: 13px;
-            font-weight: 780;
-            color: #28445f;
-        }
-        .field label::before {
-            content: "";
-            width: 5px;
-            height: 5px;
-            border-radius: 50%;
-            background: #2f8fe7;
-            box-shadow: 0 0 0 3px #e8f4ff;
+            font-size: 14px;
+            font-weight: 650;
         }
         .field input {
             width: 100%;
-            height: 53px;
-            border: 1px solid #cad9e7;
-            border-radius: 13px;
-            padding: 0 15px;
+            height: 49px;
+            border: 1px solid #d7dbe0;
+            border-radius: 11px;
+            padding: 0 14px;
             font-size: 15px;
-            color: #18334d;
-            background: #fbfdff;
             outline: none;
-            transition: border-color .18s, box-shadow .18s, background .18s;
-        }
-        .field input:hover { border-color: #aec7dc; background: #fff; }
-        .field input:focus {
-            border-color: #4b9be2;
-            background: #fff;
-            box-shadow: 0 0 0 4px rgba(60,151,224,.12);
         }
         .login-button {
             width: 100%;
-            height: 54px;
-            margin-top: 4px;
+            height: 50px;
             border: 0;
-            border-radius: 13px;
-            background: linear-gradient(135deg,#1769d5 0%,#218bea 100%);
+            border-radius: 11px;
+            background: #262b30;
             color: #fff;
-            font-size: 14px;
-            font-weight: 820;
-            letter-spacing: .2px;
+            font-size: 15px;
+            font-weight: 720;
             cursor: pointer;
-            box-shadow: 0 10px 22px rgba(23,105,213,.22);
-            transition: transform .15s, box-shadow .15s, filter .15s;
         }
-        .login-button:hover {
-            filter: brightness(1.03);
-            transform: translateY(-1px);
-            box-shadow: 0 13px 28px rgba(23,105,213,.27);
-        }
-        .login-button:active { transform: translateY(0); }
-        .login-button:disabled { opacity: .6; cursor: default; transform: none; box-shadow: none; }
-        .message { min-height: 22px; margin-top: 14px; text-align: center; font-size: 13px; }
+        .login-button:hover { background: #191d21; }
+        .login-button:disabled { opacity: .6; cursor: default; }
+        .message { min-height: 22px; margin-top: 16px; text-align: center; font-size: 14px; }
         .message.error { color: #b4232d; }
         .message.success { color: #1c7545; }
-        .login-hint { margin: -4px 0 14px; color:#7f91a4; font-size:11px; line-height:1.45; text-align:center; }
-        .footer {
-            text-align: center;
-            margin-top: 24px;
-            padding-top: 18px;
-            border-top: 1px solid #edf2f6;
-            color: #8a9bad;
-            font-size: 11px;
-        }
-        @media (max-width: 600px) {
-            .login-page { padding: 20px 14px; }
-            .login-card { padding: 34px 22px 24px; border-radius: 22px; }
-            .login-card::before { border-radius: 22px 22px 0 0; }
-            .brand-mark { width: 136px; height: 108px; }
-            .brand-logo img { width: 124px; height: 98px; }
-        }
+        .footer { text-align: center; margin-top: 18px; color: #91979e; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -1052,7 +983,6 @@ LOGIN_PAGE = """
                     <label for="password">Mật khẩu</label>
                     <input id="password" type="password" autocomplete="current-password" required>
                 </div>
-                <div class="login-hint">Đăng nhập để truy cập God Eyes Server và quản lý lớp học.</div>
 
                 <button id="loginButton" class="login-button" type="submit">ĐĂNG NHẬP</button>
                 <div id="message" class="message"></div>
@@ -3523,16 +3453,18 @@ def teacher_student_photo(request: Request, filename: str):
 
     teacher_id = int(payload["sub"])
     with SessionLocal() as db:
+        # The existing database may contain Windows paths while Render runs on Linux.
+        # Authorize by normalized filename so the photo remains accessible after deployment.
         allowed = db.scalar(
             text("""
                 SELECT s.id
                 FROM students s
                 WHERE s.owner_type = 'TEACHER'
                   AND s.owner_id = :teacher_id
-                  AND s.photo_path = :photo_path
+                  AND lower(replace(s.photo_path, '\\', '/')) LIKE :photo_match
                 LIMIT 1
             """),
-            {"teacher_id": teacher_id, "photo_path": str(file_path)}
+            {"teacher_id": teacher_id, "photo_match": "%" + safe_name.lower()}
         )
 
     if allowed is None:
@@ -6846,8 +6778,9 @@ def _issue_app_launch_token(teacher_id: int) -> str:
 
 
 def teacher_app_content(teacher_id: int, status: str = '') -> str:
-    exe = _find_god_eyes_exe()
-    app_ready = exe is not None
+    # Desktop EXE is distributed from Firebase Hosting when this server runs on Render.
+    firebase_app_url = "https://godeyes-1c469.web.app/GodEyes.zip"
+    app_ready = True
     status_html = ''
     messages = {
         'launch_started': ('success', 'God Eyes đang được mở bằng tài khoản Teacher hiện tại.'),
@@ -6859,10 +6792,10 @@ def teacher_app_content(teacher_id: int, status: str = '') -> str:
         cls, msg = messages[status]
         status_html = f'<div class="app-notice {cls}">{escape(msg)}</div>'
 
-    open_disabled = '' if app_ready else 'disabled'
-    open_text = 'MỞ ỨNG DỤNG' if app_ready else 'ỨNG DỤNG CHƯA SẴN SÀNG'
+    open_disabled = 'disabled'
+    open_text = 'MỞ ỨNG DỤNG'
     version_text = escape(DESKTOP_APP_VERSION)
-    exe_name = escape(exe.name if exe else 'GodEyes.exe')
+    exe_name = 'GodEyes.zip'
 
     return f"""
 <section class="app-module">
@@ -6900,7 +6833,7 @@ def teacher_app_content(teacher_id: int, status: str = '') -> str:
                 <div><strong>{exe_name}</strong><span>Phiên bản v{version_text}</span></div>
                 <span class="app-badge">WINDOWS</span>
             </div>
-            <a class="app-secondary" href="/teacher/app/download">TẢI ỨNG DỤNG</a>
+            <a class="app-secondary" href="{firebase_app_url}" target="_blank" rel="noopener">TẢI ỨNG DỤNG</a>
             <div class="app-note">Ứng dụng desktop được xử lý cục bộ.</div>
         </article>
     </div>
