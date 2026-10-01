@@ -6,3 +6,4 @@ bcrypt
 cryptography
 opencv-contrib-python-headless
 numpy
+python-jose[cryptography]
