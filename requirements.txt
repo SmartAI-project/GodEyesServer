@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+python-multipart
+bcrypt
+cryptography
+opencv-contrib-python-headless
+numpy
