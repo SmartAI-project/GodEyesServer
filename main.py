@@ -33,6 +33,20 @@ from routes.auth import router as auth_router
 from routes.teacher_admin import router as teacher_admin_router
 
 
+def _table_columns(db, table_name: str) -> set[str]:
+    """Return column names for a PostgreSQL table in the current schema."""
+    rows = db.execute(
+        text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = :table_name
+        """),
+        {"table_name": table_name},
+    ).all()
+    return {str(row[0]) for row in rows}
+
+
 app = FastAPI(
     title="God Eyes Server",
     version="1.3.0"
@@ -55,18 +69,18 @@ def ensure_class_table():
     with SessionLocal() as db:
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS classes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 teacher_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 code TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
                 UNIQUE (teacher_id, code)
             )
         """))
 
-        columns = {row[1] for row in db.execute(text("PRAGMA table_info(classes)")).all()}
+        columns = _table_columns(db, "classes")
 
         if "owner_type" not in columns:
             db.execute(text("ALTER TABLE classes ADD COLUMN owner_type TEXT NOT NULL DEFAULT 'TEACHER'"))
@@ -141,14 +155,14 @@ def _decrypt_camera_secret(value: str) -> str:
         return value
 
 def _get_main_account_id(db):
-    row = db.execute(text("SELECT id FROM main_accounts WHERE is_active = 1 ORDER BY id LIMIT 1")).first()
+    row = db.execute(text("SELECT id FROM main_accounts WHERE is_active = TRUE ORDER BY id LIMIT 1")).first()
     return int(row[0]) if row else 0
 
 def ensure_main_camera_profiles_table():
     with SessionLocal() as db:
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS main_camera_profiles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 main_account_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 brand TEXT NOT NULL DEFAULT '',
@@ -162,8 +176,8 @@ def ensure_main_camera_profiles_table():
                 password_enc TEXT NOT NULL DEFAULT '',
                 is_active INTEGER NOT NULL DEFAULT 1,
                 last_verified_at TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
             )
         """))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_main_camera_profiles_owner ON main_camera_profiles(main_account_id, is_active, id DESC)"))
@@ -220,13 +234,13 @@ def ensure_app_device_table():
     with SessionLocal() as db:
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS app_devices (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 teacher_id INTEGER NOT NULL,
                 token_hash TEXT NOT NULL UNIQUE,
                 device_label TEXT NOT NULL DEFAULT 'God Eyes Desktop',
                 app_version TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                last_used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                last_used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
                 revoked_at TEXT NOT NULL DEFAULT ''
             )
         """))
@@ -253,10 +267,10 @@ def ensure_teacher_preferences_table():
                 camera_port INTEGER NOT NULL DEFAULT 554,
                 camera_stream TEXT NOT NULL DEFAULT 'stream1',
                 camera_username TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
             )
         """))
-        columns = {row[1] for row in db.execute(text("PRAGMA table_info(teacher_preferences)" )).all()}
+        columns = _table_columns(db, "teacher_preferences")
         migrations = {
             'camera_source': "ALTER TABLE teacher_preferences ADD COLUMN camera_source TEXT NOT NULL DEFAULT 'webcam'",
             'camera_brand': "ALTER TABLE teacher_preferences ADD COLUMN camera_brand TEXT NOT NULL DEFAULT ''",
@@ -849,27 +863,27 @@ def ensure_student_tables():
     with SessionLocal() as db:
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS students (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 owner_type TEXT NOT NULL DEFAULT 'TEACHER',
                 owner_id INTEGER NOT NULL,
                 student_code TEXT NOT NULL,
                 full_name TEXT NOT NULL,
                 photo_path TEXT NOT NULL DEFAULT '',
                 face_status TEXT NOT NULL DEFAULT 'NO_DATA',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
             )
         """))
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS class_students (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 class_id INTEGER NOT NULL,
                 student_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
                 UNIQUE (class_id, student_id)
             )
         """))
-        columns = {row[1] for row in db.execute(text("PRAGMA table_info(students)"))}
+        columns = _table_columns(db, "students")
         if "face_embedding" not in columns:
             db.execute(text("ALTER TABLE students ADD COLUMN face_embedding TEXT NOT NULL DEFAULT ''"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_students_owner ON students(owner_type, owner_id)"))
@@ -2302,7 +2316,7 @@ def get_admin_class_options():
             text("""
                 SELECT id, name, code, owner_type, owner_id
                 FROM classes
-                ORDER BY name COLLATE NOCASE
+                ORDER BY LOWER(name)
             """ )
         ).mappings().all()
 
@@ -2314,7 +2328,7 @@ def get_main_class_options(admin_id: int):
                 SELECT id, name, code
                 FROM classes
                 WHERE owner_type = 'MAIN_ADMIN' AND owner_id = :admin_id
-                ORDER BY name COLLATE NOCASE
+                ORDER BY LOWER(name)
             """),
             {"admin_id": admin_id}
         ).mappings().all()
@@ -2353,7 +2367,7 @@ def get_admin_student_rows(selected_class_id: int | None = None):
                 JOIN class_students cs ON cs.student_id = s.id
                 JOIN classes c ON c.id = cs.class_id
                 WHERE {where}
-                ORDER BY c.name COLLATE NOCASE, s.full_name COLLATE NOCASE
+                ORDER BY LOWER(c.name), LOWER(s.full_name)
             """),
             params
         ).mappings().all()
@@ -2755,8 +2769,8 @@ def admin_create_student(
             duplicate = db.scalar(text("SELECT s.id FROM students s JOIN class_students cs ON cs.student_id=s.id WHERE cs.class_id=:class_id AND UPPER(s.student_code)=:student_code LIMIT 1"), {"class_id":class_id,"student_code":student_code})
             if duplicate is not None: return RedirectResponse(url=f"/admin?section=students&class_id={class_id}&error=code", status_code=303)
             if photo is not None and photo.filename: new_photo_path = save_student_photo(photo)
-            result = db.execute(text("INSERT INTO students (owner_type,owner_id,student_code,full_name,photo_path,face_status,face_embedding) VALUES ('MAIN_ADMIN',:owner_id,:student_code,:full_name,:photo_path,:face_status,'')"), {"owner_id":admin_id,"student_code":student_code,"full_name":full_name,"photo_path":new_photo_path,"face_status":"PENDING" if new_photo_path else "NO_DATA"})
-            student_id=int(result.lastrowid)
+            result = db.execute(text("INSERT INTO students (owner_type,owner_id,student_code,full_name,photo_path,face_status,face_embedding) VALUES ('MAIN_ADMIN',:owner_id,:student_code,:full_name,:photo_path,:face_status,'') RETURNING id"), {"owner_id":admin_id,"student_code":student_code,"full_name":full_name,"photo_path":new_photo_path,"face_status":"PENDING" if new_photo_path else "NO_DATA"})
+            student_id=int(result.scalar_one())
             db.execute(text("INSERT INTO class_students (class_id,student_id) VALUES (:class_id,:student_id)"), {"class_id":class_id,"student_id":student_id})
             if new_photo_path:
                 try:
@@ -3256,7 +3270,7 @@ def get_teacher_class_options(teacher_id: int):
                 SELECT id, name, code
                 FROM classes
                 WHERE owner_type = 'TEACHER' AND owner_id = :teacher_id
-                ORDER BY name COLLATE NOCASE
+                ORDER BY LOWER(name)
             """),
             {"teacher_id": teacher_id}
         ).mappings().all()
@@ -3542,8 +3556,8 @@ def create_student(request: Request, class_id: int = Form(...), full_name: str =
             dup=db.scalar(text("SELECT s.id FROM students s JOIN class_students cs ON cs.student_id=s.id WHERE cs.class_id=:class_id AND UPPER(s.student_code)=:student_code LIMIT 1"), {"class_id":class_id,"student_code":student_code})
             if dup is not None: return RedirectResponse(url=f"/teacher?section=students&class_id={class_id}&error=code",status_code=303)
             if photo is not None and photo.filename: new_photo_path=save_student_photo(photo)
-            result=db.execute(text("INSERT INTO students (owner_type,owner_id,student_code,full_name,photo_path,face_status,face_embedding) VALUES ('TEACHER',:owner_id,:student_code,:full_name,:photo_path,:face_status,'')"), {"owner_id":teacher_id,"student_code":student_code,"full_name":full_name,"photo_path":new_photo_path,"face_status":"PENDING" if new_photo_path else "NO_DATA"})
-            student_id=int(result.lastrowid)
+            result=db.execute(text("INSERT INTO students (owner_type,owner_id,student_code,full_name,photo_path,face_status,face_embedding) VALUES ('TEACHER',:owner_id,:student_code,:full_name,:photo_path,:face_status,'') RETURNING id"), {"owner_id":teacher_id,"student_code":student_code,"full_name":full_name,"photo_path":new_photo_path,"face_status":"PENDING" if new_photo_path else "NO_DATA"})
+            student_id=int(result.scalar_one())
             db.execute(text("INSERT INTO class_students (class_id,student_id) VALUES (:class_id,:student_id)"), {"class_id":class_id,"student_id":student_id})
             if new_photo_path:
                 try: analyze_student_photo_for_db(db,student_id,new_photo_path)
@@ -3823,7 +3837,7 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                 JOIN class_students cs ON cs.student_id = s.id
                 JOIN classes c ON c.id = cs.class_id
                 WHERE {where}
-                ORDER BY c.name COLLATE NOCASE, s.full_name COLLATE NOCASE
+                ORDER BY LOWER(c.name), LOWER(s.full_name)
             """),
             params
         ).mappings().all()
@@ -7305,7 +7319,7 @@ def ensure_session_tables():
     with SessionLocal() as db:
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 teacher_id INTEGER NOT NULL,
                 class_id INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'RUNNING',
@@ -7321,23 +7335,23 @@ def ensure_session_tables():
                 deleted_by_teacher_id INTEGER NOT NULL DEFAULT 0,
                 deleted_by_username TEXT NOT NULL DEFAULT '',
                 deleted_from TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
             )
         """))
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS session_students (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 session_id INTEGER NOT NULL,
                 student_id INTEGER NOT NULL,
                 student_code TEXT NOT NULL,
                 full_name TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
                 UNIQUE(session_id, student_id)
             )
         """))
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS observations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 session_id INTEGER NOT NULL,
                 student_id INTEGER NOT NULL DEFAULT 0,
                 student_code TEXT NOT NULL DEFAULT '',
@@ -7348,12 +7362,12 @@ def ensure_session_tables():
                 assessment TEXT NOT NULL DEFAULT 'OBSERVATION',
                 details TEXT NOT NULL DEFAULT '',
                 evidence_id INTEGER,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
             )
         """))
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS evidence (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 session_id INTEGER NOT NULL,
                 student_id INTEGER NOT NULL DEFAULT 0,
                 student_code TEXT NOT NULL DEFAULT '',
@@ -7366,11 +7380,11 @@ def ensure_session_tables():
                 mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
                 width INTEGER NOT NULL DEFAULT 0,
                 height INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
             )
         """))
 
-        session_columns = {row[1] for row in db.execute(text("PRAGMA table_info(sessions)")).all()}
+        session_columns = _table_columns(db, "sessions")
         migrations = {
             "last_heartbeat_at": "ALTER TABLE sessions ADD COLUMN last_heartbeat_at TEXT NOT NULL DEFAULT ''",
             "class_name_snapshot": "ALTER TABLE sessions ADD COLUMN class_name_snapshot TEXT NOT NULL DEFAULT ''",
@@ -7496,8 +7510,9 @@ async def api_add_main_camera(request: Request):
                     (main_account_id,name,brand,model,source_type,device_id,host,port,stream,username,password_enc,last_verified_at,created_at,updated_at)
                 VALUES
                     (:mid,:name,:brand,:model,:source_type,:device_id,:host,:port,:stream,:username,:password_enc,:verified,:created,:updated)
+                RETURNING id
             """), {"mid":main_id,**{k:data[k] for k in ("name","brand","model","source_type","device_id","host","port","stream","username")},"password_enc":_encrypt_camera_secret(data["password"]),"verified":now,"created":now,"updated":now})
-            cam_id=int(result.lastrowid)
+            cam_id=int(result.scalar_one())
         db.commit()
         row=db.execute(text("SELECT id,name,brand,model,source_type,device_id,host,port,stream,username,last_verified_at,password_enc FROM main_camera_profiles WHERE id=:id AND main_account_id=:mid"), {"id":cam_id,"mid":main_id}).mappings().first()
     return _camera_profile_dict(row, include_url=True)
@@ -7852,7 +7867,7 @@ async def api_create_session(request: Request):
                         SET status = 'ABANDONED', ended_at = :ended_at,
                             duration_seconds = CASE
                                 WHEN duration_seconds > 0 THEN duration_seconds
-                                ELSE MAX(0, CAST((julianday(:ended_at) - julianday(started_at)) * 86400 AS INTEGER))
+                                ELSE GREATEST(0, CAST(EXTRACT(EPOCH FROM (CAST(:ended_at AS TIMESTAMPTZ) - CAST(started_at AS TIMESTAMPTZ))) AS INTEGER))
                             END
                         WHERE id = :session_id AND teacher_id = :teacher_id AND status = 'RUNNING'
                     """),
@@ -7873,6 +7888,7 @@ async def api_create_session(request: Request):
                     (teacher_id, class_id, status, started_at, client_version, camera_type, last_heartbeat_at, class_name_snapshot, class_code_snapshot)
                 VALUES
                     (:teacher_id, :class_id, 'RUNNING', :started_at, :client_version, :camera_type, :last_heartbeat_at, :class_name_snapshot, :class_code_snapshot)
+                RETURNING id
             """),
             {
                 "teacher_id": teacher_id,
@@ -7885,7 +7901,7 @@ async def api_create_session(request: Request):
                 "class_code_snapshot": str(class_row["code"] or "")[:80],
             }
         )
-        session_id = int(result.lastrowid)
+        session_id = int(result.scalar_one())
 
         for student in students:
             db.execute(
@@ -8018,6 +8034,7 @@ async def api_session_events(request: Request, session_id: int):
                     VALUES
                         (:session_id, :student_id, :student_code, :full_name, :observed_at,
                          :event_type, :confidence, :assessment, :details, :evidence_id)
+                    RETURNING id
                 """),
                 {
                     "session_id": session_id,
@@ -8032,7 +8049,7 @@ async def api_session_events(request: Request, session_id: int):
                     "evidence_id": api_int(event.get("evidence_id")) or None,
                 }
             )
-            inserted_ids.append(int(result.lastrowid))
+            inserted_ids.append(int(result.scalar_one()))
 
         db.commit()
 
@@ -8103,6 +8120,7 @@ async def api_upload_evidence(
                 VALUES
                     (:session_id, :student_id, :student_code, :full_name, :captured_at,
                      :event_type, :confidence, :file_name, :file_path, :mime_type, :width, :height)
+                RETURNING id
             """),
             {
                 "session_id": session_id,
@@ -8119,7 +8137,7 @@ async def api_upload_evidence(
                 "height": height,
             }
         )
-        evidence_id = int(result.lastrowid)
+        evidence_id = int(result.scalar_one())
         db.commit()
 
     return {
