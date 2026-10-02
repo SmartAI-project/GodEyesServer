@@ -4,6 +4,9 @@ import os
 import threading
 import time
 import traceback
+import re
+import socket
+import uuid
 from dataclasses import dataclass
 from typing import Optional
 
@@ -33,122 +36,451 @@ class Detection:
     hand_motion: float = 0.0
     task_activity: float = 0.0
 
+def _extract_ipv4_addresses(value: str):
+    if not value:
+        return []
+    found = []
+    for match in re.findall(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)", value):
+        try:
+            parts = [int(x) for x in match.split('.')]
+        except ValueError:
+            continue
+        if all(0 <= p <= 255 for p in parts) and match not in found:
+            found.append(match)
+    return found
+
+
+def _local_ipv4_addresses():
+    """Return usable IPv4 addresses assigned to this Windows PC."""
+    values = []
+    try:
+        host = socket.gethostname()
+        infos = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_DGRAM)
+        for item in infos:
+            ip = str(item[4][0])
+            if ip.startswith('127.') or ip.startswith('169.254.'):
+                continue
+            if ip not in values:
+                values.append(ip)
+    except Exception:
+        pass
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.25)
+        s.connect(('192.0.2.1', 9))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip and not ip.startswith(('127.', '169.254.')) and ip not in values:
+            values.insert(0, ip)
+    except Exception:
+        pass
+    return values
+
+
+def _scan_tcp_port_on_local_subnets(port: int, timeout_per_host: float = 0.10, max_results: int = 16):
+    """Bounded /24 scan on networks actually attached to this PC."""
+    import concurrent.futures
+    hosts = []
+    seen = set()
+    for local_ip in _local_ipv4_addresses():
+        parts = local_ip.split('.')
+        if len(parts) != 4:
+            continue
+        prefix = '.'.join(parts[:3])
+        for last in range(1, 255):
+            ip = f'{prefix}.{last}'
+            if ip == local_ip or ip in seen:
+                continue
+            seen.add(ip)
+            hosts.append(ip)
+
+    if not hosts:
+        return []
+
+    def probe(ip):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(float(timeout_per_host))
+        try:
+            return ip if sock.connect_ex((ip, int(port))) == 0 else None
+        except OSError:
+            return None
+        finally:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=64, thread_name_prefix='GodEyesNetProbe') as pool:
+        future_map = {pool.submit(probe, ip): ip for ip in hosts}
+        for future in concurrent.futures.as_completed(future_map):
+            try:
+                ip = future.result()
+            except Exception:
+                ip = None
+            if ip:
+                results.append(ip)
+                if len(results) >= int(max_results):
+                    break
+    return results
+
+
+def discover_onvif_cameras(timeout: float = 2.0, max_results: int = 10):
+    """Discover ONVIF cameras using multicast first, then local port scanning.
+
+    Windows firewalls, AP isolation and some Wi-Fi routers can block WS-Discovery
+    multicast. Tapo publishes ONVIF on TCP 2020, so the bounded local scan is a
+    reliable fallback without exposing an IP-address field to the teacher.
+    """
+    results = []
+    seen = set()
+
+    message_id = f"uuid:{uuid.uuid4()}"
+    probe = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<e:Envelope xmlns:e="http://www.w3.org/2003/05/soap-envelope" '
+        'xmlns:w="http://schemas.xmlsoap.org/ws/2004/08/addressing" '
+        'xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery" '
+        'xmlns:dn="http://www.onvif.org/ver10/network/wsdl">'
+        '<e:Header>'
+        f'<w:MessageID>{message_id}</w:MessageID>'
+        '<w:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</w:To>'
+        '<w:Action mustUnderstand="true">http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</w:Action>'
+        '</e:Header>'
+        '<e:Body><d:Probe><d:Types>dn:NetworkVideoTransmitter</d:Types></d:Probe></e:Body>'
+        '</e:Envelope>'
+    ).encode('utf-8')
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    try:
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+        sock.settimeout(0.25)
+        try:
+            sock.sendto(probe, ('239.255.255.250', 3702))
+        except OSError:
+            pass
+        end_time = time.time() + max(0.4, float(timeout))
+        while time.time() < end_time and len(results) < int(max_results):
+            try:
+                data, addr = sock.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            payload = data.decode('utf-8', errors='ignore')
+            candidates = _extract_ipv4_addresses(payload)
+            if not candidates and addr:
+                candidates = [addr[0]]
+            for ip in candidates:
+                if ip.startswith(('127.', '169.254.')) or ip in seen:
+                    continue
+                seen.add(ip)
+                results.append({'ip': ip, 'onvif_port': 2020, 'discovery': 'ws-discovery'})
+                if len(results) >= int(max_results):
+                    break
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+    if len(results) < int(max_results):
+        for ip in _scan_tcp_port_on_local_subnets(2020, timeout_per_host=0.10, max_results=max_results):
+            if ip not in seen:
+                seen.add(ip)
+                results.append({'ip': ip, 'onvif_port': 2020, 'discovery': 'local-port-scan'})
+                if len(results) >= int(max_results):
+                    break
+    return results
+
+
+def probe_rtsp_camera(ip: str, username: str, password: str, stream: str = 'stream1', port: int = 554, timeout_ms: int = 2500):
+    """Open one RTSP camera with the supplied camera-account credentials.
+
+    Returns metadata when one frame can be decoded, otherwise None.
+    """
+    ip = str(ip or '').strip()
+    username = str(username or '').strip()
+    password = str(password or '')
+    stream = str(stream or 'stream1').strip().lower()
+    if not ip or not username or not password or stream not in ('stream1', 'stream2'):
+        return None
+    from urllib.parse import quote as _quote
+    url = f'rtsp://{_quote(username, safe="")}:{_quote(password, safe="")}@{ip}:{int(port)}/{stream}'
+    old_options = os.environ.get('OPENCV_FFMPEG_CAPTURE_OPTIONS')
+    os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|max_delay;500000'
+    cap = None
+    try:
+        try:
+            cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG, [
+                cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, int(timeout_ms),
+                cv2.CAP_PROP_READ_TIMEOUT_MSEC, int(timeout_ms),
+            ])
+        except Exception:
+            cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG if hasattr(cv2, 'CAP_FFMPEG') else cv2.CAP_ANY)
+        if cap is None or not cap.isOpened():
+            return None
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
+        ok, frame = cap.read()
+        if not ok or frame is None or frame.size == 0:
+            return None
+        h, w = frame.shape[:2]
+        return {'ip': ip, 'port': int(port), 'stream': stream, 'width': int(w), 'height': int(h)}
+    except Exception:
+        return None
+    finally:
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
+        if old_options is None:
+            os.environ.pop('OPENCV_FFMPEG_CAPTURE_OPTIONS', None)
+        else:
+            os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = old_options
+
 
 class CameraWorker(QThread):
+
     frame_ready = Signal(object)
     state = Signal(str)
 
-    def __init__(self, camera_index=0):
+    def __init__(self, camera_index=0, source_type='WEBCAM', rtsp_url=''):
         super().__init__()
         self.camera_index = int(camera_index)
+        self.source_type = str(source_type or 'WEBCAM').upper()
+        self.rtsp_url = str(rtsp_url or '').strip()
         self._stop_event = threading.Event()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.cap = None
         self.backend_name = ''
         self.actual_width = 0
         self.actual_height = 0
         self.actual_fps = 0.0
+        self._latest_frame = None
+        self._latest_frame_time = 0.0
+        self._last_ui_emit = 0.0
+
+    def get_latest_frame(self, copy=True):
+        with self._lock:
+            if self._latest_frame is None:
+                return None
+            return self._latest_frame.copy() if copy else self._latest_frame
+
+    def latest_age(self):
+        with self._lock:
+            if not self._latest_frame_time:
+                return None
+            return max(0.0, time.time() - self._latest_frame_time)
 
     def _release(self):
         with self._lock:
             cap = self.cap
             self.cap = None
+            self._latest_frame = None
+            self._latest_frame_time = 0.0
         if cap is not None:
             try:
                 cap.release()
             except Exception:
                 pass
 
-    def _open(self, index, backend, backend_name):
-        cap = None
-        try:
-            cap = cv2.VideoCapture(index, backend)
-            if not cap.isOpened():
-                if cap is not None:
-                    cap.release()
-                return None
-            try:
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            except Exception:
-                pass
-            requests = [
-                (cv2.CAP_PROP_FRAME_WIDTH, 1280),
-                (cv2.CAP_PROP_FRAME_HEIGHT, 720),
-                (cv2.CAP_PROP_FPS, 30),
-            ]
-            for key, value in requests:
-                try:
-                    cap.set(key, value)
-                except Exception:
-                    pass
-            try:
-                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-            except Exception:
-                pass
-            ok, frame = cap.read()
-            if not ok or frame is None or frame.size == 0:
-                cap.release()
-                return None
-            self.actual_height, self.actual_width = frame.shape[:2]
-            try:
-                self.actual_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-            except Exception:
-                self.actual_fps = 0.0
-            self.backend_name = backend_name
-            return cap
-        except Exception:
-            if cap is not None:
-                try:
-                    cap.release()
-                except Exception:
-                    pass
-            return None
-
-    def run(self):
-        self._stop_event.clear()
-        self._release()
-        self.state.emit('CONNECTING…')
+    def _open_webcam(self):
         candidates = [
             (cv2.CAP_DSHOW, 'DIRECTSHOW'),
             (cv2.CAP_MSMF, 'MEDIA FOUNDATION'),
             (cv2.CAP_ANY, 'AUTO'),
         ]
-        cap = None
         for backend, name in candidates:
             if self._stop_event.is_set():
-                return
-            cap = self._open(self.camera_index, backend, name)
+                return None
+            cap = None
+            try:
+                cap = cv2.VideoCapture(self.camera_index, backend)
+                if not cap.isOpened():
+                    if cap is not None:
+                        cap.release()
+                    continue
+                try:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
+                for key, value in [
+                    (cv2.CAP_PROP_FRAME_WIDTH, 1280),
+                    (cv2.CAP_PROP_FRAME_HEIGHT, 720),
+                    (cv2.CAP_PROP_FPS, 30),
+                ]:
+                    try:
+                        cap.set(key, value)
+                    except Exception:
+                        pass
+                try:
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                except Exception:
+                    pass
+                ok, frame = cap.read()
+                if ok and frame is not None and frame.size:
+                    self.actual_height, self.actual_width = frame.shape[:2]
+                    try:
+                        self.actual_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+                    except Exception:
+                        self.actual_fps = 0.0
+                    self.backend_name = name
+                    self._set_latest(frame)
+                    return cap
+            except Exception:
+                pass
             if cap is not None:
-                break
-        if cap is None:
-            self.state.emit('CAMERA ERROR • CANNOT OPEN')
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+        return None
+
+    def _open_rtsp(self):
+        if not self.rtsp_url:
+            self.state.emit('CAMERA ERROR • RTSP URL MISSING')
+            return None
+        cap = None
+        # FFmpeg low-latency hints. They are process-local environment settings
+        # used by OpenCV's FFmpeg backend when it is available.
+        old_options = os.environ.get('OPENCV_FFMPEG_CAPTURE_OPTIONS')
+        os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = (
+            'rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|max_delay;500000'
+        )
+        try:
+            backends = []
+            if hasattr(cv2, 'CAP_FFMPEG'):
+                backends.append((cv2.CAP_FFMPEG, 'FFMPEG'))
+            backends.append((cv2.CAP_ANY, 'AUTO'))
+            for backend, name in backends:
+                if self._stop_event.is_set():
+                    return None
+                try:
+                    try:
+                        if name == 'FFMPEG':
+                            cap = cv2.VideoCapture(
+                                self.rtsp_url,
+                                backend,
+                                [
+                                    cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000,
+                                    cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000,
+                                ],
+                            )
+                        else:
+                            cap = cv2.VideoCapture(self.rtsp_url, backend)
+                    except Exception:
+                        cap = cv2.VideoCapture(self.rtsp_url, backend)
+                    if not cap.isOpened():
+                        if cap is not None:
+                            cap.release()
+                        cap = None
+                        continue
+                    try:
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    except Exception:
+                        pass
+                    try:
+                        cap.set(cv2.CAP_PROP_FPS, 20)
+                    except Exception:
+                        pass
+                    ok, frame = cap.read()
+                    if ok and frame is not None and frame.size:
+                        self.actual_height, self.actual_width = frame.shape[:2]
+                        try:
+                            self.actual_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+                        except Exception:
+                            self.actual_fps = 0.0
+                        self.backend_name = f'RTSP {name}'
+                        self._set_latest(frame)
+                        return cap
+                except Exception:
+                    if cap is not None:
+                        try:
+                            cap.release()
+                        except Exception:
+                            pass
+                        cap = None
+            return None
+        finally:
+            if old_options is None:
+                os.environ.pop('OPENCV_FFMPEG_CAPTURE_OPTIONS', None)
+            else:
+                os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = old_options
+
+    def _set_latest(self, frame):
+        if frame is None or getattr(frame, 'size', 0) == 0:
             return
         with self._lock:
-            self.cap = cap
-        self.state.emit(f'CONNECTED • {self.actual_width}x{self.actual_height} • {self.backend_name}')
-        bad_reads = 0
-        last_ok_emit = time.time()
+            self._latest_frame = frame.copy()
+            self._latest_frame_time = time.time()
+
+    def _open(self):
+        if self.source_type in {'RTSP', 'WIFI_CAMERA', 'TAPO', 'TAPO_C230', 'TAPO_C230_RTSP'}:
+            return self._open_rtsp()
+        return self._open_webcam()
+
+    def _source_label(self):
+        if self.source_type in {'RTSP', 'WIFI_CAMERA', 'TAPO', 'TAPO_C230', 'TAPO_C230_RTSP'}:
+            return 'WI-FI CAMERA'
+        if self.source_type in {'USB', 'USB_WEBCAM'}:
+            return f'USB WEBCAM #{self.camera_index}'
+        return f'WEBCAM #{self.camera_index}'
+
+    def run(self):
+        self._stop_event.clear()
+        self._release()
+        self.state.emit(f'CONNECTING • {self._source_label()}')
+        reconnect_delay = 0.25
         while not self._stop_event.is_set():
-            with self._lock:
-                active_cap = self.cap
-            if active_cap is None:
-                break
-            try:
-                ok, frame = active_cap.read()
-            except Exception:
-                ok, frame = False, None
-            if not ok or frame is None or frame.size == 0:
-                bad_reads += 1
-                if bad_reads >= 5:
-                    self.state.emit('FRAME ERROR • RETRYING CAMERA')
-                time.sleep(0.03)
+            cap = self._open()
+            if cap is None:
+                if self._stop_event.is_set():
+                    break
+                self.state.emit(f'CAMERA ERROR • CANNOT OPEN • {self._source_label()}')
+                time.sleep(min(2.0, reconnect_delay))
+                reconnect_delay = min(2.0, reconnect_delay * 1.5)
                 continue
+            reconnect_delay = 0.25
+            with self._lock:
+                self.cap = cap
+            self.state.emit(
+                f'CONNECTED • {self._source_label()} • '
+                f'{self.actual_width}x{self.actual_height} • {self.backend_name}'
+            )
             bad_reads = 0
-            self.frame_ready.emit(frame)
-            now = time.time()
-            if now - last_ok_emit >= 5.0:
-                last_ok_emit = now
-                self.state.emit(f'CONNECTED • {self.actual_width}x{self.actual_height} • {self.backend_name}')
+            self._last_ui_emit = 0.0
+            while not self._stop_event.is_set():
+                with self._lock:
+                    active_cap = self.cap
+                if active_cap is None:
+                    break
+                try:
+                    ok, frame = active_cap.read()
+                except Exception:
+                    ok, frame = False, None
+                if not ok or frame is None or frame.size == 0:
+                    bad_reads += 1
+                    if bad_reads >= 5:
+                        self.state.emit(f'CAMERA WARNING • {self._source_label()} • RECONNECTING')
+                        break
+                    time.sleep(0.02)
+                    continue
+                bad_reads = 0
+                self._set_latest(frame)
+                now = time.time()
+                # UI preview is capped; the capture loop still drains the RTSP
+                # stream as quickly as OpenCV delivers it, keeping only the newest frame.
+                if now - self._last_ui_emit >= 0.05:
+                    self._last_ui_emit = now
+                    self.frame_ready.emit(frame)
+            self._release()
+            if not self._stop_event.is_set():
+                self.state.emit(f'RECONNECTING • {self._source_label()}')
+                time.sleep(reconnect_delay)
         self._release()
         self.state.emit('DISCONNECTED')
 
@@ -862,17 +1194,38 @@ class SmartVision:
         self._load_yolo()
 
     def _load_face_models(self):
-        yunet_path = self.model_dir / 'face_detection_yunet_2023mar.onnx'
-        sface_path = self.model_dir / 'face_recognition_sface_2021dec.onnx'
-        try:
-            if hasattr(cv2, 'FaceDetectorYN') and yunet_path.exists() and yunet_path.stat().st_size > 100000:
-                self.face_detector = cv2.FaceDetectorYN.create(str(yunet_path), '', (320, 320), 0.65, 0.30, 5000)
-            if hasattr(cv2, 'FaceRecognizerSF') and sface_path.exists() and sface_path.stat().st_size > 100000:
-                self.face_recognizer = cv2.FaceRecognizerSF.create(str(sface_path), '')
-        except Exception as exc:
-            self.face_model_error = str(exc)
-            self.face_detector = None
-            self.face_recognizer = None
+        # Prefer models bundled with the app; fall back to the shared local
+        # GodEyesServer model directory used during development.
+        candidates = [
+            self.model_dir,
+            Path(r'D:\GodEyesServer\data\face_models'),
+            Path(r'D:\GodEyes\app\assets\models'),
+        ]
+        seen = set()
+        for base in candidates:
+            try:
+                base = Path(base)
+                key = str(base.resolve()).lower()
+            except Exception:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            yunet_path = base / 'face_detection_yunet_2023mar.onnx'
+            sface_path = base / 'face_recognition_sface_2021dec.onnx'
+            if not (yunet_path.exists() and sface_path.exists()):
+                continue
+            try:
+                if hasattr(cv2, 'FaceDetectorYN') and yunet_path.stat().st_size > 100000:
+                    self.face_detector = cv2.FaceDetectorYN.create(str(yunet_path), '', (320, 320), 0.65, 0.30, 5000)
+                if hasattr(cv2, 'FaceRecognizerSF') and sface_path.stat().st_size > 100000:
+                    self.face_recognizer = cv2.FaceRecognizerSF.create(str(sface_path), '')
+                if self.face_detector is not None and self.face_recognizer is not None:
+                    return
+            except Exception as exc:
+                self.face_model_error = str(exc)
+        self.face_detector = None
+        self.face_recognizer = None
 
     def _yunet_faces(self, frame):
         if self.face_detector is None:
@@ -952,14 +1305,23 @@ class SmartVision:
         return None
 
     def _load_yolo(self):
+        # YOLO is preferred, but the app must remain usable when the model file
+        # is not installed yet. In that case SmartVision falls back to YuNet
+        # face detections to create person tracks.
         try:
             from ultralytics import YOLO
         except Exception as exc:
-            self.last_model_error = f'Ultralytics import failed: {exc}'
-            raise RuntimeError(self.last_model_error)
+            self.last_model_error = f'Ultralytics unavailable: {exc}'
+            self.model = None
+            self.model_source = 'YuNet Face Fallback'
+            return
+
         if self.model_path is None:
-            self.last_model_error = 'YOLO model not found. Put yolo11n.pt in app/assets/models.'
-            raise FileNotFoundError(self.last_model_error)
+            self.last_model_error = 'YOLO model not found; using YuNet Face Fallback.'
+            self.model = None
+            self.model_source = 'YuNet Face Fallback'
+            return
+
         try:
             self.model = YOLO(str(self.model_path))
             self.model_source = str(self.model_path)
@@ -968,8 +1330,9 @@ class SmartVision:
             except Exception:
                 pass
         except Exception as exc:
-            self.last_model_error = f'YOLO load failed: {exc}'
-            raise RuntimeError(self.last_model_error)
+            self.last_model_error = f'YOLO load failed: {exc}; using YuNet Face Fallback.'
+            self.model = None
+            self.model_source = 'YuNet Face Fallback'
 
     def _load_cascade(self, name):
         paths = [
@@ -1225,8 +1588,6 @@ class SmartVision:
         return {63: 'LAPTOP', 65: 'REMOTE', 67: 'PHONE', 73: 'BOOK'}.get(int(cls_id), 'OBJECT')
 
     def detect(self, frame):
-        if self.model is None:
-            raise RuntimeError('AI model is not loaded.')
         start = time.perf_counter()
         self.frame_index += 1
         height, width = frame.shape[:2]
@@ -1237,16 +1598,24 @@ class SmartVision:
             small = cv2.resize(frame, (max_width, max(1, int(height * scale))), interpolation=cv2.INTER_AREA)
         else:
             small = frame
-        results = self.model.predict(
-            source=small,
-            classes=[0, 63, 65, 67, 73],
-            conf=0.35,
-            iou=0.48,
-            imgsz=640,
-            max_det=50,
-            device='cpu',
-            verbose=False,
-        )
+
+        results = None
+        if self.model is not None:
+            try:
+                results = self.model.predict(
+                    source=small,
+                    classes=[0, 63, 65, 67, 73],
+                    conf=0.35,
+                    iou=0.48,
+                    imgsz=640,
+                    max_det=50,
+                    device='cpu',
+                    verbose=False,
+                )
+            except Exception as exc:
+                self.last_model_error = f'YOLO inference failed: {exc}; using YuNet Face Fallback.'
+                self.model = None
+                self.model_source = 'YuNet Face Fallback'
         gray = self._prepare_gray(frame)
         persons = []
         objects = []
@@ -1272,6 +1641,27 @@ class SmartVision:
                         if box[2] >= 18 and box[3] >= 12:
                             objects.append((box, cls_id, conf))
         yunet_faces = self._yunet_faces(frame)
+
+        # No YOLO model (or YOLO failed): use YuNet face boxes as person tracks.
+        # This keeps Face ID + tracking functional without requiring a large
+        # YOLO weights file on the development machine.
+        if not persons and yunet_faces:
+            for face in yunet_faces[:50]:
+                try:
+                    fx, fy, fw, fh = [float(v) for v in face[:4]]
+                except Exception:
+                    continue
+                # Expand the face region into a stable upper-body tracking box.
+                x = int(fx - 0.65 * fw)
+                y = int(fy - 0.45 * fh)
+                w = int(fw * 2.30)
+                h = int(fh * 3.10)
+                box = self._clamp_box((x, y, w, h), width, height)
+                conf = float(face[14]) if len(face) >= 15 else 0.85
+                conf = max(0.62, min(0.99, conf))
+                if self._person_box_ok(box, width, height, conf):
+                    persons.append((box, conf))
+
         detections = []
         for person_box, person_conf in persons:
             appearance = self._appearance_feature(frame, person_box)
@@ -1348,6 +1738,24 @@ class SmartVision:
 
 
 class BehaviorEngine:
+    """
+    God Eyes behavior engine - v32 Sleep Guard.
+
+    Rules:
+    - Head turn LEFT/RIGHT: abs(yaw) > 40 degrees for 4 continuous seconds.
+    - Face-down / face-missing: keep the already locked identity and wait 5 seconds.
+    - After 5 seconds of plausible face loss, emit OB_SLEEP once until the face returns.
+    - Short detector gaps are tolerated to avoid false triggers.
+    """
+
+    YAW_THRESHOLD_DEG = 40.0
+    YAW_CONFIRM_SECONDS = 4.0
+    FACE_LOST_SLEEP_SECONDS = 5.0
+    FACE_GAP_GRACE_SECONDS = 0.40
+    HEAD_DOWN_MIN_RATIO = 0.36
+    HEAD_DOWN_DELTA = 0.07
+    EVENT_COOLDOWN = 8.0
+
     def __init__(self, board_side='RIGHT'):
         self.board_side = board_side
         self.state = {}
@@ -1358,125 +1766,195 @@ class BehaviorEngine:
     def _state(self, sid):
         if sid not in self.state:
             self.state[sid] = {
-                'turn_side': 0, 'turn_start': None, 'away_start': None,
-                'down_start': None, 'face_y_ema': None, 'last_yaw': 0.0,
-                'last_face_time': 0.0, 'mouth_samples': [], 'task_samples': [],
-                'object_start': None, 'task_start': None, 'last_event': {}, 'last_seen': 0.0
+                'turn_side': 0,
+                'turn_start': None,
+                'last_yaw': 0.0,
+                'last_face_time': 0.0,
+                'face_missing_start': None,
+                'head_down_start': None,
+                'face_y_ratio_ema': None,
+                'sleep_latched': False,
+                'turn_latched': False,
+                'last_event': {},
+                'last_seen': 0.0,
             }
         return self.state[sid]
 
-    def _cooldown_ok(self, state, key, now, seconds):
-        last = state['last_event'].get(key, 0.0)
-        if now - last < seconds:
-            return False
-        state['last_event'][key] = now
-        return True
+    def _cooldown_ok(self, state, key, now, seconds=None):
+        seconds = self.EVENT_COOLDOWN if seconds is None else float(seconds)
+        last = float(state['last_event'].get(key, 0.0))
+        return (now - last) >= seconds
 
     @staticmethod
-    def _trim(samples, now, seconds):
-        return [item for item in samples if now - item[0] <= seconds]
+    def _event(key, confidence, details):
+        return key, float(confidence), str(details)
 
     def evaluate(self, sid, track, now=None):
-        now = time.time() if now is None else now
+        now = time.time() if now is None else float(now)
         state = self._state(sid)
         state['last_seen'] = now
         events = []
-        face_valid = track.face is not None and track.head_quality >= 0.18
+
+        face_valid = (
+            getattr(track, 'face', None) is not None
+            and float(getattr(track, 'head_quality', 0.0)) >= 0.12
+        )
+
         yaw = float(getattr(track, 'head_yaw_deg', 0.0))
+        head_quality = float(getattr(track, 'head_quality', 0.0))
+        person_score = float(getattr(track, 'person_score', 0.0))
+
         if face_valid:
             state['last_yaw'] = yaw
             state['last_face_time'] = now
-        elif now - state['last_face_time'] <= 1.20:
-            yaw = state['last_yaw']
-        else:
-            yaw = 0.0
-        turned = abs(yaw) >= 50.0
-        direction = -1 if yaw < -1.0 else 1 if yaw > 1.0 else 0
-        away = turned and ((self.board_side == 'RIGHT' and direction < 0) or (self.board_side == 'LEFT' and direction > 0))
+
+        # ---------------------------------------------------------
+        # 1) HEAD TURN > 40°, confirm for 4 continuous seconds
+        #    A short face-detector gap (<= 0.4s) does not reset the timer.
+        #    Emit once per continuous turn episode; re-arm when the head
+        #    returns within the threshold.
+        # ---------------------------------------------------------
+        turned = bool(face_valid and abs(yaw) > self.YAW_THRESHOLD_DEG)
+        direction = -1 if yaw < 0 else 1 if yaw > 0 else 0
+
         if turned:
             if state['turn_side'] != direction:
                 state['turn_side'] = direction
                 state['turn_start'] = now
-                state['away_start'] = now if away else None
-            elif away and state['away_start'] is None:
-                state['away_start'] = now
-            elif not away:
-                state['away_start'] = None
-            elapsed = now - (state['turn_start'] or now)
-            away_elapsed = now - (state['away_start'] or now) if state['away_start'] else 0.0
-            if away and away_elapsed >= 0.55 and self._cooldown_ok(state, 'looking_away_from_board', now, 3.5):
+                state['turn_latched'] = False
+
+            elapsed = now - float(state['turn_start'] or now)
+
+            if elapsed >= self.YAW_CONFIRM_SECONDS and not state['turn_latched']:
+                key = 'HEAD_TURN_LEFT' if direction < 0 else 'HEAD_TURN_RIGHT'
                 side = 'left' if direction < 0 else 'right'
-                confidence = min(0.99, 0.64 + 0.22 * track.head_quality + 0.14 * track.person_score)
-                events.append(('looking_away_from_board', confidence, f'Observed head turn of about {abs(yaw):.0f} degrees to the {side}, opposite the configured board direction.'))
-            elif elapsed >= 0.55:
-                key = 'head_turn_left' if direction < 0 else 'head_turn_right'
-                if self._cooldown_ok(state, key, now, 3.5):
-                    side = 'left' if direction < 0 else 'right'
-                    confidence = min(0.98, 0.62 + 0.21 * track.head_quality + 0.14 * track.person_score)
-                    events.append((key, confidence, f'Observed sustained head turn of about {abs(yaw):.0f} degrees to the {side}.'))
+                confidence = min(
+                    0.97,
+                    0.60
+                    + 0.22 * min(1.0, head_quality)
+                    + 0.15 * min(1.0, person_score),
+                )
+                events.append(self._event(
+                    key,
+                    confidence,
+                    (
+                        f'Đầu quay {side} quá '
+                        f'{self.YAW_THRESHOLD_DEG:.0f}° liên tục '
+                        f'{self.YAW_CONFIRM_SECONDS:.0f} giây.'
+                    ),
+                ))
+                state['last_event'][key] = now
+                state['turn_latched'] = True
+        elif (
+            not face_valid
+            and state['turn_side'] != 0
+            and (now - float(state.get('last_face_time', 0.0))) <= self.FACE_GAP_GRACE_SECONDS
+        ):
+            # Keep the current turn timer through a brief detector gap.
+            pass
         else:
             state['turn_side'] = 0
             state['turn_start'] = None
-            state['away_start'] = None
+            state['turn_latched'] = False
+
+        # ---------------------------------------------------------
+        # 2) HEAD DOWN + FACE LOST -> possible sleep
+        #
+        # face_y_ratio is an existing project heuristic. When the face is
+        # visible, a clear downward shift starts a head-down candidate.
+        # When the face then disappears, the identity remains locked by
+        # IdentityLock and the five-second timer can continue.
+        # ---------------------------------------------------------
+        downward = False
+
         if face_valid:
-            ratio = float(track.face_y_ratio)
-            if state['face_y_ema'] is None:
-                state['face_y_ema'] = ratio
-            elif abs(ratio - state['face_y_ema']) <= 0.055 and 0.10 <= ratio <= 0.75:
-                state['face_y_ema'] = 0.985 * state['face_y_ema'] + 0.015 * ratio
-            baseline = state['face_y_ema'] if state['face_y_ema'] is not None else ratio
-            downward = ratio >= max(0.285, baseline + 0.030)
+            ratio = float(getattr(track, 'face_y_ratio', 0.0))
+            baseline = state['face_y_ratio_ema']
+
+            if baseline is None:
+                state['face_y_ratio_ema'] = ratio
+                baseline = ratio
+            elif 0.05 <= ratio <= 0.85 and abs(ratio - baseline) <= 0.12:
+                state['face_y_ratio_ema'] = 0.985 * baseline + 0.015 * ratio
+                baseline = state['face_y_ratio_ema']
+
+            downward = (
+                ratio >= max(
+                    self.HEAD_DOWN_MIN_RATIO,
+                    float(baseline) + self.HEAD_DOWN_DELTA,
+                )
+            )
+
+            if downward:
+                if state['head_down_start'] is None:
+                    state['head_down_start'] = now
+            else:
+                state['head_down_start'] = None
+
+            # Face is back: cancel the missing-face sleep timer.
+            state['face_missing_start'] = None
+
+            # Re-arm sleep detection for a later episode.
+            if state['sleep_latched']:
+                state['sleep_latched'] = False
+
         else:
-            downward = False
-        if downward:
-            if state['down_start'] is None:
-                state['down_start'] = now
-            elif now - state['down_start'] >= 0.75 and self._cooldown_ok(state, 'prolonged_head_down', now, 4.0):
-                confidence = min(0.98, 0.60 + 0.22 * track.head_quality + 0.14 * track.person_score)
-                events.append(('prolonged_head_down', confidence, 'Observed sustained downward head position.'))
-        else:
-            state['down_start'] = None
-        mouth_active = bool(face_valid and ((track.mouth_score >= 0.29 and track.mouth_activity >= 0.18) or track.mouth_motion >= 0.009))
-        state['mouth_samples'].append((now, mouth_active, float(track.mouth_score), float(track.mouth_motion), float(track.mouth_activity)))
-        state['mouth_samples'] = self._trim(state['mouth_samples'], now, 3.0)
-        window = state['mouth_samples']
-        if len(window) >= 5:
-            active_count = sum(1 for _, active, _, _, _ in window if active)
-            frequency = active_count / max(1, len(window))
-            span = window[-1][0] - window[0][0]
-            avg_motion = sum(item[3] for item in window) / max(1, len(window))
-            avg_activity = sum(item[4] for item in window) / max(1, len(window))
-            if span >= 1.0 and frequency >= 0.30 and avg_motion >= 0.007 and avg_activity >= 0.18:
-                if self._cooldown_ok(state, 'high_mouth_activity', now, 4.0):
-                    confidence = min(0.97, 0.52 + 0.38 * frequency + 0.10 * min(1.0, avg_motion * 12.0))
-                    events.append(('high_mouth_activity', confidence, f'Observed frequent mouth movement ({frequency * 100:.0f}% active samples over {span:.1f}s). This is an observable mouth-activity signal.'))
-        object_types = tuple(getattr(track, 'object_types', ()) or ())
-        task_signal = float(getattr(track, 'task_activity', 0.0))
-        state['task_samples'].append((now, task_signal))
-        state['task_samples'] = self._trim(state['task_samples'], now, 2.4)
-        task_window = state['task_samples']
-        if object_types:
-            if state['object_start'] is None:
-                state['object_start'] = now
-            if now - state['object_start'] >= 0.35 and self._cooldown_ok(state, 'other_object_activity', now, 4.0):
-                labels = ', '.join(sorted(set(object_types)))
-                scores = getattr(track, 'object_scores', ()) or (0.5,)
-                confidence = min(0.98, 0.68 + 0.22 * max(scores))
-                events.append(('other_object_activity', confidence, f'Observed a detected object associated with the student: {labels}.'))
-        else:
-            state['object_start'] = None
-        if len(task_window) >= 4:
-            span = task_window[-1][0] - task_window[0][0]
-            active = [value for _, value in task_window if value >= 0.20]
-            avg_task = sum(v for _, v in task_window) / max(1, len(task_window))
-            if span >= 0.65 and len(active) >= 3 and avg_task >= 0.20:
-                if state['task_start'] is None:
-                    state['task_start'] = now - span
-                if now - state['task_start'] >= 0.55 and self._cooldown_ok(state, 'independent_task_activity', now, 4.0):
-                    confidence = min(0.96, 0.54 + 0.38 * min(1.0, avg_task) + 0.06 * track.person_score)
-                    events.append(('independent_task_activity', confidence, f'Observed sustained activity in the student hand/lower-body area over {span:.1f}s. The exact task is not inferred.'))
-            elif span > 0.0 and avg_task < 0.12:
-                state['task_start'] = None
+            # Do not classify a strong sideways turn alone as sleep.
+            # Start the five-second timer only if the last known pose was
+            # near-forward or a head-down candidate had already started.
+            last_yaw = float(state.get('last_yaw', 0.0))
+            plausible_sleep_context = (
+                abs(last_yaw) <= self.YAW_THRESHOLD_DEG
+                or state['head_down_start'] is not None
+            )
+
+            if plausible_sleep_context:
+                if state['face_missing_start'] is None:
+                    state['face_missing_start'] = now
+
+                # After 5 seconds, emit exactly one OB_SLEEP event for this
+                # episode. The identity is still held by IdentityLock.
+                missing_elapsed = now - float(state['face_missing_start'])
+
+                if (
+                    missing_elapsed >= self.FACE_LOST_SLEEP_SECONDS
+                    and not state['sleep_latched']
+                    and self._cooldown_ok(state, 'OB_SLEEP', now)
+                ):
+                    down_context = state['head_down_start'] is not None
+                    confidence = min(
+                        0.86,
+                        0.62
+                        + (0.12 if down_context else 0.0)
+                        + 0.08 * min(1.0, person_score),
+                    )
+                    details = (
+                        'OB_SLEEP • Không thấy khuôn mặt liên tục '
+                        f'{self.FACE_LOST_SLEEP_SECONDS:.0f} giây'
+                    )
+                    if down_context:
+                        details += (
+                            ' sau tín hiệu cúi đầu; đây là dấu hiệu hình ảnh '
+                            'nghi ngờ ngủ/gục và cần giáo viên xác nhận.'
+                        )
+                    else:
+                        details += (
+                            '; đây là tín hiệu nghi ngờ ngủ/gục và cần giáo viên '
+                            'xác nhận.'
+                        )
+
+                    events.append(self._event(
+                        'OB_SLEEP',
+                        confidence,
+                        details,
+                    ))
+                    state['last_event']['OB_SLEEP'] = now
+                    state['sleep_latched'] = True
+            else:
+                # Strong sideways disappearance: keep identity locked, but
+                # do not start the sleep timer yet.
+                state['face_missing_start'] = None
+
         return events
 
     def reset(self):
@@ -1646,6 +2124,48 @@ class AIWorker(QThread):
             'hand_motion': float(getattr(track, 'hand_motion', 0.0)),
         }
 
+    def _scan_face_detections(self, frame):
+        """Face-only detections for the attendance/Face ID scan stage.
+
+        The scan stage should lock identities from the head/face area only.
+        Full-person boxes are still used in monitor mode because posture and
+        hand/body motion are needed there.
+        """
+        if self.vision is None or self.vision.face_detector is None:
+            return []
+        faces=self.vision._yunet_faces(frame)
+        gray=self.vision._prepare_gray(frame)
+        detections=[]
+        h,w=frame.shape[:2]
+        for face in faces[:50]:
+            try:
+                fx,fy,fw,fh=[float(v) for v in face[:4]]
+            except Exception:
+                continue
+            box=self.vision._clamp_box((int(fx),int(fy),int(fw),int(fh)),w,h)
+            x,y,bw,bh=box
+            if bw < 42 or bh < 42:
+                continue
+            conf=float(face[14]) if len(face) >= 15 else 0.85
+            if conf < 0.55:
+                continue
+            feature=self.vision._sface_feature(frame, face)
+            if feature is None:
+                feature=self.vision._gray_feature(gray, box)
+            mouth_score,mouth_motion=self.vision._mouth_features(gray, box)
+            mouth_activity=float(np.clip(0.55*mouth_score + 5.5*mouth_motion,0.0,1.0))
+            quality=max(0.0,min(1.0,math.sqrt(bw*bh)/74.0))*conf
+            detections.append(Detection(
+                box=box, person_score=max(0.70,min(0.99,conf)), face=box,
+                face_feature=feature, appearance_feature=self.vision._appearance_feature(frame, box),
+                face_side='UNKNOWN', head_dir=0.0, head_yaw_deg=0.0,
+                head_quality=float(quality), mouth_score=float(mouth_score),
+                mouth_motion=float(mouth_motion), mouth_activity=float(mouth_activity),
+                face_y_ratio=0.5, object_types=(), object_scores=(),
+                lower_motion=0.0, hand_motion=0.0, task_activity=0.0
+            ))
+        return detections
+
     def _process_once(self, frame):
         if self.vision is None:
             self._emit_status('LOADING YOLO PERSON DETECTOR…', 1.0)
@@ -1657,11 +2177,14 @@ class AIWorker(QThread):
                 self.tracks_ready.emit([])
                 return
             face_mode = 'SFACE READY' if self.vision.face_recognizer is not None else 'SFACE MODEL MISSING'
-            self._emit_status(f'AI READY • PERSON ONLY • {face_mode} • HEAD >50° • BOARD AWAY • MOUTH FREQUENCY • {Path(self.vision.model_source).name}', 0.5)
+            self._emit_status(f'AI READY • {Path(self.vision.model_source).name} • {face_mode} • HEAD TURN 40°/4s • OB_SLEEP 5s', 0.5)
 
-        detections, _ = self.vision.detect(frame)
+        if self.mode == 'scan':
+            detections = self._scan_face_detections(frame)
+        else:
+            detections, _ = self.vision.detect(frame)
         with self._state_lock:
-            track_objects = self.tracker.update([Detection(**item) for item in detections])
+            track_objects = self.tracker.update(detections)
         frame_size = (frame.shape[1], frame.shape[0])
         payload = []
         active_student_ids = set()
@@ -1681,7 +2204,13 @@ class AIWorker(QThread):
                 active_student_ids.add(sid)
             is_server_identity = bool(self.identity.server_roster and self.identity.student_id_for_label(sid) > 0)
             is_local_identity = sid.startswith('HS ')
-            if self.mode == 'monitor' and track.visible and track.confirmed and sid not in ('IDENTITY UNCERTAIN',) and (is_server_identity or is_local_identity):
+
+            # IMPORTANT: behavior evaluation must continue while the person track
+            # is temporarily missed. IdentityLock intentionally keeps the student
+            # identity during short face-loss periods, which is required for the
+            # 5-second OB_SLEEP rule. Only the identity/track must be valid; the
+            # face itself does not need to remain visible.
+            if self.mode == 'monitor' and track.confirmed and sid not in ('IDENTITY UNCERTAIN',) and (is_server_identity or is_local_identity):
                 with self._state_lock:
                     behavior_events = self.behavior.evaluate(sid, track, now)
                 for event_type, confidence, assessment in behavior_events:

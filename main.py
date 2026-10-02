@@ -12,6 +12,7 @@ import uuid
 import subprocess
 import sys
 import time
+from urllib.parse import quote as url_quote
 
 from base64 import urlsafe_b64encode, b64decode
 try:
@@ -6888,8 +6889,8 @@ def teacher_app_content(teacher_id: int, status: str = '') -> str:
             <div class="app-flow">
                 <span>Tài khoản hiện tại</span><b>→</b><span>God Eyes</span>
             </div>
-            <a class="app-primary" href="http://127.0.0.1:8000/local-launch?server_url=https%3A%2F%2Fgodeyes-server.onrender.com" style="margin-top:20px;">MỞ ỨNG DỤNG</a>
-            <div class="app-note">Mở God Eyes trên máy Windows đang chạy GodEyes Server cục bộ.</div>
+            <a class="app-primary" href="/teacher/app/open" style="margin-top:20px;">MỞ ỨNG DỤNG</a>
+            <div class="app-note">Mở God Eyes trực tiếp trên máy Windows này. Không cần chạy God Eyes Server cục bộ.</div>
         </article>
 
         <article class="app-card">
@@ -6998,6 +6999,35 @@ def local_launch_app(server_url: str = "https://godeyes-server.onrender.com"):
         url=f"{allowed}/teacher?section=app&status=launch_started",
         status_code=303,
     )
+
+
+@app.get("/teacher/app/open", response_class=HTMLResponse)
+def teacher_open_app_web(request: Request):
+    """Start a local desktop launch through the Windows godeyes:// URI protocol."""
+    payload = get_teacher_payload(request)
+    if payload is None:
+        return RedirectResponse(url="/", status_code=303)
+
+    teacher_id = int(payload["sub"])
+    token = _issue_app_launch_token(teacher_id)
+    server_url = str(request.base_url).rstrip("/")
+    launch_url = (
+        "godeyes://launch?token=" + url_quote(token, safe="")
+        + "&server_url=" + url_quote(server_url, safe="")
+    )
+    safe_launch_url = escape(launch_url, quote=True)
+    return HTMLResponse(f"""
+<!doctype html>
+<html lang="vi">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mở God Eyes</title></head>
+<body style="font-family:Segoe UI,Arial,sans-serif;padding:40px;text-align:center;background:#f6f8fc;color:#203247">
+<h2>Đang mở God Eyes…</h2>
+<p>Windows sẽ mở ứng dụng God Eyes trên máy này.</p>
+<p><a href="{safe_launch_url}" style="display:inline-block;padding:12px 18px;border-radius:10px;background:#2b78c5;color:#fff;text-decoration:none;font-weight:700">MỞ GOD EYES</a></p>
+<script>window.location.href = {json.dumps(launch_url)};</script>
+</body></html>
+""")
 
 
 @app.post("/teacher/app/open")
