@@ -6849,7 +6849,7 @@ def _issue_app_launch_token(teacher_id: int) -> str:
 
 def teacher_app_content(teacher_id: int, status: str = '') -> str:
     # Desktop EXE is distributed from Firebase Hosting when this server runs on Render.
-    firebase_app_url = "https://godeyes-1c469.web.app/GodEyes.exe"
+    firebase_app_url = "https://github.com/SmartAI-project/GodEyesServer/releases/latest/download/GodEyes.exe"
     app_ready = True
     status_html = ''
     messages = {
@@ -7067,13 +7067,11 @@ def teacher_download_app(request: Request):
     payload = get_teacher_payload(request)
     if payload is None:
         return RedirectResponse(url="/", status_code=303)
-    exe = _find_god_eyes_exe()
-    if exe is None:
-        return RedirectResponse(url="/teacher?section=app&status=download_missing", status_code=303)
-    # Render does not need to store the desktop EXE locally.
-    # Redirect the teacher to the single-file EXE hosted on Firebase.
+
+    # Desktop EXE is hosted as a GitHub Release asset.
+    download_url = "https://github.com/SmartAI-project/GodEyesServer/releases/latest/download/GodEyes.exe"
     return RedirectResponse(
-        url="https://godeyes-1c469.web.app/GodEyes.exe",
+        url=download_url,
         status_code=302,
     )
 
@@ -9075,3 +9073,4 @@ if __name__ == "__main__":
         host="127.0.0.1",
         port=8000
     )
+
