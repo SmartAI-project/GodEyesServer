@@ -102,7 +102,8 @@ STUDENT_PHOTO_DIR.mkdir(parents=True, exist_ok=True)
 FACE_MODEL_DIR = APP_DIR / "data" / "face_models"
 FACE_MODEL_DIR.mkdir(parents=True, exist_ok=True)
 YUNET_MODEL_PATH = FACE_MODEL_DIR / "face_detection_yunet_2023mar.onnx"
-SFACE_MODEL_PATH = FACE_MODEL_DIR / "face_recognition_sface_2021dec.onnx"
+SFACE_MODEL_PATH = FACE_MODEL_DIR / "face_recognition_sface_2021dec_int8.onnx"
+SFACE_MODEL_PATH_ALT = FACE_MODEL_DIR / "face_recognition_sface_2021dec.onnx"
 FACE_COSINE_THRESHOLD = 0.363
 FACE_DETECTION_SCORE_THRESHOLD = 0.65
 FACE_NMS_THRESHOLD = 0.30
@@ -156,7 +157,7 @@ def _decrypt_camera_secret(value: str) -> str:
         return value
 
 def _get_main_account_id(db):
-    row = db.execute(text("SELECT id FROM main_accounts WHERE is_active = TRUE ORDER BY id LIMIT 1")).first()
+    row = db.execute(text("SELECT id FROM main_accounts WHERE is_active = 1 ORDER BY id LIMIT 1")).first()
     return int(row[0]) if row else 0
 
 def ensure_main_camera_profiles_table():
@@ -3311,8 +3312,11 @@ def generate_student_code(db, class_id: int) -> str:
 def _load_face_models():
     if not YUNET_MODEL_PATH.exists():
         raise FileNotFoundError(f"Missing YuNet model: {YUNET_MODEL_PATH}")
-    if not SFACE_MODEL_PATH.exists():
-        raise FileNotFoundError(f"Missing SFace model: {SFACE_MODEL_PATH}")
+    sface_path = SFACE_MODEL_PATH if SFACE_MODEL_PATH.exists() else SFACE_MODEL_PATH_ALT
+    if not sface_path.exists():
+        raise FileNotFoundError(
+            f"Missing SFace model: {SFACE_MODEL_PATH} or {SFACE_MODEL_PATH_ALT}"
+        )
     if not hasattr(cv2, "FaceDetectorYN"):
         raise RuntimeError("OpenCV FaceDetectorYN is not available.")
     if not hasattr(cv2, "FaceRecognizerSF"):
@@ -3328,7 +3332,7 @@ def _load_face_models():
         cv2.dnn.DNN_TARGET_CPU,
     )
     recognizer = cv2.FaceRecognizerSF.create(
-        str(SFACE_MODEL_PATH),
+        str(sface_path),
         "",
         cv2.dnn.DNN_BACKEND_OPENCV,
         cv2.dnn.DNN_TARGET_CPU,
