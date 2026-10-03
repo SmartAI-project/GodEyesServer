@@ -2369,7 +2369,7 @@ def get_admin_student_rows(selected_class_id: int | None = None):
                 JOIN class_students cs ON cs.student_id = s.id
                 JOIN classes c ON c.id = cs.class_id
                 WHERE {where}
-                ORDER BY LOWER(c.name), LOWER(s.full_name)
+                ORDER BY c.name, s.full_name
             """),
             params
         ).mappings().all()
