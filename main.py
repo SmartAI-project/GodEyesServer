@@ -8358,17 +8358,46 @@ async def api_create_session(request: Request):
                     stale = True
                 if stale:
                     now = utc_now_iso()
+
+                    # Calculate the stale-session duration in Python.
+                    # The previous PostgreSQL SQL reused :ended_at twice:
+                    # once as the column value and once as TIMESTAMPTZ.
+                    # PostgreSQL then inferred conflicting parameter types.
+                    duration_seconds = 0
+                    try:
+                        started_text = str(active["started_at"] or "")
+                        started_dt = datetime.fromisoformat(
+                            started_text.replace("Z", "+00:00")
+                        )
+                        end_dt = datetime.fromisoformat(
+                            now.replace("Z", "+00:00")
+                        )
+                        duration_seconds = max(
+                            0,
+                            int((end_dt - started_dt).total_seconds())
+                        )
+                    except Exception:
+                        duration_seconds = 0
+
                     db.execute(
                         text("""
                             UPDATE sessions
-                            SET status = 'ABANDONED', ended_at = :ended_at,
+                            SET status = 'ABANDONED',
+                                ended_at = :ended_at,
                                 duration_seconds = CASE
                                     WHEN duration_seconds > 0 THEN duration_seconds
-                                    ELSE GREATEST(0, CAST(EXTRACT(EPOCH FROM (CAST(:ended_at AS TIMESTAMPTZ) - CAST(started_at AS TIMESTAMPTZ))) AS INTEGER))
+                                    ELSE :duration_seconds
                                 END
-                            WHERE id = :session_id AND teacher_id = :teacher_id AND status = 'RUNNING'
+                            WHERE id = :session_id
+                              AND teacher_id = :teacher_id
+                              AND status = 'RUNNING'
                         """),
-                        {"ended_at": now, "session_id": int(active["id"]), "teacher_id": teacher_id}
+                        {
+                            "ended_at": now,
+                            "duration_seconds": duration_seconds,
+                            "session_id": int(active["id"]),
+                            "teacher_id": teacher_id,
+                        }
                     )
                     db.commit()
                 else:
