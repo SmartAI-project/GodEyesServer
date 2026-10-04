@@ -7669,6 +7669,7 @@ def ensure_session_tables():
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
             )
         """))
+
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS session_students (
                 id BIGSERIAL PRIMARY KEY,
@@ -7680,6 +7681,7 @@ def ensure_session_tables():
                 UNIQUE(session_id, student_id)
             )
         """))
+
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS observations (
                 id BIGSERIAL PRIMARY KEY,
@@ -7696,6 +7698,7 @@ def ensure_session_tables():
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
             )
         """))
+
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS evidence (
                 id BIGSERIAL PRIMARY KEY,
@@ -7715,35 +7718,114 @@ def ensure_session_tables():
             )
         """))
 
+        # Existing sessions table migration.
         session_columns = _table_columns(db, "sessions")
-        migrations = {
-            "last_heartbeat_at": "ALTER TABLE sessions ADD COLUMN last_heartbeat_at TEXT NOT NULL DEFAULT ''",
-            "class_name_snapshot": "ALTER TABLE sessions ADD COLUMN class_name_snapshot TEXT NOT NULL DEFAULT ''",
-            "class_code_snapshot": "ALTER TABLE sessions ADD COLUMN class_code_snapshot TEXT NOT NULL DEFAULT ''",
-            "deleted_at": "ALTER TABLE sessions ADD COLUMN deleted_at TEXT NOT NULL DEFAULT ''",
-            "deleted_by_teacher_id": "ALTER TABLE sessions ADD COLUMN deleted_by_teacher_id INTEGER NOT NULL DEFAULT 0",
-            "deleted_by_username": "ALTER TABLE sessions ADD COLUMN deleted_by_username TEXT NOT NULL DEFAULT ''",
-            "deleted_from": "ALTER TABLE sessions ADD COLUMN deleted_from TEXT NOT NULL DEFAULT ''",
+
+        session_migrations = {
+            "last_heartbeat_at":
+                "ALTER TABLE sessions ADD COLUMN last_heartbeat_at TEXT NOT NULL DEFAULT ''",
+            "class_name_snapshot":
+                "ALTER TABLE sessions ADD COLUMN class_name_snapshot TEXT NOT NULL DEFAULT ''",
+            "class_code_snapshot":
+                "ALTER TABLE sessions ADD COLUMN class_code_snapshot TEXT NOT NULL DEFAULT ''",
+            "deleted_at":
+                "ALTER TABLE sessions ADD COLUMN deleted_at TEXT NOT NULL DEFAULT ''",
+            "deleted_by_teacher_id":
+                "ALTER TABLE sessions ADD COLUMN deleted_by_teacher_id INTEGER NOT NULL DEFAULT 0",
+            "deleted_by_username":
+                "ALTER TABLE sessions ADD COLUMN deleted_by_username TEXT NOT NULL DEFAULT ''",
+            "deleted_from":
+                "ALTER TABLE sessions ADD COLUMN deleted_from TEXT NOT NULL DEFAULT ''",
         }
-        for column, statement in migrations.items():
+
+        for column, statement in session_migrations.items():
             if column not in session_columns:
                 db.execute(text(statement))
 
-        db.execute(text("UPDATE sessions SET last_heartbeat_at = started_at WHERE last_heartbeat_at = '' OR last_heartbeat_at IS NULL"))
-        db.execute(text("UPDATE sessions SET class_name_snapshot = COALESCE((SELECT name FROM classes WHERE classes.id = sessions.class_id), class_name_snapshot) WHERE class_name_snapshot = '' OR class_name_snapshot IS NULL"))
-        db.execute(text("UPDATE sessions SET class_code_snapshot = COALESCE((SELECT code FROM classes WHERE classes.id = sessions.class_id), class_code_snapshot) WHERE class_code_snapshot = '' OR class_code_snapshot IS NULL"))
-        db.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_teacher ON sessions(teacher_id, deleted_at, id DESC)"))
-        db.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_class ON sessions(class_id, deleted_at, id DESC)"))
-        db.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_deleted ON sessions(deleted_at, id DESC)"))
-        db.execute(text("CREATE INDEX IF NOT EXISTS idx_session_students_session ON session_students(session_id)"))
-        db.execute(text("CREATE INDEX IF NOT EXISTS idx_observations_session ON observations(session_id, id DESC)"))
-        db.execute(text("CREATE INDEX IF NOT EXISTS idx_evidence_session ON evidence(session_id, id DESC)"))
+        # Existing PostgreSQL databases may already contain an older
+        # session_students table without the columns required by the
+        # current INSERT in /api/v1/sessions.
+        session_student_columns = _table_columns(db, "session_students")
+
+        if "student_code" not in session_student_columns:
+            db.execute(text("""
+                ALTER TABLE session_students
+                ADD COLUMN student_code TEXT NOT NULL DEFAULT ''
+            """))
+
+        if "full_name" not in session_student_columns:
+            db.execute(text("""
+                ALTER TABLE session_students
+                ADD COLUMN full_name TEXT NOT NULL DEFAULT ''
+            """))
+
+        # Backfill session metadata.
+        db.execute(text("""
+            UPDATE sessions
+            SET last_heartbeat_at = started_at
+            WHERE last_heartbeat_at = ''
+               OR last_heartbeat_at IS NULL
+        """))
+
+        db.execute(text("""
+            UPDATE sessions
+            SET class_name_snapshot = COALESCE(
+                (
+                    SELECT name
+                    FROM classes
+                    WHERE classes.id = sessions.class_id
+                ),
+                class_name_snapshot
+            )
+            WHERE class_name_snapshot = ''
+               OR class_name_snapshot IS NULL
+        """))
+
+        db.execute(text("""
+            UPDATE sessions
+            SET class_code_snapshot = COALESCE(
+                (
+                    SELECT code
+                    FROM classes
+                    WHERE classes.id = sessions.class_id
+                ),
+                class_code_snapshot
+            )
+            WHERE class_code_snapshot = ''
+               OR class_code_snapshot IS NULL
+        """))
+
+        db.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_sessions_teacher
+            ON sessions(teacher_id, deleted_at, id DESC)
+        """))
+
+        db.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_sessions_class
+            ON sessions(class_id, deleted_at, id DESC)
+        """))
+
+        db.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_sessions_deleted
+            ON sessions(deleted_at, id DESC)
+        """))
+
+        db.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_session_students_session
+            ON session_students(session_id)
+        """))
+
+        db.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_observations_session
+            ON observations(session_id, id DESC)
+        """))
+
+        db.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_evidence_session
+            ON evidence(session_id, id DESC)
+        """))
+
         db.commit()
-
-
-ensure_session_tables()
-
-
 def api_teacher_or_401(request: Request):
     payload = get_teacher_payload(request)
     if payload is None:
