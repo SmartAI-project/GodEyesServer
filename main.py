@@ -8333,102 +8333,112 @@ async def api_create_session(request: Request):
         camera_type = "OTHER"
 
     with SessionLocal() as db:
-        class_row = get_teacher_class(db, teacher_id, class_id)
-        if class_row is None:
-            return JSONResponse({"detail": "Class not found."}, status_code=404)
+        try:
+            class_row = get_teacher_class(db, teacher_id, class_id)
+            if class_row is None:
+                return JSONResponse({"detail": "Class not found."}, status_code=404)
 
-        # Keep only one active session per teacher to avoid accidental duplicate runs.
-        active = db.execute(
-            text("""
-                SELECT id, started_at, last_heartbeat_at
-                FROM sessions
-                WHERE teacher_id = :teacher_id AND status = 'RUNNING'
-                ORDER BY id DESC LIMIT 1
-            """),
-            {"teacher_id": teacher_id}
-        ).mappings().first()
-        if active is not None:
-            heartbeat_value = str(active["last_heartbeat_at"] or active["started_at"] or "")
-            stale = False
-            try:
-                heartbeat_dt = datetime.fromisoformat(heartbeat_value.replace("Z", "+00:00"))
-                stale = (datetime.now(timezone.utc) - heartbeat_dt).total_seconds() > SESSION_STALE_SECONDS
-            except Exception:
-                stale = True
-            if stale:
-                now = utc_now_iso()
-                db.execute(
-                    text("""
-                        UPDATE sessions
-                        SET status = 'ABANDONED', ended_at = :ended_at,
-                            duration_seconds = CASE
-                                WHEN duration_seconds > 0 THEN duration_seconds
-                                ELSE GREATEST(0, CAST(EXTRACT(EPOCH FROM (CAST(:ended_at AS TIMESTAMPTZ) - CAST(started_at AS TIMESTAMPTZ))) AS INTEGER))
-                            END
-                        WHERE id = :session_id AND teacher_id = :teacher_id AND status = 'RUNNING'
-                    """),
-                    {"ended_at": now, "session_id": int(active["id"]), "teacher_id": teacher_id}
-                )
-                db.commit()
-            else:
-                return JSONResponse({
-                    "detail": "A session is already running.",
-                    "session_id": int(active["id"]),
-                }, status_code=409)
-
-        students = student_snapshot(db, class_id)
-        now = utc_now_iso()
-        result = db.execute(
-            text("""
-                INSERT INTO sessions
-                    (teacher_id, class_id, status, started_at, client_version, camera_type, last_heartbeat_at, class_name_snapshot, class_code_snapshot)
-                VALUES
-                    (:teacher_id, :class_id, 'RUNNING', :started_at, :client_version, :camera_type, :last_heartbeat_at, :class_name_snapshot, :class_code_snapshot)
-                RETURNING id
-            """),
-            {
-                "teacher_id": teacher_id,
-                "class_id": class_id,
-                "started_at": now,
-                "client_version": client_version,
-                "camera_type": camera_type,
-                "last_heartbeat_at": now,
-                "class_name_snapshot": str(class_row["name"] or "")[:200],
-                "class_code_snapshot": str(class_row["code"] or "")[:80],
-            }
-        )
-        session_id = int(result.scalar_one())
-
-        for student in students:
-            db.execute(
+            # Keep only one active session per teacher to avoid accidental duplicate runs.
+            active = db.execute(
                 text("""
-                    INSERT INTO session_students
-                        (session_id, student_id, student_code, full_name)
+                    SELECT id, started_at, last_heartbeat_at
+                    FROM sessions
+                    WHERE teacher_id = :teacher_id AND status = 'RUNNING'
+                    ORDER BY id DESC LIMIT 1
+                """),
+                {"teacher_id": teacher_id}
+            ).mappings().first()
+            if active is not None:
+                heartbeat_value = str(active["last_heartbeat_at"] or active["started_at"] or "")
+                stale = False
+                try:
+                    heartbeat_dt = datetime.fromisoformat(heartbeat_value.replace("Z", "+00:00"))
+                    stale = (datetime.now(timezone.utc) - heartbeat_dt).total_seconds() > SESSION_STALE_SECONDS
+                except Exception:
+                    stale = True
+                if stale:
+                    now = utc_now_iso()
+                    db.execute(
+                        text("""
+                            UPDATE sessions
+                            SET status = 'ABANDONED', ended_at = :ended_at,
+                                duration_seconds = CASE
+                                    WHEN duration_seconds > 0 THEN duration_seconds
+                                    ELSE GREATEST(0, CAST(EXTRACT(EPOCH FROM (CAST(:ended_at AS TIMESTAMPTZ) - CAST(started_at AS TIMESTAMPTZ))) AS INTEGER))
+                                END
+                            WHERE id = :session_id AND teacher_id = :teacher_id AND status = 'RUNNING'
+                        """),
+                        {"ended_at": now, "session_id": int(active["id"]), "teacher_id": teacher_id}
+                    )
+                    db.commit()
+                else:
+                    return JSONResponse({
+                        "detail": "A session is already running.",
+                        "session_id": int(active["id"]),
+                    }, status_code=409)
+
+            students = student_snapshot(db, class_id)
+            now = utc_now_iso()
+            result = db.execute(
+                text("""
+                    INSERT INTO sessions
+                        (teacher_id, class_id, status, started_at, client_version, camera_type, last_heartbeat_at, class_name_snapshot, class_code_snapshot)
                     VALUES
-                        (:session_id, :student_id, :student_code, :full_name)
+                        (:teacher_id, :class_id, 'RUNNING', :started_at, :client_version, :camera_type, :last_heartbeat_at, :class_name_snapshot, :class_code_snapshot)
+                    RETURNING id
                 """),
                 {
-                    "session_id": session_id,
-                    "student_id": int(student["id"]),
-                    "student_code": student["student_code"],
-                    "full_name": student["full_name"],
+                    "teacher_id": teacher_id,
+                    "class_id": class_id,
+                    "started_at": now,
+                    "client_version": client_version,
+                    "camera_type": camera_type,
+                    "last_heartbeat_at": now,
+                    "class_name_snapshot": str(class_row["name"] or "")[:200],
+                    "class_code_snapshot": str(class_row["code"] or "")[:80],
                 }
             )
-        db.commit()
+            session_id = int(result.scalar_one())
 
-        roster = class_face_roster(db, class_id)
+            for student in students:
+                db.execute(
+                    text("""
+                        INSERT INTO session_students
+                            (session_id, student_id, student_code, full_name)
+                        VALUES
+                            (:session_id, :student_id, :student_code, :full_name)
+                    """),
+                    {
+                        "session_id": session_id,
+                        "student_id": int(student["id"]),
+                        "student_code": student["student_code"],
+                        "full_name": student["full_name"],
+                    }
+                )
+            db.commit()
 
-    return {
-        "session_id": session_id,
-        "status": "RUNNING",
-        "started_at": now,
-        "class": {
-            "id": class_id,
-            "name": class_row["name"],
-            "code": class_row["code"],
-        },
-        "roster": roster,
-    }
+            roster = class_face_roster(db, class_id)
+
+            return {
+                "session_id": session_id,
+                "status": "RUNNING",
+                "started_at": now,
+                "class": {
+                    "id": class_id,
+                    "name": class_row["name"],
+                    "code": class_row["code"],
+                },
+                "roster": roster,
+            }
+        except Exception as exc:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            return JSONResponse(
+                {"detail": f"Session creation failed: {type(exc).__name__}: {exc}"},
+                status_code=500,
+            )
 
 
 @app.get("/api/v1/sessions/{session_id}")
