@@ -889,7 +889,7 @@ def ensure_student_tables():
             db.execute(text("ALTER TABLE students ADD COLUMN face_embedding TEXT NOT NULL DEFAULT ''"))
             columns.add("face_embedding")
         if "updated_at" not in columns:
-            db.execute(text("ALTER TABLE students ADD COLUMN updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)"))
+            db.execute(text("ALTER TABLE students ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_students_owner ON students(owner_type, owner_id)"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_class_students_class ON class_students(class_id)"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_class_students_student ON class_students(student_id)"))
@@ -2287,7 +2287,7 @@ def admin_edit_class(request: Request, class_id: int = Form(...), name: str = Fo
         db.execute(
             text("""
                 UPDATE classes
-                SET name = :name, description = :description, updated_at = CURRENT_TIMESTAMP::text
+                SET name = :name, description = :description, updated_at = CURRENT_TIMESTAMP
                 WHERE id = :class_id
             """),
             {"name": name, "description": description, "class_id": class_id}
@@ -2846,7 +2846,7 @@ def admin_edit_student(request: Request, student_id: int = Form(...), class_id: 
                 new_photo_path=save_student_photo(photo); photo_path=new_photo_path; face_status='PENDING'; embedding=''
             else:
                 photo_path=current['photo_path']; face_status=current['face_status']; embedding=current['face_embedding']
-            db.execute(text("UPDATE students SET student_code=:student_code,full_name=:full_name,photo_path=:photo_path,face_status=:face_status,face_embedding=:embedding,updated_at=CURRENT_TIMESTAMP::text WHERE id=:student_id"), {"student_code":student_code,"full_name":full_name,"photo_path":photo_path,"face_status":face_status,"embedding":embedding,"student_id":student_id})
+            db.execute(text("UPDATE students SET student_code=:student_code,full_name=:full_name,photo_path=:photo_path,face_status=:face_status,face_embedding=:embedding,updated_at=CURRENT_TIMESTAMP WHERE id=:student_id"), {"student_code":student_code,"full_name":full_name,"photo_path":photo_path,"face_status":face_status,"embedding":embedding,"student_id":student_id})
             db.execute(text("DELETE FROM class_students WHERE student_id=:student_id"), {"student_id":student_id}); db.execute(text("INSERT INTO class_students (class_id,student_id) VALUES (:class_id,:student_id)"), {"class_id":class_id,"student_id":student_id})
             if photo_changed:
                 try: analyze_student_photo_for_db(db, student_id, new_photo_path)
@@ -2869,6 +2869,12 @@ def admin_edit_student(request: Request, student_id: int = Form(...), class_id: 
 
 @app.post("/admin/students/start-face-scan")
 def start_admin_student_face_scan(request: Request, student_id: int = Form(...)):
+    """Create a short-lived enrollment token and hand it to the local Windows app.
+
+    The Server may run on Render, so it must never try to start a Windows EXE
+    with subprocess.Popen. The browser instead receives a godeyes:// URI that
+    includes the Render URL; the local GodEyes EXE handles the URI.
+    """
     payload = get_admin_payload(request)
     if payload is None:
         return RedirectResponse(url="/", status_code=303)
@@ -2889,41 +2895,26 @@ def start_admin_student_face_scan(request: Request, student_id: int = Form(...))
     if row is None:
         return RedirectResponse(url="/admin?section=students&status=invalid", status_code=303)
 
-    app_path = _find_god_eyes_app()
-    if app_path is None:
-        return RedirectResponse(url="/admin?section=students&status=face_scan_client_missing", status_code=303)
-
     token = _issue_face_scan_token(int(student_id), admin_id)
-    if app_path.suffix.lower() == '.exe':
-        cmd = [
-            str(app_path),
-            '--face-enroll',
-            '--student-id', str(int(student_id)),
-            '--enroll-token', token,
-            '--server-url', FACE_SCAN_SERVER_URL,
-        ]
-    else:
-        cmd = [
-            sys.executable,
-            str(app_path),
-            '--face-enroll',
-            '--student-id', str(int(student_id)),
-            '--enroll-token', token,
-            '--server-url', FACE_SCAN_SERVER_URL,
-        ]
-    try:
-        subprocess.Popen(
-            cmd,
-            cwd=str(app_path.parent),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0),
-        )
-    except Exception:
-        FACE_SCAN_TOKENS.pop(token, None)
-        return RedirectResponse(url="/admin?section=students&status=face_scan_error", status_code=303)
-
-    return RedirectResponse(url="/admin?section=students&status=face_scan_started", status_code=303)
+    server_url = str(request.base_url).rstrip("/")
+    launch_url = (
+        "godeyes://face-enroll?student_id=" + url_quote(str(int(student_id)), safe="")
+        + "&token=" + url_quote(token, safe="")
+        + "&server_url=" + url_quote(server_url, safe="")
+    )
+    safe_launch_url = escape(launch_url, quote=True)
+    return HTMLResponse(f"""
+<!doctype html>
+<html lang="vi">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>God Eyes Face ID</title></head>
+<body style="font-family:Segoe UI,Arial,sans-serif;padding:40px;text-align:center;background:#f6f8fc;color:#203247">
+<h2>Đang mở God Eyes Face ID…</h2>
+<p>Windows sẽ mở công cụ quét Face ID trên máy này.</p>
+<p><a href="{safe_launch_url}" style="display:inline-block;padding:13px 20px;border-radius:10px;background:#155eef;color:#fff;text-decoration:none;font-weight:700">MỞ GOD EYES FACE ID</a></p>
+<script>window.location.href = {json.dumps(launch_url)};</script>
+</body></html>
+""")
 
 
 @app.post("/admin/students/rebuild-face")
@@ -3238,7 +3229,7 @@ def edit_class(request: Request, class_id: int = Form(...), name: str = Form(...
         db.execute(
             text("""
                 UPDATE classes
-                SET name = :name, description = :description, updated_at = CURRENT_TIMESTAMP::text
+                SET name = :name, description = :description, updated_at = CURRENT_TIMESTAMP
                 WHERE id = :class_id AND teacher_id = :teacher_id
             """),
             {"name": name, "description": description, "class_id": class_id, "teacher_id": teacher_id}
@@ -3432,7 +3423,7 @@ def save_face_embedding(db, student_id: int, embedding: list[float]):
             UPDATE students
             SET face_embedding = :face_embedding,
                 face_status = 'READY',
-                updated_at = CURRENT_TIMESTAMP::text
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = :student_id
         """),
         {"face_embedding": json.dumps(embedding, separators=(",", ":")), "student_id": student_id}
@@ -3451,7 +3442,7 @@ def mark_face_review(db, student_id: int):
             UPDATE students
             SET face_status = 'REVIEW',
                 face_embedding = '',
-                updated_at = CURRENT_TIMESTAMP::text
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = :student_id
         """),
         {"student_id": student_id}
@@ -3718,7 +3709,7 @@ def edit_student(request: Request, student_id: int = Form(...), class_id: int = 
         try:
             if photo_changed: new_photo_path=save_student_photo(photo); photo_path=new_photo_path; face_status='PENDING'; embedding=''
             else: photo_path=current['photo_path']; face_status=current['face_status']; embedding=current['face_embedding']
-            db.execute(text("UPDATE students SET full_name=:full_name,student_code=:student_code,photo_path=:photo_path,face_status=:face_status,face_embedding=:embedding,updated_at=CURRENT_TIMESTAMP::text WHERE id=:student_id AND owner_type='TEACHER' AND owner_id=:teacher_id"), {"full_name":full_name,"student_code":student_code,"photo_path":photo_path,"face_status":face_status,"embedding":embedding,"student_id":student_id,"teacher_id":teacher_id})
+            db.execute(text("UPDATE students SET full_name=:full_name,student_code=:student_code,photo_path=:photo_path,face_status=:face_status,face_embedding=:embedding,updated_at=CURRENT_TIMESTAMP WHERE id=:student_id AND owner_type='TEACHER' AND owner_id=:teacher_id"), {"full_name":full_name,"student_code":student_code,"photo_path":photo_path,"face_status":face_status,"embedding":embedding,"student_id":student_id,"teacher_id":teacher_id})
             db.execute(text("DELETE FROM class_students WHERE student_id=:student_id"),{"student_id":student_id}); db.execute(text("INSERT INTO class_students (class_id,student_id) VALUES (:class_id,:student_id)"),{"class_id":class_id,"student_id":student_id})
             if photo_changed:
                 try: analyze_student_photo_for_db(db,student_id,new_photo_path)
@@ -7701,9 +7692,12 @@ async def api_face_enrollment(request: Request):
     except Exception:
         return JSONResponse({"detail": "Invalid JSON body."}, status_code=400)
 
-    token = str(body.get('token') or '').strip()
-    student_id = api_int(body.get('student_id'))
-    embedding = body.get('embedding')
+    if not isinstance(body, dict):
+        return JSONResponse({"detail": "Invalid JSON body."}, status_code=400)
+
+    token = str(body.get("token") or "").strip()
+    student_id = api_int(body.get("student_id"))
+    embedding = body.get("embedding")
     if not token or student_id <= 0 or not isinstance(embedding, list):
         return JSONResponse({"detail": "Missing enrollment token, student_id or embedding."}, status_code=400)
 
@@ -7711,54 +7705,70 @@ async def api_face_enrollment(request: Request):
     token_data = FACE_SCAN_TOKENS.get(token)
     if token_data is None:
         return JSONResponse({"detail": "Enrollment token is invalid or expired."}, status_code=401)
-    if int(token_data.get('student_id', 0)) != int(student_id):
+    if int(token_data.get("student_id", 0)) != int(student_id):
         return JSONResponse({"detail": "Enrollment token does not match the student."}, status_code=403)
 
     try:
         values = [float(v) for v in embedding]
     except Exception:
         return JSONResponse({"detail": "Embedding contains invalid values."}, status_code=400)
+
     if len(values) < 32 or len(values) > 4096:
-        return JSONResponse({"detail": "Embedding length is invalid."}, status_code=400)
+        return JSONResponse({"detail": f"Embedding length is invalid: {len(values)}."}, status_code=400)
+    if not np.all(np.isfinite(np.asarray(values, dtype=np.float32))):
+        return JSONResponse({"detail": "Embedding contains non-finite values."}, status_code=400)
 
     vector = np.asarray(values, dtype=np.float32).ravel()
     norm = float(np.linalg.norm(vector))
     if norm <= 1e-8:
         return JSONResponse({"detail": "Embedding norm is invalid."}, status_code=400)
     vector = vector / norm
+    serialized = json.dumps(vector.tolist(), ensure_ascii=False, separators=(",", ":"))
 
+    db = None
     try:
-        with SessionLocal() as db:
-            row = db.execute(
-                text("SELECT id, full_name, student_code FROM students WHERE id = :student_id LIMIT 1"),
-                {"student_id": student_id},
-            ).mappings().first()
-            if row is None:
-                return JSONResponse({"detail": "Student not found."}, status_code=404)
-
-            result = db.execute(
-                text("""
-                    UPDATE students
-                    SET face_embedding = :face_embedding,
-                        face_status = 'READY',
-                        updated_at = CURRENT_TIMESTAMP::text
-                    WHERE id = :student_id
-                """),
-                {
-                    "face_embedding": json.dumps(vector.tolist(), ensure_ascii=False, separators=(',', ':')),
-                    "student_id": student_id,
-                },
-            )
-            if result.rowcount != 1:
-                db.rollback()
-                return JSONResponse({"detail": "Face ID was not saved: student row was not updated."}, status_code=409)
-            db.commit()
-    except Exception as exc:
-        try:
+        db = SessionLocal()
+        row = db.execute(
+            text("SELECT id, full_name, student_code FROM students WHERE id = :student_id LIMIT 1"),
+            {"student_id": student_id},
+        ).mappings().first()
+        if row is None:
             db.rollback()
-        except Exception:
-            pass
-        return JSONResponse({"detail": f"Face ID database save failed: {type(exc).__name__}: {exc}"}, status_code=500)
+            return JSONResponse({"detail": "Student not found."}, status_code=404)
+
+        columns = _table_columns(db, "students")
+        if "face_embedding" not in columns:
+            db.execute(text("ALTER TABLE students ADD COLUMN face_embedding TEXT NOT NULL DEFAULT ''"))
+        if "updated_at" not in columns:
+            db.execute(text("ALTER TABLE students ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"))
+
+        db.execute(
+            text("""
+                UPDATE students
+                SET face_embedding = :face_embedding,
+                    face_status = 'READY',
+                    updated_at = CAST(CURRENT_TIMESTAMP AS TEXT)
+                WHERE id = :student_id
+            """),
+            {"face_embedding": serialized, "student_id": student_id},
+        )
+        db.commit()
+    except Exception as exc:
+        if db is not None:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        return JSONResponse(
+            {"detail": f"Face ID database save failed: {type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
 
     FACE_SCAN_TOKENS.pop(token, None)
     return {
