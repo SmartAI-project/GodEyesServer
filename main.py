@@ -7152,7 +7152,7 @@ def _issue_app_launch_token(teacher_id: int) -> str:
 
 def teacher_app_content(teacher_id: int, status: str = '') -> str:
     # Desktop EXE is distributed from Firebase Hosting when this server runs on Render.
-    firebase_app_url = "https://github.com/SmartAI-project/GodEyesServer/releases/latest/download/GodEyes.exe"
+    firebase_app_url = "https://github.com/SmartAI-project/GodEyesServer/releases/latest/download/GodEyes_Lite.exe"
     app_ready = True
     status_html = ''
     messages = {
@@ -7372,7 +7372,7 @@ def teacher_download_app(request: Request):
         return RedirectResponse(url="/", status_code=303)
 
     # Desktop EXE is hosted as a GitHub Release asset.
-    download_url = "https://github.com/SmartAI-project/GodEyesServer/releases/latest/download/GodEyes.exe"
+    download_url = "https://github.com/SmartAI-project/GodEyesServer/releases/latest/download/GodEyes_Lite.exe"
     return RedirectResponse(
         url=download_url,
         status_code=302,
