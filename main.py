@@ -26,6 +26,7 @@ import numpy as np
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
 from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from auth.security import create_access_token, decode_access_token, hash_password, verify_password
 from database import SessionLocal
@@ -1174,8 +1175,17 @@ def ensure_student_tables():
             )
         """))
         columns = _table_columns(db, "students")
+        dialect = getattr(getattr(db, "bind", None), "dialect", None)
+        dialect_name = getattr(dialect, "name", "")
         if "face_embedding" not in columns:
             db.execute(text("ALTER TABLE students ADD COLUMN face_embedding TEXT NOT NULL DEFAULT ''"))
+        if "updated_at" not in columns:
+            if dialect_name == "sqlite":
+                # SQLite cannot ADD COLUMN with a non-constant CURRENT_TIMESTAMP default.
+                db.execute(text("ALTER TABLE students ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''"))
+                db.execute(text("UPDATE students SET updated_at = CURRENT_TIMESTAMP WHERE updated_at = '' OR updated_at IS NULL"))
+            else:
+                db.execute(text("ALTER TABLE students ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_students_owner ON students(owner_type, owner_id)"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_class_students_class ON class_students(class_id)"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_class_students_student ON class_students(student_id)"))
@@ -3169,6 +3179,12 @@ def admin_edit_student(request: Request, student_id: int = Form(...), class_id: 
 
 @app.post("/admin/students/start-face-scan")
 def start_admin_student_face_scan(request: Request, student_id: int = Form(...)):
+    """Create a short-lived enrollment token and launch the local Windows client.
+
+    The web server may run on Render, so it must NOT try to Popen the teacher's
+    EXE. Instead the browser receives a godeyes://face-enroll URL that Windows
+    dispatches to the locally installed GodEyes.exe.
+    """
     payload = get_admin_payload(request)
     if payload is None:
         return RedirectResponse(url="/", status_code=303)
@@ -3189,41 +3205,26 @@ def start_admin_student_face_scan(request: Request, student_id: int = Form(...))
     if row is None:
         return RedirectResponse(url="/admin?section=students&status=invalid", status_code=303)
 
-    app_path = _find_god_eyes_app()
-    if app_path is None:
-        return RedirectResponse(url="/admin?section=students&status=face_scan_client_missing", status_code=303)
-
     token = _issue_face_scan_token(int(student_id), admin_id)
-    if app_path.suffix.lower() == '.exe':
-        cmd = [
-            str(app_path),
-            '--face-enroll',
-            '--student-id', str(int(student_id)),
-            '--enroll-token', token,
-            '--server-url', FACE_SCAN_SERVER_URL,
-        ]
-    else:
-        cmd = [
-            sys.executable,
-            str(app_path),
-            '--face-enroll',
-            '--student-id', str(int(student_id)),
-            '--enroll-token', token,
-            '--server-url', FACE_SCAN_SERVER_URL,
-        ]
-    try:
-        subprocess.Popen(
-            cmd,
-            cwd=str(app_path.parent),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0),
-        )
-    except Exception:
-        FACE_SCAN_TOKENS.pop(token, None)
-        return RedirectResponse(url="/admin?section=students&status=face_scan_error", status_code=303)
-
-    return RedirectResponse(url="/admin?section=students&status=face_scan_started", status_code=303)
+    server_url = str(request.base_url).rstrip("/")
+    launch_url = (
+        "godeyes://face-enroll?student_id=" + url_quote(str(int(student_id)), safe="")
+        + "&token=" + url_quote(token, safe="")
+        + "&server_url=" + url_quote(server_url, safe="")
+    )
+    safe_launch_url = escape(launch_url, quote=True)
+    return HTMLResponse(f"""
+<!doctype html>
+<html lang="vi">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>God Eyes Face ID</title></head>
+<body style="font-family:Segoe UI,Arial,sans-serif;padding:40px;text-align:center;background:#f6f8fc;color:#203247">
+<h2>Đang mở God Eyes Face ID…</h2>
+<p>Windows sẽ mở công cụ quét Face ID trên máy này.</p>
+<p><a href="{safe_launch_url}" style="display:inline-block;padding:13px 20px;border-radius:10px;background:#155eef;color:#fff;text-decoration:none;font-weight:700">MỞ GOD EYES FACE ID</a></p>
+<script>window.location.href = {json.dumps(launch_url)};</script>
+</body></html>
+""")
 
 
 @app.post("/admin/students/rebuild-face")
@@ -7996,14 +7997,15 @@ def api_me(request: Request):
 
 @app.post("/api/v1/face-enrollment")
 async def api_face_enrollment(request: Request):
+    """Persist one locally generated SFace embedding for a specific student."""
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"detail": "Invalid JSON body."}, status_code=400)
 
-    token = str(body.get('token') or '').strip()
-    student_id = api_int(body.get('student_id'))
-    embedding = body.get('embedding')
+    token = str(body.get("token") or "").strip()
+    student_id = api_int(body.get("student_id"))
+    embedding = body.get("embedding")
     if not token or student_id <= 0 or not isinstance(embedding, list):
         return JSONResponse({"detail": "Missing enrollment token, student_id or embedding."}, status_code=400)
 
@@ -8011,7 +8013,7 @@ async def api_face_enrollment(request: Request):
     token_data = FACE_SCAN_TOKENS.get(token)
     if token_data is None:
         return JSONResponse({"detail": "Enrollment token is invalid or expired."}, status_code=401)
-    if int(token_data.get('student_id', 0)) != int(student_id):
+    if int(token_data.get("student_id", 0)) != int(student_id):
         return JSONResponse({"detail": "Enrollment token does not match the student."}, status_code=403)
 
     try:
@@ -8022,33 +8024,62 @@ async def api_face_enrollment(request: Request):
         return JSONResponse({"detail": "Embedding length is invalid."}, status_code=400)
 
     vector = np.asarray(values, dtype=np.float32).ravel()
+    if not np.all(np.isfinite(vector)):
+        return JSONResponse({"detail": "Embedding contains NaN or infinite values."}, status_code=400)
     norm = float(np.linalg.norm(vector))
     if norm <= 1e-8:
         return JSONResponse({"detail": "Embedding norm is invalid."}, status_code=400)
     vector = vector / norm
 
-    with SessionLocal() as db:
-        row = db.execute(
-            text("SELECT id, full_name, student_code FROM students WHERE id = :student_id LIMIT 1"),
-            {"student_id": student_id},
-        ).mappings().first()
-        if row is None:
-            return JSONResponse({"detail": "Student not found."}, status_code=404)
+    try:
+        with SessionLocal() as db:
+            # Defensive schema repair for databases created before updated_at existed.
+            columns = _table_columns(db, "students")
+            if "face_embedding" not in columns:
+                db.execute(text("ALTER TABLE students ADD COLUMN face_embedding TEXT NOT NULL DEFAULT ''"))
+            if "updated_at" not in columns:
+                dialect = getattr(getattr(db, "bind", None), "dialect", None)
+                dialect_name = getattr(dialect, "name", "")
+                if dialect_name == "sqlite":
+                    db.execute(text("ALTER TABLE students ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''"))
+                    db.execute(text("UPDATE students SET updated_at = CURRENT_TIMESTAMP WHERE updated_at = '' OR updated_at IS NULL"))
+                else:
+                    db.execute(text("ALTER TABLE students ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text"))
 
-        db.execute(
-            text("""
-                UPDATE students
-                SET face_embedding = :face_embedding,
-                    face_status = 'READY',
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = :student_id
-            """),
-            {
-                "face_embedding": json.dumps(vector.tolist(), ensure_ascii=False, separators=(',', ':')),
-                "student_id": student_id,
-            },
-        )
-        db.commit()
+            row = db.execute(
+                text("SELECT id, full_name, student_code FROM students WHERE id = :student_id LIMIT 1"),
+                {"student_id": student_id},
+            ).mappings().first()
+            if row is None:
+                return JSONResponse({"detail": "Student not found."}, status_code=404)
+
+            result = db.execute(
+                text("""
+                    UPDATE students
+                    SET face_embedding = :face_embedding,
+                        face_status = 'READY',
+                        updated_at = CURRENT_TIMESTAMP::text
+                    WHERE id = :student_id
+                """),
+                {
+                    "face_embedding": json.dumps(vector.tolist(), ensure_ascii=False, separators=(",", ":")),
+                    "student_id": student_id,
+                },
+            )
+            db.commit()
+
+            if int(result.rowcount or 0) != 1:
+                return JSONResponse({"detail": "Face ID was not saved because the student record was not updated."}, status_code=404)
+    except SQLAlchemyError as exc:
+        # Keep the exact database cause in Render logs while returning a useful
+        # diagnostic to the desktop client instead of an opaque HTTP 500.
+        detail = str(getattr(exc, "orig", None) or exc).replace("\n", " ").strip()
+        if len(detail) > 500:
+            detail = detail[:500] + "…"
+        return JSONResponse({"detail": f"Face ID database error: {detail}"}, status_code=500)
+    except Exception as exc:
+        detail = str(exc).replace("\n", " ").strip() or exc.__class__.__name__
+        return JSONResponse({"detail": f"Face ID enrollment error: {detail[:500]}"}, status_code=500)
 
     FACE_SCAN_TOKENS.pop(token, None)
     return {
