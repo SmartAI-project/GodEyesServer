@@ -59,7 +59,14 @@ app = FastAPI(
     version="1.3.0"
 )
 
+GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v1"
+
 app.include_router(teacher_admin_router)
+
+
+@app.get("/__godeyes_history_ui")
+def godeyes_history_ui_version():
+    return {"history_focus_ui": GODEYES_HISTORY_FOCUS_UI_VERSION}
 
 
 def ensure_auth_tables():
@@ -6304,13 +6311,111 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
     """
 
 
+FOCUS_EVENT_PENALTIES = {
+    "OB_SLEEP": 12.0,
+    "HEAD_TURN_LEFT": 6.0,
+    "HEAD_TURN_RIGHT": 6.0,
+    "HEAD_DOWN": 6.0,
+}
+FOCUS_DEFAULT_PENALTY = 3.0
+
+
+def _focus_event_penalty(event_type: str, duration_seconds: float = 0.0) -> float:
+    """Return an observation-based focus loss.
+
+    Current Desktop versions do not yet send an explicit observation duration.
+    Until they do, the server uses a deterministic per-event impact weight.
+    Newer clients may send duration_seconds; that duration is then blended into
+    the impact instead of being silently ignored.
+    """
+    event_type = str(event_type or "OBSERVATION").strip().upper()
+    base = float(FOCUS_EVENT_PENALTIES.get(event_type, FOCUS_DEFAULT_PENALTY))
+    try:
+        duration = max(0.0, min(float(duration_seconds or 0.0), 300.0))
+    except Exception:
+        duration = 0.0
+    if duration > 0:
+        # 1 point of focus loss per 10 seconds, capped so one bad record cannot
+        # destroy the complete session score by itself.
+        return max(base, min(base + duration / 10.0, base + 12.0))
+    return base
+
+
+def _focus_severity(focus: float) -> tuple[str, str, int]:
+    focus = max(0.0, min(100.0, float(focus)))
+    if focus < 50.0:
+        return "DANGER", "danger", 0
+    if focus < 80.0:
+        return "NOT REALLY DANGER", "attention", 1
+    return "SAFE", "safe", 2
+
+
+def _format_clock_seconds(value: float) -> str:
+    seconds = max(0, int(round(float(value or 0))))
+    minutes, sec = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    return f"{minutes}m {sec:02d}s"
+
+
+def _student_focus_records(session_duration: float, observations: list[dict]) -> dict[int, dict]:
+    """Build one summary per student and attach focus/severity to every observation."""
+    grouped: dict[int, dict] = {}
+    state: dict[int, float] = {}
+    # Preserve chronological calculation for the per-event focus snapshot.
+    ordered = sorted(observations, key=lambda r: (str(r.get("observed_at") or ""), int(r.get("id") or 0)))
+    for row in ordered:
+        sid = int(row.get("student_id") or 0)
+        if sid <= 0:
+            continue
+        current = float(state.get(sid, 100.0))
+        duration = float(row.get("duration_seconds") or 0.0)
+        penalty = _focus_event_penalty(str(row.get("event_type") or ""), duration)
+        current = max(0.0, current - penalty)
+        state[sid] = current
+        sev_label, sev_class, sev_rank = _focus_severity(current)
+        item = dict(row)
+        item["focus_after"] = current
+        item["penalty"] = penalty
+        item["severity"] = sev_label
+        item["severity_class"] = sev_class
+        item["severity_rank"] = sev_rank
+        item["duration_seconds"] = duration
+        bucket = grouped.setdefault(sid, {
+            "student_id": sid,
+            "student_code": row.get("student_code") or "",
+            "full_name": row.get("full_name") or "Học sinh",
+            "focus": current,
+            "observation_count": 0,
+            "danger_count": 0,
+            "attention_count": 0,
+            "safe_count": 0,
+            "ob_time_seconds": 0.0,
+            "observations": [],
+        })
+        bucket["focus"] = current
+        bucket["observation_count"] += 1
+        bucket["ob_time_seconds"] += duration
+        bucket["observations"].append(item)
+        if sev_class == "danger":
+            bucket["danger_count"] += 1
+        elif sev_class == "attention":
+            bucket["attention_count"] += 1
+        else:
+            bucket["safe_count"] += 1
+
+    return grouped
+
+
 def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | None:
     with SessionLocal() as db:
         session = db.execute(
             text("""
-                SELECT s.id, s.teacher_id, s.class_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
+                SELECT s.id, s.teacher_id, s.class_id,
+                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                        COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
-                       s.status, s.started_at, s.ended_at, s.duration_seconds, s.client_version, s.camera_type,
+                       s.status, s.started_at, s.ended_at, s.duration_seconds,
                        (SELECT COUNT(*) FROM observations o WHERE o.session_id = s.id) AS observation_count,
                        (SELECT COUNT(*) FROM evidence e WHERE e.session_id = s.id) AS evidence_count
                 FROM sessions s
@@ -6324,98 +6429,397 @@ def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | No
         if session is None:
             return None
 
+        roster = db.execute(
+            text("""
+                SELECT student_id, student_code, full_name
+                FROM session_students
+                WHERE session_id = :session_id
+                ORDER BY id ASC
+            """),
+            {"session_id": session_id}
+        ).mappings().all()
         observations = db.execute(
             text("""
-                SELECT id, student_code, full_name, observed_at, event_type, confidence, assessment, details, evidence_id
-                FROM observations WHERE session_id = :session_id ORDER BY id ASC
+                SELECT id, student_id, student_code, full_name, observed_at, event_type,
+                       confidence, assessment, details, evidence_id,
+                       COALESCE(duration_seconds, 0) AS duration_seconds
+                FROM observations
+                WHERE session_id = :session_id
+                ORDER BY observed_at ASC, id ASC
             """),
             {"session_id": session_id}
         ).mappings().all()
-        evidence = db.execute(
-            text("""
-                SELECT id, student_code, full_name, captured_at, file_name
-                FROM evidence WHERE session_id = :session_id ORDER BY id ASC
-            """),
-            {"session_id": session_id}
-        ).mappings().all()
-        roster = session_roster(db, session_id)
+        evidence_count = int(session["evidence_count"] or 0)
 
-    obs_html = ""
-    for row in observations:
-        evidence_link = f'<a class="detail-link" href="/api/v1/evidence/{int(row["evidence_id"])}" target="_blank">Xem ảnh</a>' if row["evidence_id"] else "-"
-        obs_html += f"""
-            <tr>
-                <td>{format_server_dt(row['observed_at'])}</td>
-                <td><div class="detail-primary">{escape(row['full_name'] or 'Không xác định')}</div><div class="detail-secondary">{escape(row['student_code'] or '-')}</div></td>
-                <td>OBSERVATION</td>
-                <td>{float(row['confidence'] or 0.0) * 100:.0f}%</td>
-                <td>{escape(row['details'] or '-')}</td>
-                <td>{evidence_link}</td>
-            </tr>
+    obs_dicts = [dict(row) for row in observations]
+    grouped = _student_focus_records(float(session["duration_seconds"] or 0), obs_dicts)
+
+    # Ensure every selected student appears, including zero-observation students.
+    student_cards = []
+    for row in roster:
+        sid = int(row["student_id"])
+        summary = grouped.get(sid, {
+            "student_id": sid,
+            "student_code": row["student_code"] or "",
+            "full_name": row["full_name"] or "Học sinh",
+            "focus": 100.0,
+            "observation_count": 0,
+            "danger_count": 0,
+            "attention_count": 0,
+            "safe_count": 0,
+            "ob_time_seconds": 0.0,
+            "observations": [],
+        })
+        summary["student_code"] = row["student_code"] or summary["student_code"] or ""
+        summary["full_name"] = row["full_name"] or summary["full_name"] or "Học sinh"
+        student_cards.append(summary)
+
+    # Sort weakest students first so the teacher sees the most important cases immediately.
+    student_cards.sort(key=lambda x: (x["focus"], -x["observation_count"], x["full_name"]))
+    danger_students = sum(1 for x in student_cards if x["focus"] < 50.0)
+    attention_students = sum(1 for x in student_cards if 50.0 <= x["focus"] < 80.0)
+    safe_students = len(student_cards) - danger_students - attention_students
+
+    cards_html = ""
+    for student in student_cards:
+        focus = max(0, min(100, round(student["focus"])))
+        severity, sev_class, _ = _focus_severity(focus)
+        border_cls = " student-focus-danger" if sev_class == "danger" else ""
+        href = f"/teacher/history/session/{int(session_id)}/student/{student['student_id']}"
+        cards_html += f"""
+            <a class="student-focus-card{border_cls}" href="{href}">
+                <div class="student-card-top">
+                    <div class="student-identity">
+                        <div class="student-avatar">{escape(str(student['full_name'])[:1].upper())}</div>
+                        <div>
+                            <div class="student-name">{escape(str(student['full_name']))}</div>
+                            <div class="student-code">{escape(str(student['student_code'] or '-'))}</div>
+                        </div>
+                    </div>
+                    <span class="severity-badge {sev_class}">{escape(severity)}</span>
+                </div>
+                <div class="focus-score-row">
+                    <div>
+                        <div class="focus-label">FOCUS SCORE</div>
+                        <div class="focus-value">{focus}%</div>
+                    </div>
+                    <div class="focus-meter"><span style="width:{focus}%"></span></div>
+                </div>
+                <div class="student-card-stats">
+                    <div><span>OB</span><strong>{student['observation_count']}</strong></div>
+                    <div><span>DANGER</span><strong>{student['danger_count']}</strong></div>
+                    <div><span>ATTENTION</span><strong>{student['attention_count']}</strong></div>
+                    <div><span>OB TIME</span><strong>{_format_clock_seconds(student['ob_time_seconds'])}</strong></div>
+                </div>
+                <div class="student-card-footer"><span>Xem chi tiết</span><span class="arrow">→</span></div>
+            </a>
         """
 
-    evidence_html = "".join(
-        f"""<a class="evidence-card" href="/api/v1/evidence/{int(row['id'])}" target="_blank"><img src="/api/v1/evidence/{int(row['id'])}" alt="Evidence {int(row['id'])}"><div class="evidence-card-meta"><strong>{escape(row['full_name'] or 'Không xác định')}</strong><span>{format_server_dt(row['captured_at'])}</span></div></a>"""
-        for row in evidence
-    )
-    roster_html = "".join(
-        f"<span class=\"roster-pill\"><strong>{escape(str(row['student_code']))}</strong><span>{escape(str(row['full_name']))}</span></span>" for row in roster
-    )
     delete_html = "" if session["status"] == "RUNNING" else f"""
         <form method="post" action="/teacher/history/delete" onsubmit="return confirm('Đưa session này vào thùng rác của Main Admin?');">
             <input type="hidden" name="session_id" value="{int(session['id'])}">
-            <button class="history-button danger" type="submit">Xóa buổi học</button>
+            <button class="history-delete-button" type="submit">Xóa buổi học</button>
         </form>
     """
 
     return f"""
-        <section class="panel history-panel">
-            <div class="history-detail-top">
+        <section class="history-focus-page">
+            <div class="history-focus-hero">
                 <div>
                     <a class="back-link" href="/teacher?section=history">← Quay lại lịch sử</a>
                     <div class="eyebrow-small">SESSION #{int(session['id'])}</div>
-                    <h2 class="history-title">{escape(session['class_name'])}</h2>
-                    <p class="history-subtitle">{escape(session['class_code'])} • {format_server_dt(session['started_at'])}</p>
+                    <h2>{escape(session['class_name'])}</h2>
+                    <p>{escape(session['class_code'])} <span>•</span> {format_server_dt(session['started_at'])}</p>
                 </div>
                 {delete_html}
             </div>
-            <div class="detail-metrics">
-                <div><span>Thời lượng</span><strong>{format_duration(session['duration_seconds'])}</strong></div>
-                <div><span>Học sinh</span><strong>{len(roster)}</strong></div>
-                <div><span>Observation</span><strong>{int(session['observation_count'] or 0)}</strong></div>
-                <div><span>Evidence</span><strong>{int(session['evidence_count'] or 0)}</strong></div>
+
+            <div class="session-overview-grid">
+                <div class="overview-card overview-card-main">
+                    <span>FOCUS OVERVIEW</span>
+                    <strong>{danger_students}</strong>
+                    <small>học sinh cần xem lại</small>
+                </div>
+                <div class="overview-card"><span>HỌC SINH</span><strong>{len(student_cards)}</strong><small>được chọn để quét</small></div>
+                <div class="overview-card"><span>NOT REALLY DANGER</span><strong>{attention_students}</strong><small>học sinh cần chú ý</small></div>
+                <div class="overview-card"><span>SAFE</span><strong>{safe_students}</strong><small>không có tín hiệu đáng chú ý</small></div>
             </div>
-            <div class="detail-section"><div class="detail-section-head"><h3>Danh sách trong session</h3><span>{len(roster)} học sinh</span></div><div class="roster-grid">{roster_html or '<div class="history-empty">Không có dữ liệu.</div>'}</div></div>
-            <div class="detail-section"><div class="detail-section-head"><h3>Observation</h3><span>Dữ liệu được lưu trên server</span></div><div class="history-table-wrap"><table class="history-table"><thead><tr><th>Thời gian</th><th>Học sinh</th><th>Loại</th><th>Confidence</th><th>Chi tiết</th><th>Evidence</th></tr></thead><tbody>{obs_html if obs_html else '<tr><td colspan="6"><div class="history-empty">Chưa có observation.</div></td></tr>'}</tbody></table></div></div>
-            <div class="detail-section"><div class="detail-section-head"><h3>Evidence</h3><span>{len(evidence)} ảnh</span></div><div class="evidence-grid">{evidence_html if evidence_html else '<div class="history-empty">Chưa có evidence.</div>'}</div></div>
+
+            <div class="history-focus-section-head">
+                <div><div class="eyebrow-small">CLASS OVERVIEW</div><h3>Học sinh trong buổi học</h3><p>Mỗi học sinh chỉ xuất hiện một lần. Mở từng thẻ để xem các frame quan trọng.</p></div>
+                <div class="session-meta-pill">{len(student_cards)} học sinh · {int(session['observation_count'] or 0)} observations · {evidence_count} evidence</div>
+            </div>
+
+            <div class="student-focus-grid">
+                {cards_html if cards_html else '<div class="focus-empty">Chưa có học sinh trong roster của session.</div>'}
+            </div>
         </section>
         <style>
-            .history-detail-top {{ display:flex; justify-content:space-between; align-items:flex-start; gap:20px; }}
-            .back-link {{ display:inline-block; margin-bottom:12px; color:#2b78c5; font-size:12px; font-weight:750; text-decoration:none; }}
-            .detail-metrics {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:20px 0 24px; }}
-            .detail-metrics > div {{ border:1px solid #dfeaf5; background:#f8fbff; border-radius:12px; padding:15px; }}
-            .detail-metrics span {{ display:block; color:#7a899b; font-size:11px; font-weight:700; }}
-            .detail-metrics strong {{ display:block; margin-top:7px; color:#203247; font-size:18px; }}
-            .detail-section {{ margin-top:24px; }}
-            .detail-section-head {{ display:flex; justify-content:space-between; gap:14px; align-items:center; margin-bottom:11px; }}
-            .detail-section-head h3 {{ margin:0; color:#203247; font-size:15px; }}
-            .detail-section-head span {{ color:#7a899b; font-size:12px; }}
-            .roster-grid {{ display:flex; gap:8px; flex-wrap:wrap; }}
-            .roster-pill {{ display:flex; gap:8px; align-items:center; background:#f4f9ff; border:1px solid #dfeaf5; border-radius:999px; padding:7px 10px; font-size:11px; color:#536a82; }}
-            .roster-pill strong {{ color:#2b78c5; }}
-            .detail-primary {{ color:#203247; font-weight:750; }}
-            .detail-secondary {{ color:#7f8da0; font-size:11px; margin-top:3px; }}
-            .detail-link {{ color:#2b78c5; font-weight:750; text-decoration:none; }}
-            .evidence-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }}
-            .evidence-card {{ border:1px solid #dfeaf5; background:#fff; border-radius:12px; overflow:hidden; text-decoration:none; color:inherit; }}
-            .evidence-card img {{ display:block; width:100%; aspect-ratio:16/10; object-fit:cover; background:#f3f6f9; }}
-            .evidence-card-meta {{ padding:10px 11px; }}
-            .evidence-card-meta strong {{ display:block; color:#203247; font-size:12px; }}
-            .evidence-card-meta span {{ display:block; margin-top:4px; color:#7a899b; font-size:10px; }}
-            @media (max-width:1000px) {{ .detail-metrics {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} .evidence-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} }}
-            @media (max-width:720px) {{ .history-detail-top {{ flex-direction:column; }} .evidence-grid {{ grid-template-columns:1fr; }} }}
+            .history-focus-page {{ padding: 4px 2px 36px; }}
+            .history-focus-hero {{ display:flex; justify-content:space-between; align-items:flex-start; gap:24px; padding:30px 32px; border-radius:28px; background:linear-gradient(135deg,#ffffff 0%,#f3f8ff 100%); border:1px solid #dfeaf5; box-shadow:0 18px 42px rgba(36,83,126,.08); }}
+            .back-link {{ display:inline-block; margin-bottom:13px; color:#2b78c5; font-size:12px; font-weight:800; text-decoration:none; }}
+            .back-link:hover {{ text-decoration:underline; }}
+            .eyebrow-small {{ color:#6d8298; font-size:10px; font-weight:900; letter-spacing:1.1px; text-transform:uppercase; }}
+            .history-focus-hero h2 {{ margin:5px 0 7px; color:#17324d; font-size:30px; letter-spacing:-.5px; }}
+            .history-focus-hero p {{ margin:0; color:#6b7f93; font-size:13px; font-weight:650; }}
+            .history-focus-hero p span {{ color:#a7b6c4; margin:0 5px; }}
+            .history-delete-button {{ border:1px solid #efd3d6; background:#fff7f7; color:#b4232d; border-radius:14px; padding:10px 14px; font-size:12px; font-weight:850; cursor:pointer; }}
+            .session-overview-grid {{ display:grid; grid-template-columns:1.2fr repeat(3,1fr); gap:14px; margin-top:18px; }}
+            .overview-card {{ min-height:120px; padding:20px 21px; border-radius:22px; border:1px solid #dfeaf5; background:#fff; box-shadow:0 10px 28px rgba(36,83,126,.055); }}
+            .overview-card span {{ display:block; color:#7890a6; font-size:10px; font-weight:900; letter-spacing:.8px; }}
+            .overview-card strong {{ display:block; margin-top:9px; color:#18344f; font-size:31px; line-height:1; }}
+            .overview-card small {{ display:block; margin-top:8px; color:#8a9aad; font-size:11px; }}
+            .overview-card-main {{ border-color:#f0c9cd; background:linear-gradient(135deg,#fffafa 0%,#fff 100%); }}
+            .overview-card-main strong {{ color:#b4232d; }}
+            .history-focus-section-head {{ display:flex; justify-content:space-between; align-items:flex-end; gap:20px; margin:30px 2px 14px; }}
+            .history-focus-section-head h3 {{ margin:4px 0 4px; color:#18344f; font-size:20px; }}
+            .history-focus-section-head p {{ margin:0; color:#7a8d9f; font-size:12px; }}
+            .session-meta-pill {{ border:1px solid #dce8f3; border-radius:999px; padding:9px 13px; color:#5f758b; background:#fff; font-size:11px; font-weight:800; white-space:nowrap; }}
+            .student-focus-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }}
+            .student-focus-card {{ display:block; text-decoration:none; color:inherit; padding:21px; border:1px solid #dfeaf5; border-radius:24px; background:#fff; box-shadow:0 11px 30px rgba(36,83,126,.055); transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease; }}
+            .student-focus-card:hover {{ transform:translateY(-2px); box-shadow:0 16px 34px rgba(36,83,126,.09); border-color:#c6dcec; }}
+            .student-focus-card.student-focus-danger {{ border:2px solid #d64652; box-shadow:0 14px 34px rgba(214,70,82,.11); }}
+            .student-card-top {{ display:flex; justify-content:space-between; align-items:flex-start; gap:15px; }}
+            .student-identity {{ display:flex; align-items:center; gap:12px; min-width:0; }}
+            .student-avatar {{ width:48px; height:48px; border-radius:17px; display:flex; align-items:center; justify-content:center; flex:0 0 48px; background:#edf6ff; color:#2b78c5; font-size:18px; font-weight:900; }}
+            .student-name {{ color:#18344f; font-size:16px; font-weight:850; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+            .student-code {{ margin-top:4px; color:#8999a9; font-size:11px; font-weight:700; }}
+            .severity-badge {{ border-radius:999px; padding:7px 10px; font-size:9px; font-weight:900; letter-spacing:.55px; white-space:nowrap; }}
+            .severity-badge.danger {{ color:#b4232d; background:#fff0f1; border:1px solid #f0c8cc; }}
+            .severity-badge.attention {{ color:#9a6400; background:#fff8e8; border:1px solid #f2dfb2; }}
+            .severity-badge.safe {{ color:#25734a; background:#eef9f2; border:1px solid #cfe8d8; }}
+            .focus-score-row {{ margin-top:20px; }}
+            .focus-label {{ color:#8294a5; font-size:9px; font-weight:900; letter-spacing:.9px; }}
+            .focus-value {{ margin-top:2px; color:#18344f; font-size:36px; font-weight:900; letter-spacing:-1px; }}
+            .student-focus-danger .focus-value {{ color:#b4232d; }}
+            .focus-meter {{ height:9px; margin-top:9px; background:#edf2f7; border-radius:999px; overflow:hidden; }}
+            .focus-meter span {{ display:block; height:100%; border-radius:999px; background:#5f9bd3; }}
+            .student-focus-danger .focus-meter span {{ background:#d64652; }}
+            .student-card-stats {{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:17px; }}
+            .student-card-stats > div {{ padding:11px 10px; border-radius:15px; background:#f7faff; border:1px solid #e6eef6; }}
+            .student-card-stats span {{ display:block; color:#91a0ae; font-size:8px; font-weight:900; letter-spacing:.5px; }}
+            .student-card-stats strong {{ display:block; margin-top:4px; color:#365069; font-size:13px; }}
+            .student-card-footer {{ display:flex; justify-content:space-between; margin-top:17px; padding-top:13px; border-top:1px solid #edf2f7; color:#2b78c5; font-size:11px; font-weight:850; }}
+            .student-card-footer .arrow {{ font-size:16px; line-height:10px; }}
+            .focus-empty {{ padding:40px; text-align:center; border:1px dashed #cfddea; border-radius:22px; color:#8191a2; grid-column:1/-1; }}
+            @media (max-width:1100px) {{ .session-overview-grid {{ grid-template-columns:repeat(2,1fr); }} .student-focus-grid {{ grid-template-columns:1fr; }} }}
+            @media (max-width:700px) {{ .history-focus-hero, .history-focus-section-head {{ flex-direction:column; align-items:flex-start; }} .session-overview-grid {{ grid-template-columns:1fr; }} .student-card-stats {{ grid-template-columns:repeat(2,1fr); }} }}
         </style>
     """
+
+
+@app.get("/teacher/history/session/{session_id}/student/{student_id}", response_class=HTMLResponse)
+def teacher_history_session_student(request: Request, session_id: int, student_id: int):
+    payload = get_teacher_payload(request)
+    if payload is None:
+        return RedirectResponse(url="/", status_code=303)
+
+    teacher_id = int(payload["sub"])
+    with SessionLocal() as db:
+        session = db.execute(
+            text("""
+                SELECT s.id, s.class_id,
+                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
+                       COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
+                       s.started_at, s.ended_at, s.duration_seconds
+                FROM sessions s
+                LEFT JOIN classes c ON c.id = s.class_id
+                WHERE s.id = :session_id AND s.teacher_id = :teacher_id
+                  AND COALESCE(s.deleted_at, '') = ''
+                LIMIT 1
+            """),
+            {"session_id": session_id, "teacher_id": teacher_id}
+        ).mappings().first()
+        if session is None:
+            return RedirectResponse(url="/teacher?section=history", status_code=303)
+
+        roster = db.execute(
+            text("""
+                SELECT student_id, student_code, full_name
+                FROM session_students
+                WHERE session_id = :session_id AND student_id = :student_id
+                LIMIT 1
+            """),
+            {"session_id": session_id, "student_id": student_id}
+        ).mappings().first()
+        if roster is None:
+            return RedirectResponse(url=f"/teacher/history/session/{session_id}", status_code=303)
+
+        observations = db.execute(
+            text("""
+                SELECT id, student_id, student_code, full_name, observed_at, event_type,
+                       confidence, assessment, details, evidence_id,
+                       COALESCE(duration_seconds, 0) AS duration_seconds
+                FROM observations
+                WHERE session_id = :session_id AND student_id = :student_id
+                ORDER BY observed_at ASC, id ASC
+            """),
+            {"session_id": session_id, "student_id": student_id}
+        ).mappings().all()
+
+        evidence_count = db.execute(
+            text("""
+                SELECT COUNT(*) FROM evidence
+                WHERE session_id = :session_id AND student_id = :student_id
+            """),
+            {"session_id": session_id, "student_id": student_id}
+        ).scalar()
+
+    rows = [dict(r) for r in observations]
+    grouped = _student_focus_records(float(session["duration_seconds"] or 0), rows)
+    summary = grouped.get(int(student_id), {
+        "focus": 100.0, "observation_count": 0, "danger_count": 0,
+        "attention_count": 0, "safe_count": 0, "ob_time_seconds": 0.0,
+        "observations": [],
+    })
+    focus = max(0, min(100, round(summary["focus"])))
+
+    # Most important observations first: Danger -> Attention -> Safe.
+    details_rows = sorted(
+        summary["observations"],
+        key=lambda r: (
+            int(r["severity_rank"]),
+            float(r["focus_after"]),
+            -float(r.get("duration_seconds") or 0),
+            str(r.get("observed_at") or ""),
+            -int(r.get("id") or 0),
+        )
+    )
+
+    groups = {"DANGER": [], "NOT REALLY DANGER": [], "SAFE": []}
+    for row in details_rows:
+        groups[row["severity"]].append(row)
+
+    def render_observation_card(row: dict, number: int) -> str:
+        evidence_id = int(row.get("evidence_id") or 0)
+        if evidence_id:
+            visual = f"""
+                <a class=\"observation-frame-link\" href=\"/api/v1/evidence/{evidence_id}\" target=\"_blank\">
+                    <img src=\"/api/v1/evidence/{evidence_id}\" alt=\"Evidence {evidence_id}\" loading=\"lazy\">
+                    <span>Open evidence ↗</span>
+                </a>
+            """
+        else:
+            visual = '<div class="observation-frame-empty"><b>GE</b><span>No evidence frame</span></div>'
+        severity = str(row["severity"])
+        sev_class = str(row["severity_class"])
+        event_type = escape(str(row.get("event_type") or "OBSERVATION").replace("_", " "))
+        focus_at = max(0, min(100, round(float(row["focus_after"]))))
+        confidence = max(0, min(100, round(float(row.get("confidence") or 0.0) * 100)))
+        duration = _format_clock_seconds(float(row.get("duration_seconds") or 0)) if float(row.get("duration_seconds") or 0) > 0 else "—"
+        return f"""
+            <article class="observation-focus-card {sev_class}">
+                <div class="observation-frame">{visual}<div class="frame-number">#{number:02d}</div></div>
+                <div class="observation-card-content">
+                    <div class="observation-card-header"><div><div class="observation-time">{escape(format_server_dt(row['observed_at']))}</div><h4>{event_type}</h4></div><span class="severity-badge {sev_class}">{escape(severity)}</span></div>
+                    <div class="observation-focus-highlight"><span>FOCUS AT EVENT</span><strong>{focus_at}%</strong></div>
+                    <div class="observation-data-grid">
+                        <div><span>OB TIME</span><strong>{escape(duration)}</strong></div>
+                        <div><span>CONFIDENCE</span><strong>{confidence}%</strong></div>
+                    </div>
+                    <div class="observation-details">{escape(str(row.get('details') or 'Observation recorded for teacher review.'))}</div>
+                    <div class="observation-footer"><span>Evidence {('available' if evidence_id else 'not available')}</span><span>Impact −{float(row['penalty']):.0f}%</span></div>
+                </div>
+            </article>
+        """
+
+    html_sections = ""
+    card_number = 0
+    section_meta = [("DANGER", "danger", "Important frames that deserve the teacher's attention."), ("NOT REALLY DANGER", "attention", "Signals that are less urgent but worth reviewing."), ("SAFE", "safe", "Frames where the focus score remained in the safe range.")]
+    for label, cls, help_text in section_meta:
+        items = groups[label]
+        if not items:
+            continue
+        cards = ""
+        for row in items:
+            card_number += 1
+            cards += render_observation_card(row, card_number)
+        html_sections += f"""
+            <section class="observation-section">
+                <div class="observation-section-head"><div><div class="section-tag {cls}">{escape(label)}</div><h3>{len(items)} frame{'s' if len(items) != 1 else ''}</h3><p>{escape(help_text)}</p></div></div>
+                <div class="observation-focus-grid">{cards}</div>
+            </section>
+        """
+
+    return teacher_shell(
+        title="Student Focus Review",
+        content=f"""
+            <section class="student-focus-detail-page">
+                <div class="student-detail-hero">
+                    <div><a class="back-link" href="/teacher/history/session/{session_id}">← Back to session</a><div class="eyebrow-small">FOCUS REVIEW · SESSION #{session_id}</div><h2>{escape(str(roster['full_name']))}</h2><p>{escape(str(roster['student_code'] or '-'))} <span>•</span> {escape(str(session['class_code'] or session['class_name']))} <span>•</span> {format_server_dt(session['started_at'])}</p></div>
+                    <div class="focus-hero-score"><span>FOCUS SCORE</span><strong>{focus}%</strong><div class="hero-meter"><span style="width:{focus}%"></span></div></div>
+                </div>
+
+                <div class="student-detail-stats">
+                    <div><span>MONITORING</span><strong>{format_duration(session['duration_seconds'])}</strong></div>
+                    <div><span>OB EVENTS</span><strong>{summary['observation_count']}</strong></div>
+                    <div><span>DANGER</span><strong>{summary['danger_count']}</strong></div>
+                    <div><span>EVIDENCE</span><strong>{int(evidence_count or 0)}</strong></div>
+                </div>
+
+                <div class="review-note"><strong>Teacher review</strong><span>God Eyes uses recorded observations and evidence to prioritize frames for review. The Focus Score is an observation-based indicator, not a final judgment about the student.</span></div>
+                {html_sections if html_sections else '<div class="focus-empty">No observations recorded for this student in this session.</div>'}
+            </section>
+            <style>
+                .student-focus-detail-page {{ padding:4px 2px 40px; }}
+                .student-detail-hero {{ display:flex; justify-content:space-between; gap:24px; align-items:center; padding:28px 30px; border-radius:28px; border:1px solid #dfeaf5; background:linear-gradient(135deg,#fff 0%,#f4f9ff 100%); box-shadow:0 18px 44px rgba(36,83,126,.08); }}
+                .student-detail-hero h2 {{ margin:5px 0 7px; color:#18344f; font-size:30px; }}
+                .student-detail-hero p {{ margin:0; color:#718498; font-size:12px; font-weight:700; }}
+                .student-detail-hero p span {{ margin:0 5px; color:#a8b6c3; }}
+                .focus-hero-score {{ width:210px; flex:0 0 210px; padding:18px 20px; border-radius:22px; background:#fff; border:1px solid #dfeaf5; }}
+                .focus-hero-score span {{ color:#8194a7; font-size:9px; font-weight:900; letter-spacing:.9px; }}
+                .focus-hero-score strong {{ display:block; margin-top:4px; color:#18344f; font-size:38px; line-height:1; }}
+                .hero-meter {{ height:9px; margin-top:12px; border-radius:999px; overflow:hidden; background:#edf2f7; }}
+                .hero-meter span {{ display:block; height:100%; border-radius:999px; background:#5f9bd3; }}
+                .student-detail-stats {{ display:grid; grid-template-columns:repeat(4,1fr); gap:13px; margin-top:18px; }}
+                .student-detail-stats > div {{ padding:18px 19px; border:1px solid #dfeaf5; border-radius:20px; background:#fff; box-shadow:0 9px 24px rgba(36,83,126,.045); }}
+                .student-detail-stats span {{ color:#8395a7; font-size:9px; font-weight:900; letter-spacing:.8px; }}
+                .student-detail-stats strong {{ display:block; margin-top:7px; color:#18344f; font-size:20px; }}
+                .review-note {{ display:flex; gap:12px; align-items:flex-start; margin-top:18px; padding:14px 16px; border-radius:18px; border:1px solid #dce8f2; background:#f8fbfe; color:#6f8294; font-size:11px; line-height:1.55; }}
+                .review-note strong {{ color:#31516d; white-space:nowrap; }}
+                .observation-section {{ margin-top:30px; }}
+                .observation-section-head h3 {{ margin:5px 0 3px; color:#18344f; font-size:19px; }}
+                .observation-section-head p {{ margin:0; color:#8193a4; font-size:11px; }}
+                .section-tag {{ display:inline-flex; padding:6px 9px; border-radius:999px; font-size:9px; font-weight:900; letter-spacing:.65px; }}
+                .section-tag.danger {{ background:#fff0f1; border:1px solid #efc6ca; color:#b4232d; }}
+                .section-tag.attention {{ background:#fff8e9; border:1px solid #f2dfb2; color:#9a6400; }}
+                .section-tag.safe {{ background:#eef9f2; border:1px solid #cfe7d8; color:#26794d; }}
+                .observation-focus-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:14px; }}
+                .observation-focus-card {{ overflow:hidden; border:1px solid #dfeaf5; border-radius:26px; background:#fff; box-shadow:0 12px 32px rgba(36,83,126,.06); }}
+                .observation-focus-card.danger {{ border:2px solid #d64652; box-shadow:0 14px 34px rgba(214,70,82,.10); }}
+                .observation-frame {{ position:relative; min-height:270px; background:#eef4fa; }}
+                .observation-frame-link {{ position:absolute; inset:0; display:block; color:inherit; text-decoration:none; }}
+                .observation-frame-link img {{ width:100%; height:100%; display:block; min-height:270px; object-fit:cover; }}
+                .observation-frame-link > span {{ position:absolute; right:13px; bottom:13px; padding:7px 10px; border-radius:999px; background:rgba(24,52,79,.86); color:#fff; font-size:9px; font-weight:850; }}
+                .observation-frame-empty {{ min-height:270px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:9px; background:linear-gradient(135deg,#eef5fb,#f8fbfe); color:#8293a4; }}
+                .observation-frame-empty b {{ width:56px; height:56px; display:flex; align-items:center; justify-content:center; border-radius:18px; background:#dfeeff; color:#2b78c5; font-size:18px; }}
+                .observation-frame-empty span {{ font-size:10px; font-weight:700; }}
+                .frame-number {{ position:absolute; left:13px; top:13px; z-index:2; padding:6px 8px; border-radius:10px; background:rgba(255,255,255,.92); border:1px solid rgba(223,234,245,.9); color:#3b617d; font-size:9px; font-weight:900; }}
+                .observation-card-content {{ padding:18px; }}
+                .observation-card-header {{ display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }}
+                .observation-time {{ color:#8496a8; font-size:10px; font-weight:800; }}
+                .observation-card-header h4 {{ margin:4px 0 0; color:#18344f; font-size:17px; text-transform:capitalize; }}
+                .observation-focus-highlight {{ margin-top:17px; padding:14px 15px; border-radius:18px; background:#f7faff; border:1px solid #e1ebf4; }}
+                .observation-focus-highlight span {{ display:block; color:#8092a5; font-size:9px; font-weight:900; letter-spacing:.8px; }}
+                .observation-focus-highlight strong {{ display:block; margin-top:2px; color:#18344f; font-size:28px; }}
+                .observation-focus-card.danger .observation-focus-highlight {{ background:#fff6f7; border-color:#f1d2d5; }}
+                .observation-focus-card.danger .observation-focus-highlight strong {{ color:#b4232d; }}
+                .observation-data-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:10px; }}
+                .observation-data-grid > div {{ padding:11px 12px; border:1px solid #e6edf4; border-radius:14px; background:#fff; }}
+                .observation-data-grid span {{ display:block; color:#91a0ad; font-size:8px; font-weight:900; }}
+                .observation-data-grid strong {{ display:block; margin-top:4px; color:#36526b; font-size:13px; }}
+                .observation-details {{ margin-top:13px; color:#62778b; font-size:11px; line-height:1.6; }}
+                .observation-footer {{ display:flex; justify-content:space-between; gap:12px; margin-top:15px; padding-top:12px; border-top:1px solid #edf2f7; color:#8999a7; font-size:9px; font-weight:800; }}
+                .focus-empty {{ margin-top:25px; padding:40px; text-align:center; border:1px dashed #cfdeea; border-radius:22px; color:#8191a2; }}
+                @media (max-width:1050px) {{ .observation-focus-grid {{ grid-template-columns:1fr; }} }}
+                @media (max-width:800px) {{ .student-detail-hero {{ flex-direction:column; align-items:flex-start; }} .focus-hero-score {{ width:auto; flex:none; align-self:stretch; }} .student-detail-stats {{ grid-template-columns:repeat(2,1fr); }} }}
+                @media (max-width:560px) {{ .student-detail-stats {{ grid-template-columns:1fr; }} .review-note {{ flex-direction:column; }} }}
+            </style>
+        """,
+        section="history",
+        full_name=str(payload.get("username") or "Giáo viên"),
+        teacher_id=teacher_id,
+    )
 
 
 def _hard_delete_session(session_id: int) -> bool:
@@ -7695,6 +8099,7 @@ def ensure_session_tables():
                 assessment TEXT NOT NULL DEFAULT 'OBSERVATION',
                 details TEXT NOT NULL DEFAULT '',
                 evidence_id INTEGER,
+                duration_seconds REAL NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
             )
         """))
@@ -7717,6 +8122,11 @@ def ensure_session_tables():
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
             )
         """))
+
+        # Observation duration is optional for backward compatibility with older clients.
+        observation_columns = _table_columns(db, "observations")
+        if "duration_seconds" not in observation_columns:
+            db.execute(text("ALTER TABLE observations ADD COLUMN duration_seconds REAL NOT NULL DEFAULT 0"))
 
         # Existing sessions table migration.
         session_columns = _table_columns(db, "sessions")
@@ -8560,15 +8970,19 @@ async def api_session_events(request: Request, session_id: int):
             confidence = max(0.0, min(1.0, confidence))
             assessment = str(event.get("assessment") or "OBSERVATION").strip().upper()[:40] or "OBSERVATION"
             details = str(event.get("details") or "").strip()[:1000]
+            try:
+                duration_seconds = max(0.0, min(float(event.get("duration_seconds") or 0.0), 300.0))
+            except (TypeError, ValueError):
+                duration_seconds = 0.0
 
             result = db.execute(
                 text("""
                     INSERT INTO observations
                         (session_id, student_id, student_code, full_name, observed_at,
-                         event_type, confidence, assessment, details, evidence_id)
+                         event_type, confidence, assessment, details, evidence_id, duration_seconds)
                     VALUES
                         (:session_id, :student_id, :student_code, :full_name, :observed_at,
-                         :event_type, :confidence, :assessment, :details, :evidence_id)
+                         :event_type, :confidence, :assessment, :details, :evidence_id, :duration_seconds)
                     RETURNING id
                 """),
                 {
@@ -8582,6 +8996,7 @@ async def api_session_events(request: Request, session_id: int):
                     "assessment": assessment,
                     "details": details,
                     "evidence_id": api_int(event.get("evidence_id")) or None,
+                    "duration_seconds": duration_seconds,
                 }
             )
             inserted_ids.append(int(result.scalar_one()))
@@ -9580,4 +9995,3 @@ if __name__ == "__main__":
         host="127.0.0.1",
         port=8000
     )
-
