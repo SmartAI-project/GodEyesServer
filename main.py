@@ -1351,20 +1351,14 @@ def _issue_face_scan_token(student_id: int, admin_id: int) -> str:
 
 
 def ensure_student_tables():
-    """Safely create/migrate student and SMS schemas in independent transactions.
+    """Create/migrate student + SMS tables with isolated, repairable transactions."""
+    import traceback
 
-    The student schema is committed before SMS migration so a failure in the
-    optional SMS table can never roll back guardian_phone or break Student Detail.
-    """
-    dialect_name = ""
     try:
         with SessionLocal() as db:
-            dialect_name = str(getattr(getattr(db, "bind", None), "dialect", None).name or "").lower()
-            is_postgres = dialect_name == "postgresql"
+            dialect = str(getattr(getattr(db, "bind", None), "dialect", None).name or "").lower()
+            is_postgres = dialect == "postgresql"
             id_type = "BIGSERIAL" if is_postgres else "INTEGER"
-            created_default = "CURRENT_TIMESTAMP"
-
-            # -------- Student schema: independent transaction --------
             db.execute(text(f"""
                 CREATE TABLE IF NOT EXISTS students (
                     id {id_type} PRIMARY KEY,
@@ -1374,8 +1368,8 @@ def ensure_student_tables():
                     full_name TEXT NOT NULL,
                     photo_path TEXT NOT NULL DEFAULT '',
                     face_status TEXT NOT NULL DEFAULT 'NO_DATA',
-                    created_at TIMESTAMP NOT NULL DEFAULT {created_default},
-                    updated_at TIMESTAMP NOT NULL DEFAULT {created_default}
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """))
             db.execute(text(f"""
@@ -1383,48 +1377,40 @@ def ensure_student_tables():
                     id {id_type} PRIMARY KEY,
                     class_id INTEGER NOT NULL,
                     student_id INTEGER NOT NULL,
-                    created_at TIMESTAMP NOT NULL DEFAULT {created_default},
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE (class_id, student_id)
                 )
             """))
-
-            columns = _table_columns(db, "students")
-            if "face_embedding" not in columns:
+            cols = _table_columns(db, 'students')
+            if 'face_embedding' not in cols:
                 db.execute(text("ALTER TABLE students ADD COLUMN face_embedding TEXT NOT NULL DEFAULT ''"))
-            if "guardian_phone" not in columns:
+            if 'guardian_phone' not in cols:
                 db.execute(text("ALTER TABLE students ADD COLUMN guardian_phone TEXT"))
-
-            db.execute(text("CREATE INDEX IF NOT EXISTS idx_sms_students_owner ON students(owner_type, owner_id)"))
+            db.execute(text("CREATE INDEX IF NOT EXISTS idx_students_owner ON students(owner_type, owner_id)"))
             db.execute(text("CREATE INDEX IF NOT EXISTS idx_class_students_class ON class_students(class_id)"))
             db.execute(text("CREATE INDEX IF NOT EXISTS idx_class_students_student ON class_students(student_id)"))
             db.commit()
-            print("[GodEyes][SMS_MIGRATION] student schema OK (guardian_phone ready)")
+        print('[GodEyes][SMS_MIGRATION] V23 student schema OK (guardian_phone ready)')
     except Exception:
-        import traceback
-        print("[GodEyes][SMS_MIGRATION] student schema warning; server will continue:")
+        print('[GodEyes][SMS_MIGRATION] V23 student schema warning; server will continue:')
         traceback.print_exc()
 
-    # -------- SMS schema: separate transaction --------
     try:
         with SessionLocal() as db:
-            dialect_name = str(getattr(getattr(db, "bind", None), "dialect", None).name or "").lower()
-            is_postgres = dialect_name == "postgresql"
+            dialect = str(getattr(getattr(db, "bind", None), "dialect", None).name or "").lower()
+            is_postgres = dialect == "postgresql"
             id_type = "BIGSERIAL" if is_postgres else "INTEGER"
 
             if is_postgres:
-                table_exists = bool(db.execute(text("""
-                    SELECT 1
-                    FROM information_schema.tables
-                    WHERE table_schema = current_schema()
-                      AND table_name = 'sms_notifications'
+                exists = bool(db.execute(text("""
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema=current_schema() AND table_name='sms_notifications'
                     LIMIT 1
                 """)).first())
             else:
-                table_exists = bool(db.execute(text(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sms_notifications'"
-                )).first())
+                exists = bool(db.execute(text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sms_notifications'")).first())
 
-            if not table_exists:
+            if not exists:
                 db.execute(text(f"""
                     CREATE TABLE sms_notifications (
                         id {id_type} PRIMARY KEY,
@@ -1441,46 +1427,59 @@ def ensure_student_tables():
                         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )
                 """))
+                db.commit()
             else:
                 if is_postgres:
-                    sms_columns = {str(row["column_name"]) for row in db.execute(text("""
-                        SELECT column_name
+                    cols = {str(r['column_name']): str(r['data_type']).lower() for r in db.execute(text("""
+                        SELECT column_name, data_type
                         FROM information_schema.columns
-                        WHERE table_schema = current_schema()
-                          AND table_name = 'sms_notifications'
+                        WHERE table_schema=current_schema() AND table_name='sms_notifications'
                     """)).mappings().all()}
                 else:
-                    sms_columns = {str(row[1]) for row in db.execute(text("PRAGMA table_info(sms_notifications)"))}
+                    cols = {str(r[1]): str(r[2]).lower() for r in db.execute(text("PRAGMA table_info(sms_notifications)"))}
 
                 add_columns = {
-                    "teacher_id": "ALTER TABLE sms_notifications ADD COLUMN teacher_id INTEGER NOT NULL DEFAULT 0",
-                    "student_id": "ALTER TABLE sms_notifications ADD COLUMN student_id INTEGER NOT NULL DEFAULT 0",
-                    "session_id": "ALTER TABLE sms_notifications ADD COLUMN session_id INTEGER NOT NULL DEFAULT 0",
-                    "evidence_id": "ALTER TABLE sms_notifications ADD COLUMN evidence_id INTEGER",
-                    "phone": "ALTER TABLE sms_notifications ADD COLUMN phone TEXT NOT NULL DEFAULT ''",
-                    "message": "ALTER TABLE sms_notifications ADD COLUMN message TEXT NOT NULL DEFAULT ''",
-                    "status": "ALTER TABLE sms_notifications ADD COLUMN status TEXT NOT NULL DEFAULT 'PENDING'",
-                    "provider_message_id": "ALTER TABLE sms_notifications ADD COLUMN provider_message_id TEXT NOT NULL DEFAULT ''",
-                    "provider_name": "ALTER TABLE sms_notifications ADD COLUMN provider_name TEXT NOT NULL DEFAULT ''",
-                    "error_message": "ALTER TABLE sms_notifications ADD COLUMN error_message TEXT NOT NULL DEFAULT ''",
-                    "created_at": "ALTER TABLE sms_notifications ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
+                    'teacher_id': "ALTER TABLE sms_notifications ADD COLUMN teacher_id INTEGER NOT NULL DEFAULT 0",
+                    'student_id': "ALTER TABLE sms_notifications ADD COLUMN student_id INTEGER NOT NULL DEFAULT 0",
+                    'session_id': "ALTER TABLE sms_notifications ADD COLUMN session_id INTEGER NOT NULL DEFAULT 0",
+                    'evidence_id': "ALTER TABLE sms_notifications ADD COLUMN evidence_id INTEGER",
+                    'phone': "ALTER TABLE sms_notifications ADD COLUMN phone TEXT NOT NULL DEFAULT ''",
+                    'message': "ALTER TABLE sms_notifications ADD COLUMN message TEXT NOT NULL DEFAULT ''",
+                    'status': "ALTER TABLE sms_notifications ADD COLUMN status TEXT NOT NULL DEFAULT 'PENDING'",
+                    'provider_message_id': "ALTER TABLE sms_notifications ADD COLUMN provider_message_id TEXT NOT NULL DEFAULT ''",
+                    'provider_name': "ALTER TABLE sms_notifications ADD COLUMN provider_name TEXT NOT NULL DEFAULT ''",
+                    'error_message': "ALTER TABLE sms_notifications ADD COLUMN error_message TEXT NOT NULL DEFAULT ''",
                 }
-                for column, ddl in add_columns.items():
-                    if column not in sms_columns:
+                for col, ddl in add_columns.items():
+                    if col not in cols:
                         db.execute(text(ddl))
-
-                if is_postgres and "created_at" in sms_columns:
-                    db.execute(text(
-                        "ALTER TABLE sms_notifications ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP"
-                    ))
+                if 'created_at' not in cols:
+                    db.execute(text("ALTER TABLE sms_notifications ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"))
+                    db.commit()
+                elif is_postgres:
+                    data_type = cols.get('created_at', '')
+                    if data_type == 'text':
+                        # The legacy V17/V18 schema could make this column TEXT.
+                        # Rebuild only this column, retaining parseable timestamps.
+                        db.execute(text("ALTER TABLE sms_notifications ADD COLUMN created_at_v23 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"))
+                        db.execute(text("""
+                            UPDATE sms_notifications
+                            SET created_at_v23 = CASE
+                                WHEN trim(created_at) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN created_at::timestamp
+                                ELSE CURRENT_TIMESTAMP
+                            END
+                        """))
+                        db.execute(text("ALTER TABLE sms_notifications DROP COLUMN created_at"))
+                        db.execute(text("ALTER TABLE sms_notifications RENAME COLUMN created_at_v23 TO created_at"))
+                    db.execute(text("ALTER TABLE sms_notifications ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP"))
+                    db.commit()
 
             db.execute(text("CREATE INDEX IF NOT EXISTS idx_sms_notifications_teacher ON sms_notifications(teacher_id, created_at)"))
             db.execute(text("CREATE INDEX IF NOT EXISTS idx_sms_notifications_student ON sms_notifications(student_id, created_at)"))
             db.commit()
-            print("[GodEyes][SMS_MIGRATION] V22 SMS schema OK")
+        print('[GodEyes][SMS_MIGRATION] V23 SMS schema OK')
     except Exception:
-        import traceback
-        print("[GodEyes][SMS_MIGRATION] SMS schema warning; SMS remains unavailable until repaired, server will continue:")
+        print('[GodEyes][SMS_MIGRATION] V23 SMS schema warning; server will continue:')
         traceback.print_exc()
 
 ensure_student_tables()
@@ -7927,17 +7926,33 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
     for row in details_rows:
         groups[row["severity"]].append(row)
 
+    is_vi = language == 'vi'
+    ui = {
+        'page_title': 'Đánh giá mức độ tập trung' if is_vi else 'Student Focus Review',
+        'back_title': 'Quay lại lịch sử' if is_vi else 'Back to History',
+        'back_sub': 'Danh sách các buổi học' if is_vi else 'Session history',
+        'review_kicker': 'TẬP TRUNG · BUỔI HỌC' if is_vi else 'FOCUS REVIEW · SESSION',
+        'score': 'ĐIỂM TẬP TRUNG' if is_vi else 'FOCUS SCORE',
+        'monitoring': 'THEO DÕI' if is_vi else 'MONITORING',
+        'ob_events': 'SỐ OB' if is_vi else 'OB EVENTS',
+        'danger': 'NGHIÊM TRỌNG' if is_vi else 'DANGER',
+        'evidence': 'MINH CHỨNG' if is_vi else 'EVIDENCE',
+        'review_note_title': 'Giáo viên xem xét' if is_vi else 'Teacher Review',
+        'review_note_text': ('God Eyes ghi nhận các quan sát và minh chứng để giáo viên xem xét. Điểm tập trung là chỉ số hỗ trợ xem lại, không phải kết luận cuối cùng về học sinh.' if is_vi else 'God Eyes records observations and evidence for teacher review. Focus Score is a review signal, not a final judgment about the student.'),
+        'empty': 'Chưa có quan sát nào được ghi nhận trong buổi học này.' if is_vi else 'No observations were recorded for this student in this session.',
+    }
+
     def render_observation_card(row: dict, number: int) -> str:
         evidence_id = int(row.get("evidence_id") or 0)
         if evidence_id:
             visual = f"""
                 <a class=\"observation-frame-link\" href=\"/api/v1/evidence/{evidence_id}\" target=\"_blank\">
                     <img src=\"/api/v1/evidence/{evidence_id}\" alt=\"Evidence {evidence_id}\" loading=\"lazy\">
-                    <span>Open full image ↗</span>
+                    <span>{'Mở ảnh lớn ↗' if is_vi else 'Open full image ↗'}</span>
                 </a>
             """
         else:
-            visual = '<div class="observation-frame-empty"><b>GE</b><span>No evidence frame</span></div>'
+            visual = f'<div class="observation-frame-empty"><b>GE</b><span>{"Không có ảnh minh chứng" if is_vi else "No evidence frame"}</span></div>'
         severity = str(row["severity"])
         sev_class = str(row["severity_class"])
         event_type = escape(str(row.get("event_type") or "OBSERVATION").replace("_", " "))
@@ -7949,22 +7964,31 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
                 <div class="observation-frame">{visual}<div class="frame-number">#{number:02d}</div></div>
                 <div class="observation-card-content">
                     <div class="observation-card-header"><div><div class="observation-time">{escape(format_server_dt(row['observed_at']))}</div><h4>{event_type}</h4></div><span class="severity-badge {sev_class}">{escape(severity)}</span></div>
-                    <div class="observation-focus-highlight"><span>FOCUS AT FRAME</span><strong>{focus_at}%</strong></div>
+                    <div class="observation-focus-highlight"><span>{'TẬP TRUNG TẠI KHUNG HÌNH' if is_vi else 'FOCUS AT FRAME'}</span><strong>{focus_at}%</strong></div>
                     <div class="observation-data-grid">
-                        <div><span>OB TIME</span><strong>{escape(duration)}</strong></div>
-                        <div><span>CONFIDENCE</span><strong>{confidence}%</strong></div>
+                        <div><span>{'THỜI GIAN OB' if is_vi else 'OB TIME'}</span><strong>{escape(duration)}</strong></div>
+                        <div><span>{'ĐỘ TIN CẬY' if is_vi else 'CONFIDENCE'}</span><strong>{confidence}%</strong></div>
                     </div>
                     <div class="observation-details">{escape(str(row.get('details') or 'Observation recorded for teacher review.'))}</div>
-                    <div class="observation-footer"><span>Evidence {('available' if evidence_id else 'not available')}</span><span>Frame focus {focus_at}%</span></div>
+                    <div class="observation-footer"><span>Evidence {('available' if evidence_id else 'not available')}</span><span>{'Tập trung tại khung hình' if is_vi else 'Frame focus'} {focus_at}%</span></div>
                 </div>
             </article>
         """
 
     html_sections = ""
     card_number = 0
-    section_meta = [("DANGER", "danger", "Important frames that deserve the teacher's attention."), ("NOT REALLY DANGER", "attention", "Signals that are less urgent but worth reviewing."), ("SAFE", "safe", "Frames where the focus score remained in the safe range.")]
+    section_meta = ([
+        ('NGHIÊM TRỌNG','danger','Các khung hình quan trọng cần giáo viên xem xét.'),
+        ('HƠI NGHIÊM TRỌNG','attention','Các tín hiệu ít khẩn cấp hơn nhưng vẫn nên xem lại.'),
+        ('BÌNH THƯỜNG','safe','Các khung hình không có tín hiệu đáng chú ý.')
+    ] if is_vi else [
+        ('DANGER','danger','Important frames that deserve the teacher\'s attention.'),
+        ('ATTENTION','attention','Signals that are less urgent but worth reviewing.'),
+        ('SAFE','safe','Frames with no notable signal.')
+    ])
     for label, cls, help_text in section_meta:
-        items = groups[label]
+        group_key = {'NGHIÊM TRỌNG':'DANGER','HƠI NGHIÊM TRỌNG':'NOT REALLY DANGER','BÌNH THƯỜNG':'SAFE'}.get(label, label)
+        items = groups[group_key]
         if not items:
             continue
         cards = ""
@@ -7973,7 +7997,7 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
             cards += render_observation_card(row, card_number)
         html_sections += f"""
             <section class="observation-section">
-                <div class="observation-section-head"><div><div class="section-tag {cls}">{escape(label)}</div><h3>{len(items)} frame{'s' if len(items) != 1 else ''}</h3><p>{escape(help_text)}</p></div></div>
+                <div class="observation-section-head"><div><div class="section-tag {cls}">{escape(label)}</div><h3>{len(items)} {'khung hình' if is_vi else ('frame' if len(items)==1 else 'frames')}</h3><p>{escape(help_text)}</p></div></div>
                 <div class="observation-focus-grid">{cards}</div>
             </section>
         """
@@ -7981,29 +8005,44 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
 
     guardian_phone = str(roster.get('guardian_phone') or '')
     sms_enabled = bool(_normalise_phone_number(guardian_phone))
-    sms_not_set = 'Chưa nhập' if language == 'vi' else 'Not set'
-    sms_title = 'Gửi thông báo SMS' if language == 'vi' else 'Send SMS notification'
-    sms_helper = ('Giáo viên chọn một khung hình làm ngữ cảnh, nhập lời nhắn, rồi gửi thông báo bằng SMS. SMS không đính kèm ảnh trực tiếp.' if language == 'vi' else 'Select a frame as context, enter a note, and send it by SMS. SMS does not attach the image directly.')
-    sms_phone_label = 'Số nhận' if language == 'vi' else 'Recipient'
-    sms_button = 'Gửi SMS' if language == 'vi' else 'Send SMS'
-    sms_placeholder = ('Ví dụ: Vui lòng trao đổi thêm với học sinh về tín hiệu đã được ghi nhận.' if language == 'vi' else 'Example: Please discuss the recorded observation with the student.')
-    sms_confirm = 'Gửi thông báo SMS tới số này?' if language == 'vi' else 'Send this SMS notification to this number?'
+    sms_not_set = 'Chưa nhập số' if is_vi else 'Phone not set'
+    sms_title = 'Gửi thông báo SMS' if is_vi else 'Send SMS notification'
+    sms_helper = ('Chọn một khung hình làm ngữ cảnh, nhập lời nhắn và gửi thông báo SMS. Hình ảnh không được gửi trực tiếp trong SMS.' if is_vi else 'Choose a frame as context, enter a note, and send an SMS. The image itself is not attached to the SMS.')
+    sms_phone_label = 'Số điện thoại nhận' if is_vi else 'Recipient phone'
+    sms_button = 'Gửi SMS' if is_vi else 'Send SMS'
+    sms_placeholder = ('Nhập lời nhắn muốn gửi cho người nhận…' if is_vi else 'Enter the message you want to send…')
+    sms_confirm = 'Gửi thông báo SMS tới số này?' if is_vi else 'Send this SMS notification to this number?'
     sms_notice = ''
     if sms_status == 'sent':
-        sms_notice = '<div class="sms-detail-notice success">SMS đã được gửi thành công.</div>' if language == 'vi' else '<div class="sms-detail-notice success">SMS sent successfully.</div>'
+        sms_notice = '<div class="sms-detail-notice success">SMS đã được gửi thành công.</div>' if is_vi else '<div class="sms-detail-notice success">SMS sent successfully.</div>'
     elif sms_status == 'failed':
-        sms_notice = '<div class="sms-detail-notice error">Không thể gửi SMS. Hãy kiểm tra cấu hình dịch vụ SMS.</div>' if language == 'vi' else '<div class="sms-detail-notice error">SMS could not be sent. Check the SMS provider configuration.</div>'
+        sms_notice = '<div class="sms-detail-notice error">Không thể gửi SMS. Hãy kiểm tra cấu hình dịch vụ SMS.</div>' if is_vi else '<div class="sms-detail-notice error">SMS could not be sent. Check the SMS provider configuration.</div>'
     elif sms_status == 'phone_invalid':
-        sms_notice = '<div class="sms-detail-notice error">Số điện thoại chưa hợp lệ.</div>' if language == 'vi' else '<div class="sms-detail-notice error">The phone number is invalid.</div>'
+        sms_notice = '<div class="sms-detail-notice error">Số điện thoại chưa hợp lệ.</div>' if is_vi else '<div class="sms-detail-notice error">The phone number is invalid.</div>'
     sms_frame_options = ''
     for ob in rows:
         eid = int(ob.get('evidence_id') or 0)
-        if eid:
-            sms_frame_options += f"<label class=\"sms-frame-choice\"><input type=\"radio\" name=\"evidence_id\" value=\"{eid}\"><img src=\"/api/v1/evidence/{eid}\" alt=\"Frame {eid}\"><span><strong>{escape(str(ob.get('event_type') or 'OB'))}</strong><small>{escape(format_server_dt(ob.get('observed_at')))}</small></span></label>"
+        if not eid:
+            continue
+        evt = escape(str(ob.get('event_type') or 'OB').replace('_', ' '))
+        ts = escape(format_server_dt(ob.get('observed_at')))
+        open_label = 'Mở ảnh lớn ↗' if is_vi else 'Open full image ↗'
+        missing_label = 'Ảnh không khả dụng' if is_vi else 'Image unavailable'
+        sms_frame_options += f"""
+            <label class="sms-frame-choice">
+                <input type="radio" name="evidence_id" value="{eid}">
+                <a class="sms-frame-open" href="/api/v1/evidence/{eid}" target="_blank" rel="noopener" onclick="event.stopPropagation();">
+                    <img src="/api/v1/evidence/{eid}" alt="Frame {eid}" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false;">
+                    <span class="sms-thumb-fallback" hidden>{missing_label}</span>
+                    <b>{open_label}</b>
+                </a>
+                <span class="sms-frame-meta"><strong>{evt}</strong><small>{ts}</small></span>
+            </label>
+        """
     if not sms_frame_options:
-        sms_frame_options = '<div class="sms-frame-empty">Chưa có khung hình minh chứng để chọn.</div>' if language == 'vi' else '<div class="sms-frame-empty">No evidence frame is available to select.</div>'
+        sms_frame_options = f'<div class="sms-frame-empty">{"Chưa có khung hình minh chứng để chọn." if is_vi else "No evidence frame is available to select."}</div>'
     return teacher_shell(
-        title="Student Focus Review",
+        title=ui["page_title"],
         content=f"""
             <section class="student-focus-detail-page">
                 <div class="student-detail-hero">
@@ -8011,22 +8050,22 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
                         <a class="student-detail-back-button" href="/teacher?section=history">
                             <span class="student-detail-back-icon">←</span>
                             <span>
-                                <b>Quay lại lịch sử</b>
-                                <small>Danh sách các buổi học</small>
+                                <b>{ui["back_title"]}</b>
+                                <small>{ui["back_sub"]}</small>
                             </span>
                         </a>
-                        <div class="eyebrow-small">FOCUS REVIEW · SESSION #{session_id}</div>
+                        <div class="eyebrow-small">{ui["review_kicker"]} #{session_id}</div>
                         <h2>{escape(str(roster['full_name']))}</h2>
                         <p>{escape(str(roster['student_code'] or '-'))} <span>•</span> {escape(str(session['class_code'] or session['class_name']))} <span>•</span> {format_server_dt(session['started_at'])}</p>
                     </div>
-                    <div class="focus-hero-score"><span>FOCUS SCORE</span><strong>{focus}%</strong><div class="hero-meter"><span style="width:{focus}%"></span></div></div>
+                    <div class="focus-hero-score"><span>{ui["score"]}</span><strong>{focus}%</strong><div class="hero-meter"><span style="width:{focus}%"></span></div></div>
                 </div>
 
                 <div class="student-detail-stats">
-                    <div><span>MONITORING</span><strong>{format_duration(session['duration_seconds'])}</strong></div>
-                    <div><span>OB EVENTS</span><strong>{summary['observation_count']}</strong></div>
-                    <div><span>DANGER</span><strong>{summary['danger_count']}</strong></div>
-                    <div><span>EVIDENCE</span><strong>{int(evidence_count or 0)}</strong></div>
+                    <div><span>{ui["monitoring"]}</span><strong>{format_duration(session['duration_seconds'])}</strong></div>
+                    <div><span>{ui["ob_events"]}</span><strong>{summary['observation_count']}</strong></div>
+                    <div><span>{ui["danger"]}</span><strong>{summary['danger_count']}</strong></div>
+                    <div><span>{ui["evidence"]}</span><strong>{int(evidence_count or 0)}</strong></div>
                 </div>
 
                 <div class="sms-detail-panel">
@@ -8045,8 +8084,8 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
                         <button type="submit" class="sms-send-button" {'disabled' if not sms_enabled else ''}>{sms_button}</button>
                     </form>
                 </div>
-                <div class="review-note"><strong>Teacher review</strong><span>God Eyes uses recorded observations and evidence to prioritize frames for review. The Focus Score is an average of recorded frame-level focus scores, not a final judgment about the student.</span></div>
-                {html_sections if html_sections else '<div class="focus-empty">No observations recorded for this student in this session.</div>'}
+                <div class="review-note"><strong>{ui["review_note_title"]}</strong><span>{ui["review_note_text"]}</span></div>
+                {html_sections if html_sections else f'<div class="focus-empty">{ui["empty"]}</div>'}
             </section>
             <style>
                 .student-focus-detail-page {{ padding:4px 2px 40px; }}
@@ -8408,29 +8447,34 @@ def teacher_history_student_day(request: Request, student_id: int, date: str):
                 @media (max-width:800px) {{ .student-day-top {{ flex-direction:column; }} .student-profile-card {{ align-items:flex-start; }} .student-profile-side {{ margin-left:auto; }} .student-day-metrics {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} .observation-card {{ grid-template-columns:1fr; }} .observation-visual {{ min-height:220px; }} }}
                 @media (max-width:560px) {{ .student-day-metrics {{ grid-template-columns:1fr; }} .student-profile-card {{ flex-wrap:wrap; }} .student-profile-side {{ margin-left:65px; text-align:left; }} }}
             
-            .sms-detail-panel {{ margin:24px 0; padding:20px; border:1px solid #dce8f2; border-radius:22px; background:linear-gradient(135deg,#fbfdff,#f5faff); box-shadow:0 10px 26px rgba(36,83,126,.05); }}
-            .sms-detail-head {{ display:flex; justify-content:space-between; gap:18px; align-items:flex-start; }}
-            .sms-detail-head h3 {{ margin:4px 0; color:#18344f; font-size:18px; }}
-            .sms-detail-head p {{ margin:0; max-width:720px; color:#7890a4; font-size:11px; line-height:1.5; }}
-            .sms-recipient {{ min-width:155px; padding:10px 13px; border:1px solid #d9e6f1; border-radius:14px; background:#fff; }}
-            .sms-recipient span {{ display:block; color:#8798a8; font-size:9px; font-weight:800; letter-spacing:.7px; text-transform:uppercase; }}
-            .sms-recipient strong {{ display:block; margin-top:4px; color:#24425e; font-size:12px; }}
-            .sms-frame-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:16px 0; }}
-            .sms-frame-choice {{ position:relative; display:flex; flex-direction:column; gap:6px; padding:7px; border:1px solid #dfeaf5; border-radius:15px; background:#fff; cursor:pointer; }}
-            .sms-frame-choice:has(input:checked) {{ border:2px solid #2b78c5; padding:6px; box-shadow:0 8px 20px rgba(43,120,197,.10); }}
-            .sms-frame-choice input {{ position:absolute; opacity:0; pointer-events:none; }}
-            .sms-frame-choice img {{ width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:9px; background:#eef4fa; }}
-            .sms-frame-choice span {{ display:flex; justify-content:space-between; gap:6px; align-items:center; }}
-            .sms-frame-choice strong {{ color:#284963; font-size:9px; }}
-            .sms-frame-choice small {{ color:#8397a8; font-size:8px; }}
-            .sms-frame-empty {{ padding:14px; border:1px dashed #d6e3ee; border-radius:14px; color:#8699aa; font-size:11px; background:#fff; }}
-            .sms-detail-panel textarea {{ width:100%; border:1px solid #d6e3ee; border-radius:14px; padding:11px 12px; resize:vertical; outline:none; color:#243e55; background:#fff; font:inherit; font-size:12px; }}
-            .sms-detail-panel textarea:focus {{ border-color:#5d9fd6; box-shadow:0 0 0 3px rgba(43,120,197,.10); }}
-            .sms-send-button {{ margin-top:11px; min-height:42px; padding:0 18px; border:0; border-radius:12px; background:#2b78c5; color:#fff; font-weight:850; font-size:12px; cursor:pointer; }}
-            .sms-send-button:disabled {{ opacity:.5; cursor:not-allowed; }}
-            .sms-detail-notice {{ margin-bottom:14px; padding:11px 13px; border-radius:12px; font-size:11px; font-weight:750; }}
-            .sms-detail-notice.success {{ border:1px solid #cfe6d8; background:#effaf3; color:#2a7c4c; }}
-            .sms-detail-notice.error {{ border:1px solid #f0d1d5; background:#fff4f5; color:#ae323b; }}
+            .sms-detail-panel { margin:20px 0 22px; padding:20px; border:1px solid #dce8f2; border-radius:24px; background:linear-gradient(135deg,#fbfdff,#f4f9fe); box-shadow:0 12px 30px rgba(36,83,126,.06); }
+            .sms-detail-head { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; }
+            .sms-detail-head h3 { margin:5px 0 5px; color:#18344f; font-size:19px; }
+            .sms-detail-head p { margin:0; max-width:760px; color:#7890a4; font-size:11px; line-height:1.55; }
+            .sms-recipient { min-width:210px; padding:12px 14px; border:1px solid #d7e5f0; border-radius:15px; background:#fff; box-shadow:0 5px 14px rgba(36,83,126,.04); }
+            .sms-recipient span { display:block; color:#8798a8; font-size:9px; font-weight:800; letter-spacing:.7px; text-transform:uppercase; }
+            .sms-recipient strong { display:block; margin-top:5px; color:#24425e; font-size:13px; }
+            .sms-frame-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:9px; margin:16px 0; max-height:315px; overflow:auto; padding:2px; }
+            .sms-frame-choice { position:relative; display:flex; flex-direction:column; gap:6px; padding:6px; border:1px solid #dfeaf5; border-radius:13px; background:#fff; cursor:pointer; transition:transform .12s ease,border-color .12s ease,box-shadow .12s ease; }
+            .sms-frame-choice:hover { transform:translateY(-1px); border-color:#b9d1e5; box-shadow:0 7px 16px rgba(36,83,126,.08); }
+            .sms-frame-choice:has(input:checked) { border:2px solid #2b78c5; padding:5px; box-shadow:0 8px 20px rgba(43,120,197,.11); }
+            .sms-frame-choice input { position:absolute; opacity:0; pointer-events:none; }
+            .sms-frame-open { position:relative; display:block; width:100%; aspect-ratio:16/9; border-radius:9px; overflow:hidden; background:#eef4fa; text-decoration:none; }
+            .sms-frame-open img { width:100%; height:100%; display:block; object-fit:cover; }
+            .sms-frame-open b { position:absolute; right:5px; bottom:5px; padding:4px 6px; border-radius:999px; background:rgba(24,52,79,.88); color:#fff; font-size:7px; font-weight:850; }
+            .sms-thumb-fallback { position:absolute; inset:0; display:grid; place-items:center; padding:8px; background:linear-gradient(135deg,#eef4fa,#f8fbfe); color:#8699aa; font-size:8px; font-weight:800; text-align:center; }
+            .sms-frame-meta { display:flex; justify-content:space-between; gap:5px; align-items:center; min-width:0; }
+            .sms-frame-meta strong { color:#284963; font-size:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+            .sms-frame-meta small { color:#8397a8; font-size:7px; white-space:nowrap; }
+            .sms-frame-empty { padding:15px; border:1px dashed #d6e3ee; border-radius:14px; color:#8699aa; font-size:11px; background:#fff; }
+            .sms-detail-panel textarea { width:100%; min-height:84px; border:1px solid #d6e3ee; border-radius:14px; padding:12px; resize:vertical; outline:none; color:#243e55; background:#fff; font:inherit; font-size:12px; }
+            .sms-detail-panel textarea:focus { border-color:#5d9fd6; box-shadow:0 0 0 3px rgba(43,120,197,.10); }
+            .sms-send-button { margin-top:11px; min-height:43px; padding:0 20px; border:0; border-radius:12px; background:#2b78c5; color:#fff; font-weight:850; font-size:12px; cursor:pointer; box-shadow:0 7px 16px rgba(43,120,197,.16); }
+            .sms-send-button:hover { background:#246ba9; }
+            .sms-send-button:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
+            .sms-detail-notice { margin-bottom:14px; padding:11px 13px; border-radius:12px; font-size:11px; font-weight:750; }
+            .sms-detail-notice.success { border:1px solid #cfe6d8; background:#effaf3; color:#2a7c4c; }
+            .sms-detail-notice.error { border:1px solid #f0d1d5; background:#fff4f5; color:#ae323b; }
             @media (max-width:1050px) {{ .sms-frame-grid {{ grid-template-columns:repeat(4,minmax(0,1fr)); }} }}
             @media (max-width:800px) {{ .sms-frame-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); max-height:360px; }} .sms-detail-head {{ flex-direction:column; }} .sms-recipient {{ width:100%; }} }}
 </style>
