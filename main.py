@@ -59,10 +59,10 @@ def _table_columns(db, table_name: str) -> set[str]:
 
 app = FastAPI(
     title="God Eyes Server",
-    version="1.4.0-sms-guardian"
+    version="1.4.1-sms-guardian-deploy-safe"
 )
 
-GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v7-sms-notification"
+GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v8-sms-notification-deploy-safe"
 
 app.include_router(teacher_admin_router)
 
@@ -1351,39 +1351,52 @@ def _issue_face_scan_token(student_id: int, admin_id: int) -> str:
 
 
 def ensure_student_tables():
-    """Create student profile and class membership tables for local development."""
+    """Create/upgrade student + SMS tables safely for PostgreSQL and SQLite.
+
+    SMS is an optional feature; a schema mismatch must never prevent the whole
+    God Eyes Server from starting. Existing data is preserved.
+    """
     with SessionLocal() as db:
-        db.execute(text("""
+        dialect_name = str(getattr(getattr(db, "bind", None), "dialect", None).name or "").lower()
+        is_postgres = dialect_name == "postgresql"
+        id_type = "BIGSERIAL" if is_postgres else "INTEGER"
+        owner_id_type = "BIGINT" if is_postgres else "INTEGER"
+        created_default = "CURRENT_TIMESTAMP"
+
+        db.execute(text(f"""
             CREATE TABLE IF NOT EXISTS students (
-                id BIGSERIAL PRIMARY KEY,
+                id {id_type} PRIMARY KEY,
                 owner_type TEXT NOT NULL DEFAULT 'TEACHER',
-                owner_id INTEGER NOT NULL,
+                owner_id {owner_id_type} NOT NULL,
                 student_code TEXT NOT NULL,
                 full_name TEXT NOT NULL,
                 photo_path TEXT NOT NULL DEFAULT '',
                 face_status TEXT NOT NULL DEFAULT 'NO_DATA',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                created_at TIMESTAMP NOT NULL DEFAULT {created_default},
+                updated_at TIMESTAMP NOT NULL DEFAULT {created_default}
             )
         """))
-        db.execute(text("""
+        db.execute(text(f"""
             CREATE TABLE IF NOT EXISTS class_students (
-                id BIGSERIAL PRIMARY KEY,
+                id {id_type} PRIMARY KEY,
                 class_id INTEGER NOT NULL,
                 student_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                created_at TIMESTAMP NOT NULL DEFAULT {created_default},
                 UNIQUE (class_id, student_id)
             )
         """))
+
         columns = _table_columns(db, "students")
         if "face_embedding" not in columns:
             db.execute(text("ALTER TABLE students ADD COLUMN face_embedding TEXT NOT NULL DEFAULT ''"))
+            columns.add("face_embedding")
         if "guardian_phone" not in columns:
-            db.execute(text("ALTER TABLE students ADD COLUMN guardian_phone TEXT NOT NULL DEFAULT ''"))
+            # Nullable avoids failures on older installations with existing rows.
+            db.execute(text("ALTER TABLE students ADD COLUMN guardian_phone TEXT"))
 
-        db.execute(text("""
+        db.execute(text(f"""
             CREATE TABLE IF NOT EXISTS sms_notifications (
-                id BIGSERIAL PRIMARY KEY,
+                id {id_type} PRIMARY KEY,
                 teacher_id INTEGER NOT NULL,
                 student_id INTEGER NOT NULL,
                 session_id INTEGER NOT NULL,
@@ -1394,18 +1407,23 @@ def ensure_student_tables():
                 provider_message_id TEXT NOT NULL DEFAULT '',
                 provider_name TEXT NOT NULL DEFAULT '',
                 error_message TEXT NOT NULL DEFAULT '',
-                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP NOT NULL DEFAULT {created_default}
             )
         """))
-        db.execute(text("CREATE INDEX IF NOT EXISTS idx_sms_notifications_teacher ON sms_notifications(teacher_id, created_at DESC)"))
-        db.execute(text("CREATE INDEX IF NOT EXISTS idx_sms_notifications_student ON sms_notifications(student_id, created_at DESC)"))
+        db.execute(text("CREATE INDEX IF NOT EXISTS idx_sms_notifications_teacher ON sms_notifications(teacher_id, created_at)"))
+        db.execute(text("CREATE INDEX IF NOT EXISTS idx_sms_notifications_student ON sms_notifications(student_id, created_at)"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_students_owner ON students(owner_type, owner_id)"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_class_students_class ON class_students(class_id)"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_class_students_student ON class_students(student_id)"))
         db.commit()
 
 
-ensure_student_tables()
+try:
+    ensure_student_tables()
+except Exception as exc:
+    import traceback
+    print("[GodEyes][SMS_MIGRATION] startup migration warning; server will continue:")
+    traceback.print_exc()
 
 
 def _normalise_phone_number(raw: str) -> str:
