@@ -8236,6 +8236,14 @@ def ensure_session_tables():
         """))
 
         db.commit()
+
+
+# Run the session/history schema migration at application startup.
+# This is required for existing PostgreSQL databases where observations
+# was created by an older build without duration_seconds.
+ensure_session_tables()
+
+
 def api_teacher_or_401(request: Request):
     payload = get_teacher_payload(request)
     if payload is None:
