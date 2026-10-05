@@ -59,7 +59,7 @@ app = FastAPI(
     version="1.3.0"
 )
 
-GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v3-one-percent-per-ob"
+GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v4-student-list"
 
 app.include_router(teacher_admin_router)
 
@@ -6511,38 +6511,49 @@ def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | No
     attention_students = sum(1 for x in student_cards if 50.0 <= x["focus"] < 80.0)
     safe_students = len(student_cards) - danger_students - attention_students
 
-    cards_html = ""
-    for student in student_cards:
+    list_rows_html = ""
+    for index, student in enumerate(student_cards, start=1):
         focus = max(0, min(100, round(student["focus"])))
         severity, sev_class, _ = _focus_severity(focus)
-        border_cls = " student-focus-danger" if sev_class == "danger" else ""
+        row_cls = " student-focus-list-row-danger" if sev_class == "danger" else ""
         href = f"/teacher/history/session/{int(session_id)}/student/{student['student_id']}"
-        cards_html += f"""
-            <a class="student-focus-card{border_cls}" href="{href}">
-                <div class="student-card-top">
-                    <div class="student-identity">
-                        <div class="student-avatar">{escape(str(student['full_name'])[:1].upper())}</div>
-                        <div>
-                            <div class="student-name">{escape(str(student['full_name']))}</div>
-                            <div class="student-code">{escape(str(student['student_code'] or '-'))}</div>
-                        </div>
+        list_rows_html += f"""
+            <a class="student-focus-list-row{row_cls}" href="{href}">
+                <div class="student-list-index">{index:02d}</div>
+                <div class="student-list-identity">
+                    <div class="student-list-avatar">{escape(str(student['full_name'])[:1].upper())}</div>
+                    <div class="student-list-name-wrap">
+                        <div class="student-list-name">{escape(str(student['full_name']))}</div>
+                        <div class="student-list-code">{escape(str(student['student_code'] or '-'))}</div>
                     </div>
+                </div>
+                <div class="student-list-focus">
+                    <div class="student-list-focus-head">
+                        <strong>{focus}%</strong>
+                        <span>Focus</span>
+                    </div>
+                    <div class="student-list-meter"><span style="width:{focus}%"></span></div>
+                </div>
+                <div class="student-list-metric">
+                    <span>OB</span>
+                    <strong>{student['observation_count']}</strong>
+                </div>
+                <div class="student-list-metric">
+                    <span>DANGER</span>
+                    <strong>{student['danger_count']}</strong>
+                </div>
+                <div class="student-list-metric">
+                    <span>ATTENTION</span>
+                    <strong>{student['attention_count']}</strong>
+                </div>
+                <div class="student-list-metric student-list-time">
+                    <span>OB TIME</span>
+                    <strong>{_format_clock_seconds(student['ob_time_seconds'])}</strong>
+                </div>
+                <div class="student-list-status">
                     <span class="severity-badge {sev_class}">{escape(severity)}</span>
+                    <span class="student-list-arrow">→</span>
                 </div>
-                <div class="focus-score-row">
-                    <div>
-                        <div class="focus-label">FOCUS SCORE</div>
-                        <div class="focus-value">{focus}%</div>
-                    </div>
-                    <div class="focus-meter"><span style="width:{focus}%"></span></div>
-                </div>
-                <div class="student-card-stats">
-                    <div><span>OB</span><strong>{student['observation_count']}</strong></div>
-                    <div><span>DANGER</span><strong>{student['danger_count']}</strong></div>
-                    <div><span>ATTENTION</span><strong>{student['attention_count']}</strong></div>
-                    <div><span>OB TIME</span><strong>{_format_clock_seconds(student['ob_time_seconds'])}</strong></div>
-                </div>
-                <div class="student-card-footer"><span>Xem chi tiết</span><span class="arrow">→</span></div>
             </a>
         """
 
@@ -6577,12 +6588,21 @@ def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | No
             </div>
 
             <div class="history-focus-section-head">
-                <div><div class="eyebrow-small">CLASS OVERVIEW</div><h3>Học sinh trong buổi học</h3><p>Mỗi học sinh chỉ xuất hiện một lần. Mở từng thẻ để xem các frame quan trọng.</p></div>
+                <div><div class="eyebrow-small">CLASS OVERVIEW</div><h3>Học sinh trong buổi học</h3><p>Mỗi học sinh chỉ xuất hiện một lần. Chọn một dòng để xem các frame quan trọng.</p></div>
                 <div class="session-meta-pill">{len(student_cards)} học sinh · {int(session['observation_count'] or 0)} observations · {evidence_count} evidence</div>
             </div>
 
-            <div class="student-focus-grid">
-                {cards_html if cards_html else '<div class="focus-empty">Chưa có học sinh trong roster của session.</div>'}
+            <div class="student-focus-list-wrap">
+                <div class="student-focus-list-header">
+                    <div class="list-head student-head-student">HỌC SINH</div>
+                    <div class="list-head student-head-focus">FOCUS SCORE</div>
+                    <div class="list-head">OB</div>
+                    <div class="list-head">DANGER</div>
+                    <div class="list-head">ATTENTION</div>
+                    <div class="list-head">OB TIME</div>
+                    <div class="list-head student-head-status">TRẠNG THÁI</div>
+                </div>
+                {list_rows_html if list_rows_html else '<div class="focus-empty">Chưa có học sinh trong roster của session.</div>'}
             </div>
         </section>
         <style>
@@ -6606,35 +6626,43 @@ def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | No
             .history-focus-section-head h3 {{ margin:4px 0 4px; color:#18344f; font-size:20px; }}
             .history-focus-section-head p {{ margin:0; color:#7a8d9f; font-size:12px; }}
             .session-meta-pill {{ border:1px solid #dce8f3; border-radius:999px; padding:9px 13px; color:#5f758b; background:#fff; font-size:11px; font-weight:800; white-space:nowrap; }}
-            .student-focus-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }}
-            .student-focus-card {{ display:block; text-decoration:none; color:inherit; padding:21px; border:1px solid #dfeaf5; border-radius:24px; background:#fff; box-shadow:0 11px 30px rgba(36,83,126,.055); transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease; }}
-            .student-focus-card:hover {{ transform:translateY(-2px); box-shadow:0 16px 34px rgba(36,83,126,.09); border-color:#c6dcec; }}
-            .student-focus-card.student-focus-danger {{ border:2px solid #d64652; box-shadow:0 14px 34px rgba(214,70,82,.11); }}
-            .student-card-top {{ display:flex; justify-content:space-between; align-items:flex-start; gap:15px; }}
-            .student-identity {{ display:flex; align-items:center; gap:12px; min-width:0; }}
-            .student-avatar {{ width:48px; height:48px; border-radius:17px; display:flex; align-items:center; justify-content:center; flex:0 0 48px; background:#edf6ff; color:#2b78c5; font-size:18px; font-weight:900; }}
-            .student-name {{ color:#18344f; font-size:16px; font-weight:850; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-            .student-code {{ margin-top:4px; color:#8999a9; font-size:11px; font-weight:700; }}
-            .severity-badge {{ border-radius:999px; padding:7px 10px; font-size:9px; font-weight:900; letter-spacing:.55px; white-space:nowrap; }}
-            .severity-badge.danger {{ color:#b4232d; background:#fff0f1; border:1px solid #f0c8cc; }}
-            .severity-badge.attention {{ color:#9a6400; background:#fff8e8; border:1px solid #f2dfb2; }}
-            .severity-badge.safe {{ color:#25734a; background:#eef9f2; border:1px solid #cfe8d8; }}
-            .focus-score-row {{ margin-top:20px; }}
-            .focus-label {{ color:#8294a5; font-size:9px; font-weight:900; letter-spacing:.9px; }}
-            .focus-value {{ margin-top:2px; color:#18344f; font-size:36px; font-weight:900; letter-spacing:-1px; }}
-            .student-focus-danger .focus-value {{ color:#b4232d; }}
-            .focus-meter {{ height:9px; margin-top:9px; background:#edf2f7; border-radius:999px; overflow:hidden; }}
-            .focus-meter span {{ display:block; height:100%; border-radius:999px; background:#5f9bd3; }}
-            .student-focus-danger .focus-meter span {{ background:#d64652; }}
-            .student-card-stats {{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:17px; }}
-            .student-card-stats > div {{ padding:11px 10px; border-radius:15px; background:#f7faff; border:1px solid #e6eef6; }}
-            .student-card-stats span {{ display:block; color:#91a0ae; font-size:8px; font-weight:900; letter-spacing:.5px; }}
-            .student-card-stats strong {{ display:block; margin-top:4px; color:#365069; font-size:13px; }}
-            .student-card-footer {{ display:flex; justify-content:space-between; margin-top:17px; padding-top:13px; border-top:1px solid #edf2f7; color:#2b78c5; font-size:11px; font-weight:850; }}
-            .student-card-footer .arrow {{ font-size:16px; line-height:10px; }}
-            .focus-empty {{ padding:40px; text-align:center; border:1px dashed #cfddea; border-radius:22px; color:#8191a2; grid-column:1/-1; }}
-            @media (max-width:1100px) {{ .session-overview-grid {{ grid-template-columns:repeat(2,1fr); }} .student-focus-grid {{ grid-template-columns:1fr; }} }}
-            @media (max-width:700px) {{ .history-focus-hero, .history-focus-section-head {{ flex-direction:column; align-items:flex-start; }} .session-overview-grid {{ grid-template-columns:1fr; }} .student-card-stats {{ grid-template-columns:repeat(2,1fr); }} }}
+            .student-focus-list-wrap {{ border:1px solid #dfeaf5; border-radius:24px; background:#fff; box-shadow:0 11px 30px rgba(36,83,126,.055); overflow:hidden; }}
+            .student-focus-list-header {{ display:grid; grid-template-columns:minmax(250px,1.55fr) minmax(150px,1fr) 70px 90px 100px 105px 150px; align-items:center; gap:14px; padding:13px 18px; background:#f6faff; border-bottom:1px solid #e6eef6; }}
+            .list-head {{ color:#8294a5; font-size:9px; font-weight:900; letter-spacing:.75px; }}
+            .student-focus-list-row {{ display:grid; grid-template-columns:minmax(250px,1.55fr) minmax(150px,1fr) 70px 90px 100px 105px 150px; align-items:center; gap:14px; padding:15px 18px; border-bottom:1px solid #edf2f7; text-decoration:none; color:inherit; background:#fff; transition:background .15s ease, box-shadow .15s ease, transform .15s ease; }}
+            .student-focus-list-row:last-child {{ border-bottom:none; }}
+            .student-focus-list-row:hover {{ background:#f9fcff; box-shadow:inset 4px 0 0 #9cc7ec; }}
+            .student-focus-list-row.student-focus-list-row-danger {{ margin:4px 6px; padding-left:12px; padding-right:12px; border:2px solid #d64652; border-radius:17px; box-shadow:0 8px 22px rgba(214,70,82,.10); }}
+            .student-focus-list-row.student-focus-list-row-danger + .student-focus-list-row {{ border-top:1px solid #edf2f7; }}
+            .student-list-index {{ color:#a3b0bd; font-size:11px; font-weight:900; text-align:center; }}
+            .student-list-identity {{ display:flex; align-items:center; gap:11px; min-width:0; }}
+            .student-list-avatar {{ width:42px; height:42px; border-radius:14px; display:flex; align-items:center; justify-content:center; flex:0 0 42px; background:#edf6ff; color:#2b78c5; font-size:16px; font-weight:900; }}
+            .student-list-name-wrap {{ min-width:0; }}
+            .student-list-name {{ color:#18344f; font-size:14px; font-weight:850; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+            .student-list-code {{ margin-top:3px; color:#8999a9; font-size:10px; font-weight:700; }}
+            .student-list-focus {{ min-width:0; }}
+            .student-list-focus-head {{ display:flex; align-items:baseline; gap:7px; margin-bottom:7px; }}
+            .student-list-focus-head strong {{ color:#18344f; font-size:20px; font-weight:900; letter-spacing:-.4px; }}
+            .student-focus-list-row-danger .student-list-focus-head strong {{ color:#b4232d; }}
+            .student-list-focus-head span {{ color:#96a4b1; font-size:9px; font-weight:800; text-transform:uppercase; }}
+            .student-list-meter {{ height:8px; background:#edf2f7; border-radius:999px; overflow:hidden; }}
+            .student-list-meter span {{ display:block; height:100%; min-width:2px; border-radius:999px; background:#5f9bd3; }}
+            .student-focus-list-row-danger .student-list-meter span {{ background:#d64652; }}
+            .student-list-metric {{ min-width:0; }}
+            .student-list-metric span {{ display:block; color:#91a0ae; font-size:8px; font-weight:900; letter-spacing:.45px; }}
+            .student-list-metric strong {{ display:block; margin-top:4px; color:#365069; font-size:14px; font-weight:850; }}
+            .student-list-status {{ display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }}
+            .student-list-arrow {{ color:#2b78c5; font-size:18px; font-weight:900; line-height:1; }}
+            .focus-empty {{ padding:40px; text-align:center; color:#8191a2; border-radius:22px; }}
+            @media (max-width:1100px) {{
+                .session-overview-grid {{ grid-template-columns:repeat(2,1fr); }}
+                .student-focus-list-wrap {{ overflow:auto; }}
+                .student-focus-list-header, .student-focus-list-row {{ min-width:980px; }}
+            }}
+            @media (max-width:700px) {{
+                .history-focus-hero, .history-focus-section-head {{ flex-direction:column; align-items:flex-start; }}
+                .session-overview-grid {{ grid-template-columns:1fr; }}
+            }}
         </style>
     """
 
