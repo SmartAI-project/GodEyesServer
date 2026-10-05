@@ -62,6 +62,7 @@ app = FastAPI(
 )
 
 GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v6-student-search-polish"
+GODEYES_MAIN_ACCOUNT_CREATE_VERSION = "v19-raw-sql"
 
 app.include_router(teacher_admin_router)
 
@@ -2364,7 +2365,7 @@ def new_teacher_page(request: Request):
     error = str(request.query_params.get("error", "")).strip().lower()
     error_html = (
         '<div style="margin-bottom:16px;padding:12px 14px;border:1px solid #f1c7cb;background:#fff4f4;color:#b4232d;border-radius:12px;font-size:13px;font-weight:650;">'
-        'Không thể tạo tài khoản. Hệ thống đã hủy thao tác để không làm hỏng dữ liệu. Kiểm tra Server log để xem lỗi cơ sở dữ liệu.'
+        'Không thể tạo tài khoản. Hệ thống đã hủy thao tác để không làm hỏng dữ liệu. Kiểm tra nhật ký Server để xem nguyên nhân cơ sở dữ liệu.'
         '</div>'
     ) if error == "create_failed" else ""
 
@@ -2446,20 +2447,54 @@ def create_teacher_page(
                 status_code=303
             )
 
-        teacher = TeacherAccount(
-            main_account_id=int(payload["sub"]),
-            username=username,
-            password_hash=hash_password(password),
-            full_name=full_name,
-            is_active=True,
-            created_at=datetime.now()
-        )
-
-        db.add(teacher)
+        # Insert with raw SQL instead of the ORM model.
+        # The deployed Render database may have a schema/type shape that is
+        # slightly older than models.teacher.TeacherAccount. Raw SQL here uses
+        # only the compatibility columns guaranteed by ensure_auth_tables()
+        # and explicitly supplies created_at, avoiding the previous ORM commit
+        # mismatch that always redirected to create_failed.
         try:
+            main_account_id = int(payload["sub"])
+        except (TypeError, ValueError):
+            return RedirectResponse(
+                url="/admin/accounts/new?error=create_failed",
+                status_code=303
+            )
+
+        try:
+            admin_exists = db.execute(
+                text("SELECT id FROM main_accounts WHERE id = :id LIMIT 1"),
+                {"id": main_account_id},
+            ).first()
+            if admin_exists is None:
+                print(f"[GodEyes][ADMIN_CREATE] Main admin id {main_account_id} not found.")
+                db.rollback()
+                return RedirectResponse(
+                    url="/admin/accounts/new?error=create_failed",
+                    status_code=303
+                )
+
+            db.execute(
+                text("""
+                    INSERT INTO teacher_accounts
+                        (main_account_id, username, password_hash, full_name, is_active, created_at)
+                    VALUES
+                        (:main_account_id, :username, :password_hash, :full_name, :is_active, CURRENT_TIMESTAMP)
+                """),
+                {
+                    "main_account_id": main_account_id,
+                    "username": username,
+                    "password_hash": hash_password(password),
+                    "full_name": full_name,
+                    "is_active": True,
+                },
+            )
             db.commit()
-        except Exception:
+        except Exception as exc:
+            import traceback
             db.rollback()
+            print("[GodEyes][ADMIN_CREATE] Teacher account insert failed:")
+            traceback.print_exc()
             return RedirectResponse(
                 url="/admin/accounts/new?error=create_failed",
                 status_code=303
