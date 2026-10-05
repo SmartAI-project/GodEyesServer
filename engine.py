@@ -1,3 +1,4 @@
+# GodEyes Engine v34 • 40-track session lock • 5s head-turn • 70% Face ID gate • 30 FPS preview
 from pathlib import Path
 import math
 import os
@@ -289,55 +290,66 @@ class CameraWorker(QThread):
                 pass
 
     def _open_webcam(self):
+        # For an explicitly selected external USB webcam, do not blindly reuse
+        # index 0 because Windows commonly assigns the built-in laptop camera
+        # to index 0. Prefer a configured non-zero index; otherwise probe 1..9
+        # first and only fall back to index 0 if no other camera opens.
+        if self.source_type in {'USB', 'USB_WEBCAM'} and int(self.camera_index) == 0:
+            indices = list(range(1, 10)) + [0]
+        else:
+            indices = [int(self.camera_index)]
+
         candidates = [
             (cv2.CAP_DSHOW, 'DIRECTSHOW'),
             (cv2.CAP_MSMF, 'MEDIA FOUNDATION'),
             (cv2.CAP_ANY, 'AUTO'),
         ]
-        for backend, name in candidates:
-            if self._stop_event.is_set():
-                return None
-            cap = None
-            try:
-                cap = cv2.VideoCapture(self.camera_index, backend)
-                if not cap.isOpened():
-                    if cap is not None:
-                        cap.release()
-                    continue
+        for camera_index in indices:
+            for backend, name in candidates:
+                if self._stop_event.is_set():
+                    return None
+                cap = None
                 try:
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                except Exception:
-                    pass
-                for key, value in [
-                    (cv2.CAP_PROP_FRAME_WIDTH, 1280),
-                    (cv2.CAP_PROP_FRAME_HEIGHT, 720),
-                    (cv2.CAP_PROP_FPS, 30),
-                ]:
+                    cap = cv2.VideoCapture(camera_index, backend)
+                    if not cap.isOpened():
+                        if cap is not None:
+                            cap.release()
+                        continue
                     try:
-                        cap.set(key, value)
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     except Exception:
                         pass
-                try:
-                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                except Exception:
-                    pass
-                ok, frame = cap.read()
-                if ok and frame is not None and frame.size:
-                    self.actual_height, self.actual_width = frame.shape[:2]
+                    for key, value in [
+                        (cv2.CAP_PROP_FRAME_WIDTH, 1280),
+                        (cv2.CAP_PROP_FRAME_HEIGHT, 720),
+                        (cv2.CAP_PROP_FPS, 30),
+                    ]:
+                        try:
+                            cap.set(key, value)
+                        except Exception:
+                            pass
                     try:
-                        self.actual_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+                        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                     except Exception:
-                        self.actual_fps = 0.0
-                    self.backend_name = name
-                    self._set_latest(frame)
-                    return cap
-            except Exception:
-                pass
-            if cap is not None:
-                try:
-                    cap.release()
+                        pass
+                    ok, frame = cap.read()
+                    if ok and frame is not None and frame.size:
+                        self.camera_index = camera_index
+                        self.actual_height, self.actual_width = frame.shape[:2]
+                        try:
+                            self.actual_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+                        except Exception:
+                            self.actual_fps = 0.0
+                        self.backend_name = name
+                        self._set_latest(frame)
+                        return cap
                 except Exception:
                     pass
+                if cap is not None:
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
         return None
 
     def _open_rtsp(self):
@@ -474,7 +486,7 @@ class CameraWorker(QThread):
                 now = time.time()
                 # UI preview is capped; the capture loop still drains the RTSP
                 # stream as quickly as OpenCV delivers it, keeping only the newest frame.
-                if now - self._last_ui_emit >= 0.05:
+                if now - self._last_ui_emit >= (1.0 / 30.0):
                     self._last_ui_emit = now
                     self.frame_ready.emit(frame)
             self._release()
@@ -490,16 +502,26 @@ class CameraWorker(QThread):
 
 
 class PersonTrack:
+    """Single-person track with prediction + smooth box follow.
+
+    The detector can move a bounding box abruptly between frames.  This class
+    keeps a filtered box, a short velocity estimate, and the raw detector box
+    so the UI follows the person incrementally instead of jumping.
+    """
+
     def __init__(self, track_id, detection, now=None):
-        now = time.time() if now is None else now
+        now = time.time() if now is None else float(now)
         self.track_id = int(track_id)
-        self.box = tuple(int(v) for v in detection.box)
-        self.prev_box = self.box
+        raw = tuple(float(v) for v in detection.box)
+        self.raw_box = raw
+        self.box = raw
+        self.prev_box = raw
         self.hits = 1
         self.missed = 0
         self.age = 1
         self.last_seen = now
         self.first_seen = now
+        self.last_update_time = now
         self.person_score = float(detection.person_score)
         self.face = detection.face
         self.face_feature = detection.face_feature
@@ -517,9 +539,22 @@ class PersonTrack:
         self.lower_motion = float(detection.lower_motion)
         self.hand_motion = float(detection.hand_motion)
         self.task_activity = float(detection.task_activity)
+        self.velocity = [0.0, 0.0, 0.0, 0.0]
+        self.raw_center_history = [self.center]
         self.center_history = [self.center]
+        self.face_center_history = []
+        if self.face is not None:
+            self.face_center_history.append(self._face_center(self.face))
         self.height_history = [self.box[3]]
         self.width_history = [self.box[2]]
+
+    @staticmethod
+    def _face_center(face):
+        try:
+            x, y, w, h = [float(v) for v in face[:4]]
+            return (x + 0.5 * w, y + 0.5 * h)
+        except Exception:
+            return None
 
     @property
     def center(self):
@@ -542,19 +577,79 @@ class PersonTrack:
     def visible(self):
         return self.missed == 0
 
-    def update(self, detection, now=None):
-        now = time.time() if now is None else now
-        self.prev_box = self.box
-        self.box = tuple(int(v) for v in detection.box)
+    @staticmethod
+    def _blend_box(a, b, alpha_pos=0.60, alpha_size=0.38):
+        ax, ay, aw, ah = [float(v) for v in a]
+        bx, by, bw, bh = [float(v) for v in b]
+        return (
+            ax + alpha_pos * (bx - ax),
+            ay + alpha_pos * (by - ay),
+            max(8.0, aw + alpha_size * (bw - aw)),
+            max(8.0, ah + alpha_size * (bh - ah)),
+        )
+
+    def _predicted_box(self, horizon=1.0):
+        x, y, w, h = self.box
+        vx, vy, vw, vh = self.velocity
+        horizon = max(0.0, min(3.0, float(horizon)))
+        return (
+            x + vx * horizon,
+            y + vy * horizon,
+            max(8.0, w + vw * horizon),
+            max(8.0, h + vh * horizon),
+        )
+
+    def update(self, detection, now=None, protected=False):
+        now = time.time() if now is None else float(now)
+        raw = tuple(float(v) for v in detection.box)
+        previous_box = self.box
+        previous_center = self.center
+        previous_time = self.last_update_time
+        dt = max(1e-3, now - previous_time)
+
+        # Fuse the detector's current box with a short forward prediction.
+        # A protected/locked track gets a slightly stronger correction so it
+        # follows the student promptly while still avoiding box jitter.
+        predicted = self._predicted_box(1.0)
+        prediction_weight = 0.14 if not protected else 0.10
+        fused = tuple(
+            (1.0 - prediction_weight) * raw[i] + prediction_weight * predicted[i]
+            for i in range(4)
+        )
+
+        # Incremental follow: never jump directly to the detector box.
+        alpha_pos = 0.58 if not protected else 0.72
+        alpha_size = 0.36 if not protected else 0.48
+        smooth = self._blend_box(
+            previous_box,
+            fused,
+            alpha_pos=alpha_pos,
+            alpha_size=alpha_size,
+        )
+
+        self.prev_box = previous_box
+        self.raw_box = raw
+        self.box = smooth
         self.hits += 1
         self.missed = 0
         self.age += 1
         self.last_seen = now
+        self.last_update_time = now
+
+        new_cx, new_cy = self.center
+        old_cx, old_cy = previous_center
+        raw_vx = (new_cx - old_cx) / dt
+        raw_vy = (new_cy - old_cy) / dt
+        raw_vw = (smooth[2] - previous_box[2]) / dt
+        raw_vh = (smooth[3] - previous_box[3]) / dt
+        # Velocity is filtered separately so prediction remains stable.
+        self.velocity[0] = 0.62 * self.velocity[0] + 0.38 * raw_vx * 0.12
+        self.velocity[1] = 0.62 * self.velocity[1] + 0.38 * raw_vy * 0.12
+        self.velocity[2] = 0.70 * self.velocity[2] + 0.30 * raw_vw * 0.08
+        self.velocity[3] = 0.70 * self.velocity[3] + 0.30 * raw_vh * 0.08
+
         self.person_score = 0.80 * self.person_score + 0.20 * float(detection.person_score)
-        if detection.face is not None:
-            self.face = detection.face
-        else:
-            self.face = None
+        self.face = detection.face
         if detection.face_feature is not None:
             self.face_feature = detection.face_feature
         if detection.appearance_feature is not None:
@@ -572,30 +667,85 @@ class PersonTrack:
         self.lower_motion = float(detection.lower_motion)
         self.hand_motion = float(detection.hand_motion)
         self.task_activity = float(detection.task_activity)
+
+        self.raw_center_history.append(self._raw_center(raw))
         self.center_history.append(self.center)
+        face_center = self._face_center(self.face)
+        if face_center is not None:
+            self.face_center_history.append(face_center)
+        if len(self.raw_center_history) > 30:
+            self.raw_center_history.pop(0)
+        if len(self.center_history) > 30:
+            self.center_history.pop(0)
+        if len(self.face_center_history) > 30:
+            self.face_center_history.pop(0)
         self.height_history.append(self.box[3])
         self.width_history.append(self.box[2])
-        if len(self.center_history) > 20:
-            self.center_history.pop(0)
-        if len(self.height_history) > 20:
+        if len(self.height_history) > 30:
             self.height_history.pop(0)
-        if len(self.width_history) > 20:
+        if len(self.width_history) > 30:
             self.width_history.pop(0)
 
-    def miss(self, now=None):
-        now = time.time() if now is None else now
+    @staticmethod
+    def _raw_center(box):
+        x, y, w, h = [float(v) for v in box]
+        return (x + 0.5 * w, y + 0.5 * h)
+
+    def miss(self, now=None, protected=False):
+        now = time.time() if now is None else float(now)
         self.missed += 1
         self.age += 1
         self.last_seen = now
+        self.last_update_time = now
+
+        # During a short detector gap, move the box with the person's latest
+        # velocity rather than freezing it.  The step is bounded by box height.
+        x, y, w, h = self.box
+        vx, vy, vw, vh = self.velocity
+        max_step = max(18.0, h * (0.78 if protected else 0.60))
+        step_x = float(np.clip(vx, -max_step, max_step))
+        step_y = float(np.clip(vy, -max_step, max_step))
+        self.prev_box = self.box
+        self.box = (
+            x + step_x,
+            y + step_y,
+            max(8.0, w + float(np.clip(vw, -0.08 * w, 0.08 * w))),
+            max(8.0, h + float(np.clip(vh, -0.08 * h, 0.08 * h))),
+        )
+        decay = 0.88 if protected else 0.82
+        self.velocity = [v * decay for v in self.velocity]
+        self.center_history.append(self.center)
+        if len(self.center_history) > 30:
+            self.center_history.pop(0)
+        self.height_history.append(self.box[3])
+        self.width_history.append(self.box[2])
+        if len(self.height_history) > 30:
+            self.height_history.pop(0)
+        if len(self.width_history) > 30:
+            self.width_history.pop(0)
 
 
 class PersonTracker:
+    MAX_TRACKS = 40
+    """Person tracker optimized for a locked classroom student.
+
+    Matching uses IoU, center/predicted position, appearance, and—when both
+    boxes contain a face—the face anchor.  Locked tracks receive a stronger
+    prediction/face weight and a wider temporary gate to keep the same track
+    while the student walks, turns, or is briefly occluded.
+    """
+
     def __init__(self):
         self.tracks = {}
         self.next_id = 1
-        self.max_missed = 30
-        self.max_assignment_distance = 1.55
-        self.min_assignment_score = 0.27
+        self.max_missed = 90
+        self.max_missed_protected = 180
+        self.max_assignment_distance = 2.35
+        self.min_assignment_score = 0.21
+        self.protected_track_ids = set()
+
+    def set_protected_track_ids(self, track_ids):
+        self.protected_track_ids = {int(v) for v in (track_ids or [])}
 
     @staticmethod
     def _iou(a, b):
@@ -609,23 +759,26 @@ class PersonTracker:
         iy1 = max(ay, by)
         ix2 = min(ax2, bx2)
         iy2 = min(ay2, by2)
-        iw = max(0, ix2 - ix1)
-        ih = max(0, iy2 - iy1)
+        iw = max(0.0, ix2 - ix1)
+        ih = max(0.0, iy2 - iy1)
         inter = iw * ih
-        union = max(1, aw * ah + bw * bh - inter)
+        union = max(1.0, aw * ah + bw * bh - inter)
         return inter / union
 
     @staticmethod
+    def _center_from_box(box):
+        x, y, w, h = box
+        return x + w * 0.5, y + h * 0.5
+
+    @staticmethod
     def _center_distance(a, b):
-        ax, ay, aw, ah = a
-        bx, by, bw, bh = b
-        acx = ax + aw * 0.5
-        acy = ay + ah * 0.5
-        bcx = bx + bw * 0.5
-        bcy = by + bh * 0.5
-        d = math.hypot(acx - bcx, acy - bcy)
-        scale = max(60.0, 0.45 * (ah + bh))
-        return min(2.0, d / scale)
+        ax, ay = PersonTracker._center_from_box(a)
+        bx, by = PersonTracker._center_from_box(b)
+        ah = max(1.0, float(a[3]))
+        bh = max(1.0, float(b[3]))
+        d = math.hypot(ax - bx, ay - by)
+        scale = max(60.0, 0.50 * (ah + bh))
+        return min(3.0, d / scale)
 
     @staticmethod
     def _appearance_distance(a, b):
@@ -645,35 +798,152 @@ class PersonTracker:
         except Exception:
             return 1.0
 
+    @staticmethod
+    def _face_embedding_similarity(a, b):
+        if a is None or b is None:
+            return -1.0
+        try:
+            aa = np.asarray(a, dtype=np.float32).ravel()
+            bb = np.asarray(b, dtype=np.float32).ravel()
+            if aa.size == 0 or aa.size != bb.size:
+                return -1.0
+            denom = float(np.linalg.norm(aa) * np.linalg.norm(bb))
+            if denom <= 1e-8:
+                return -1.0
+            return float(np.dot(aa, bb) / denom)
+        except Exception:
+            return -1.0
+
+    @staticmethod
+    def _face_distance(a, b, scale_height=120.0):
+        if a is None or b is None:
+            return 1.0
+        try:
+            ax, ay, aw, ah = [float(v) for v in a[:4]]
+            bx, by, bw, bh = [float(v) for v in b[:4]]
+            acx, acy = ax + aw * 0.5, ay + ah * 0.5
+            bcx, bcy = bx + bw * 0.5, by + bh * 0.5
+            d = math.hypot(acx - bcx, acy - bcy)
+            return float(min(3.0, d / max(40.0, float(scale_height) * 0.55)))
+        except Exception:
+            return 1.0
+
+    @staticmethod
+    def _repair_detection_box(detection):
+        """Keep the tracked person box attached to its detected face.
+
+        Some person detections can be shifted sideways relative to the face.
+        When that happens, shift the box toward the face anchor before matching
+        and smoothing.  This directly prevents a locked box from staying on a
+        nearby chair/background region.
+        """
+        face = getattr(detection, 'face', None)
+        if face is None:
+            return detection
+        try:
+            bx, by, bw, bh = [float(v) for v in detection.box]
+            fx, fy, fw, fh = [float(v) for v in face[:4]]
+            fcx = fx + 0.5 * fw
+            fcy = fy + 0.5 * fh
+            inside = (bx <= fcx <= bx + bw) and (by <= fcy <= by + bh)
+            if inside:
+                return detection
+
+            # Desired placement: face centered horizontally and in the upper
+            # quarter of the person box.  Move mostly, but not instantaneously.
+            desired_x = fcx - 0.50 * bw
+            desired_y = fcy - 0.20 * bh
+            repaired_x = 0.20 * bx + 0.80 * desired_x
+            repaired_y = 0.20 * by + 0.80 * desired_y
+            detection.box = (
+                int(round(max(0.0, repaired_x))),
+                int(round(max(0.0, repaired_y))),
+                int(round(max(8.0, bw))),
+                int(round(max(8.0, bh))),
+            )
+        except Exception:
+            return detection
+        return detection
+
     def _pair_score(self, track, detection):
         iou = self._iou(track.box, detection.box)
         distance = self._center_distance(track.box, detection.box)
         appearance = self._appearance_distance(track.appearance_feature, detection.appearance_feature)
+        face_distance = self._face_distance(
+            getattr(track, 'face', None),
+            getattr(detection, 'face', None),
+            scale_height=max(60.0, float(track.box[3])),
+        )
+        face_score = 1.0 - min(1.0, face_distance)
+        face_embedding_similarity = self._face_embedding_similarity(
+            getattr(track, 'face_feature', None),
+            getattr(detection, 'face_feature', None),
+        )
+        face_embedding_score = max(0.0, min(1.0, face_embedding_similarity)) if face_embedding_similarity >= 0.0 else 0.0
+
+        current_cx, current_cy = self._center_from_box(track.box)
+        next_cx, next_cy = self._center_from_box(detection.box)
+        predicted_distance = distance
         velocity_bonus = 0.0
+
         if len(track.center_history) >= 2:
             px, py = track.center_history[-2]
             cx, cy = track.center_history[-1]
-            dx = cx - px
-            dy = cy - py
-            pred = (cx + dx, cy + dy)
-            nx, ny = PersonTracker._center_from_box(detection.box)
-            pd = math.hypot(pred[0] - nx, pred[1] - ny)
-            velocity_bonus = max(0.0, 1.0 - min(1.0, pd / max(80.0, track.box[3] * 0.8)))
-        score = 0.60 * iou + 0.20 * (1.0 - min(1.0, distance)) + 0.15 * (1.0 - appearance) + 0.05 * velocity_bonus
-        if iou < 0.03 and distance > self.max_assignment_distance and appearance > 0.72:
+            vx = cx - px
+            vy = cy - py
+            horizon = min(3, max(1, int(track.missed) + 1))
+            pred = (current_cx + vx * horizon, current_cy + vy * horizon)
+            pd_px = math.hypot(pred[0] - next_cx, pred[1] - next_cy)
+            predicted_distance = min(3.0, pd_px / max(70.0, track.box[3] * 0.95))
+            velocity_bonus = max(0.0, 1.0 - min(1.0, predicted_distance))
+
+        position_score = 1.0 - min(1.0, min(distance, predicted_distance))
+        protected = track.track_id in self.protected_track_ids
+        if protected and face_distance < 3.0:
+            score = (
+                0.20 * iou
+                + 0.23 * position_score
+                + 0.14 * (1.0 - appearance)
+                + 0.18 * face_score
+                + 0.20 * face_embedding_score
+                + 0.05 * velocity_bonus
+            )
+            # A protected identity must not silently jump to a different
+            # visible face. Only the tracker association is allowed to fail;
+            # IdentityLock will then keep the student uncertain until a strong
+            # embedding match re-establishes the identity.
+            if face_embedding_similarity >= 0.0 and face_embedding_similarity < 0.40:
+                return 0.0
+        else:
+            score = (
+                0.38 * iou
+                + 0.30 * position_score
+                + 0.20 * (1.0 - appearance)
+                + 0.07 * face_score
+                + 0.05 * velocity_bonus
+            )
+
+        gate = self.max_assignment_distance
+        if protected:
+            gate += min(0.80, 0.22 * float(track.missed))
+        else:
+            gate += min(0.55, 0.16 * float(track.missed))
+
+        if iou < 0.02 and min(distance, predicted_distance) > gate and appearance > 0.78:
             return 0.0
+        if protected and getattr(track, 'face', None) is not None and getattr(detection, 'face', None) is not None:
+            # A locked student with a visible face should not jump to a far-away
+            # face simply because its person boxes overlap poorly.
+            if face_distance > 1.75 and distance > 0.95 and appearance > 0.72:
+                return 0.0
         return score
 
-    @staticmethod
-    def _center_from_box(box):
-        x, y, w, h = box
-        return x + w * 0.5, y + h * 0.5
-
     def update(self, detections, now=None):
-        now = time.time() if now is None else now
-        detections = list(detections or [])
+        now = time.time() if now is None else float(now)
+        detections = [self._repair_detection_box(d) for d in list(detections or [])]
         active_ids = list(self.tracks.keys())
         pairs = []
+
         for tid in active_ids:
             track = self.tracks[tid]
             for di, detection in enumerate(detections):
@@ -682,8 +952,24 @@ class PersonTracker:
                     continue
                 iou = self._iou(track.box, detection.box)
                 dist = self._center_distance(track.box, detection.box)
-                if iou >= 0.03 or dist <= self.max_assignment_distance:
+                pred_dist = dist
+                if len(track.center_history) >= 2:
+                    px, py = track.center_history[-2]
+                    cx, cy = track.center_history[-1]
+                    vx = cx - px
+                    vy = cy - py
+                    nx, ny = self._center_from_box(detection.box)
+                    horizon = min(3, max(1, int(track.missed) + 1))
+                    pred = (cx + vx * horizon, cy + vy * horizon)
+                    pred_dist = min(3.0, math.hypot(pred[0] - nx, pred[1] - ny) / max(70.0, track.box[3] * 0.95))
+                gate = self.max_assignment_distance
+                if tid in self.protected_track_ids:
+                    gate += min(0.80, 0.22 * float(track.missed))
+                else:
+                    gate += min(0.55, 0.16 * float(track.missed))
+                if iou >= 0.02 or min(dist, pred_dist) <= gate:
                     pairs.append((score, tid, di))
+
         pairs.sort(key=lambda item: item[0], reverse=True)
         matched_tracks = set()
         matched_detections = set()
@@ -692,20 +978,65 @@ class PersonTracker:
                 continue
             if score < self.min_assignment_score:
                 continue
-            self.tracks[tid].update(detections[di], now)
+            protected = tid in self.protected_track_ids
+            self.tracks[tid].update(detections[di], now, protected=protected)
             matched_tracks.add(tid)
             matched_detections.add(di)
+
         for tid in list(active_ids):
             if tid not in matched_tracks and tid in self.tracks:
-                self.tracks[tid].miss(now)
-                if self.tracks[tid].missed > self.max_missed:
+                protected = tid in self.protected_track_ids
+                self.tracks[tid].miss(now, protected=protected)
+                max_missed = self.max_missed_protected if protected else self.max_missed
+                if self.tracks[tid].missed > max_missed:
                     del self.tracks[tid]
+                    self.protected_track_ids.discard(tid)
+
         for di, detection in enumerate(detections):
             if di in matched_detections:
                 continue
+            if len(self.tracks) >= self.MAX_TRACKS:
+                # Never exceed the classroom track budget. Prefer preserving
+                # already protected identities and confirmed tracks.
+                removable = [
+                    t for t in self.tracks.values()
+                    if t.track_id not in self.protected_track_ids
+                ]
+                if not removable:
+                    removable = list(self.tracks.values())
+                victim = min(
+                    removable,
+                    key=lambda t: (
+                        int(t.track_id in self.protected_track_ids),
+                        int(t.confirmed),
+                        -int(t.missed),
+                        int(t.hits),
+                    )
+                )
+                self.tracks.pop(victim.track_id, None)
+                self.protected_track_ids.discard(victim.track_id)
             tid = self.next_id
             self.next_id += 1
             self.tracks[tid] = PersonTrack(tid, detection, now)
+
+        # A defensive hard cap keeps both memory and rendering bounded.
+        if len(self.tracks) > self.MAX_TRACKS:
+            ranked = sorted(
+                self.tracks.values(),
+                key=lambda t: (
+                    int(t.track_id in self.protected_track_ids),
+                    int(t.confirmed),
+                    -int(t.missed),
+                    int(t.hits),
+                ),
+                reverse=True,
+            )
+            keep_ids = {t.track_id for t in ranked[:self.MAX_TRACKS]}
+            for tid in list(self.tracks):
+                if tid not in keep_ids:
+                    self.tracks.pop(tid, None)
+                    self.protected_track_ids.discard(tid)
+
         return list(self.tracks.values())
 
     def confirmed_visible(self):
@@ -714,6 +1045,7 @@ class PersonTracker:
     def reset(self):
         self.tracks.clear()
         self.next_id = 1
+        self.protected_track_ids.clear()
 
 
 class IdentityLock:
@@ -746,15 +1078,22 @@ class IdentityLock:
 
         # Server Face ID roster.
         self.server_roster = {}
-        self.server_threshold = 0.363
-        self.server_margin = 0.035
+        self.server_threshold = 0.70
+        self.server_margin = 0.08
 
         # Temporary identity continuity when face disappears.
-        self.hold_identity_seconds = 6.0
-        self.reid_threshold = 0.62
-        self.reid_margin = 0.075
-        self.reid_appearance_max_distance = 0.55
-        self.reid_position_max_distance = 0.55
+        # The lock is meant to follow a student for the whole monitoring
+        # session, not only for a few seconds after the last face frame.
+        self.hold_identity_seconds = float('inf')
+        self.reid_threshold = 0.84
+        self.reid_margin = 0.10
+        self.reid_appearance_max_distance = 0.36
+        self.reid_position_max_distance = 1.00
+
+        # Snapshot of tracks visible in the current processed frame. It lets
+        # face matching distinguish a truly lost old track from an identity
+        # that is still actively visible and must not be stolen.
+        self.active_track_status = {}
 
     @staticmethod
     def _cosine_similarity(a, b):
@@ -808,6 +1147,21 @@ class IdentityLock:
         self.track_to_student.clear()
         self.student_profiles.clear()
         self.student_to_track.clear()
+        self.active_track_status.clear()
+
+    def begin_frame(self, tracks):
+        """Tell IdentityLock which tracks are alive/visible in this frame."""
+        status = {}
+        for track in list(tracks or []):
+            try:
+                status[int(track.track_id)] = {
+                    'missed': int(getattr(track, 'missed', 0)),
+                    'confirmed': bool(getattr(track, 'confirmed', False)),
+                    'visible': bool(getattr(track, 'visible', False)),
+                }
+            except Exception:
+                continue
+        self.active_track_status = status
 
     def student_id_for_label(self, label):
         profile = self.server_roster.get(str(label))
@@ -850,7 +1204,7 @@ class IdentityLock:
         return ordered
 
     def lock(self, tracks, frame_size=None):
-        visible = self._order_tracks(list(tracks))
+        visible = self._order_tracks(list(tracks))[:40]
         self.track_to_student.clear()
         self.student_profiles.clear()
         self.student_to_track.clear()
@@ -959,9 +1313,16 @@ class IdentityLock:
             frame_size or profile.get('frame_size')
         )
 
-        # Conservative recovery: appearance and spatial continuity must both
-        # be plausible. This is not treated as a fresh Face ID match.
-        score = 1.0 - (0.70 * ad + 0.30 * pd)
+        # When a new person track is created, SFace is still the strongest
+        # identity cue. Appearance + position then stabilize the hand-off.
+        fd = self._feature_distance(
+            track.face_feature,
+            profile.get('face_feature')
+        )
+        if track.face_feature is not None and profile.get('face_feature') is not None:
+            score = 1.0 - (0.55 * fd + 0.30 * ad + 0.15 * pd)
+        else:
+            score = 1.0 - (0.70 * ad + 0.30 * pd)
         return max(0.0, min(1.0, score)), ad, pd
 
     def _refresh_profile(self, sid, track, frame_size=None, identity_source='TRACK_HOLD'):
@@ -973,16 +1334,21 @@ class IdentityLock:
 
         if track.face_feature is not None:
             old = profile.get('face_feature')
-            if old is None:
-                profile['face_feature'] = track.face_feature.copy()
-            else:
-                # Very slow update keeps the original enrollment anchor stable.
-                updated = 0.97 * old + 0.03 * track.face_feature
-                norm = float(np.linalg.norm(updated))
-                profile['face_feature'] = (
-                    updated / norm if norm > 1e-8 else updated
-                )
-            profile['last_face_seen'] = now
+            anchor = profile.get('server_embedding') if profile.get('server_embedding') is not None else old
+            agrees = True
+            if anchor is not None:
+                agrees = self._cosine_similarity(track.face_feature, anchor) >= self.server_threshold
+            if agrees:
+                if old is None:
+                    profile['face_feature'] = track.face_feature.copy()
+                else:
+                    # Very slow update keeps the original enrollment anchor stable.
+                    updated = 0.985 * old + 0.015 * track.face_feature
+                    norm = float(np.linalg.norm(updated))
+                    profile['face_feature'] = (
+                        updated / norm if norm > 1e-8 else updated
+                    )
+                profile['last_face_seen'] = now
 
         if track.appearance_feature is not None:
             old = profile.get('appearance_feature')
@@ -1004,6 +1370,22 @@ class IdentityLock:
         self.student_to_track[sid] = track.track_id
         self.track_to_student[track.track_id] = sid
 
+    def _locked_face_similarity(self, sid, track):
+        """Compare the current face against the locked student's anchors."""
+        profile = self.student_profiles.get(sid) or {}
+        candidates = []
+        current = getattr(track, 'face_feature', None)
+        if current is None:
+            return -1.0
+        stored = profile.get('face_feature')
+        if stored is not None:
+            candidates.append(self._cosine_similarity(current, stored))
+        server = profile.get('server_embedding')
+        if server is not None:
+            candidates.append(self._cosine_similarity(current, server))
+        values = [v for v in candidates if v >= -1.0]
+        return max(values) if values else -1.0
+
     def _match_face_to_server(self, track):
         if not self.server_roster or track.face_feature is None:
             return None, -1.0, -1.0
@@ -1015,8 +1397,11 @@ class IdentityLock:
         for label, item in self.server_roster.items():
             assigned_track = self.student_to_track.get(label)
             if assigned_track is not None and assigned_track != track.track_id:
-                # Do not steal an identity already held by another visible track.
-                continue
+                assigned_status = self.active_track_status.get(assigned_track, {})
+                # Only block reassignment when that identity is still attached
+                # to a live confirmed track in the current frame.
+                if assigned_status.get('visible') and assigned_status.get('confirmed') and not assigned_status.get('missed', 0):
+                    continue
 
             score = self._cosine_similarity(
                 track.face_feature,
@@ -1040,12 +1425,21 @@ class IdentityLock:
         candidates = []
 
         for sid, profile in self.student_profiles.items():
-            age = now - float(profile.get('last_seen', 0.0))
-            if age > self.hold_identity_seconds:
-                continue
-
+            # Session-long lock: identity memory does not expire by time.
             previous_track = self.student_to_track.get(sid)
             if previous_track == track.track_id:
+                continue
+
+            # Do not steal an identity from a track that is still confirmed and
+            # visible. Re-acquisition is allowed once the old track is missing.
+            previous_status = self.active_track_status.get(previous_track, {})
+            if previous_status.get('visible') and previous_status.get('confirmed') and not previous_status.get('missed', 0):
+                continue
+
+            # Appearance-only recovery is permitted only when the face is
+            # genuinely unavailable. The face mismatch path is handled in
+            # resolve() and is intentionally blocked.
+            if getattr(track, 'face_feature', None) is not None:
                 continue
 
             score, appearance_distance, position_distance = self._appearance_reid_score(
@@ -1056,8 +1450,7 @@ class IdentityLock:
 
             if appearance_distance > self.reid_appearance_max_distance:
                 continue
-            if position_distance > self.reid_position_max_distance:
-                continue
+            # Position is a weak supporting signal, not a hard identity gate.
             if score < self.reid_threshold:
                 continue
 
@@ -1100,29 +1493,44 @@ class IdentityLock:
             profile = self.student_profiles.get(sid)
 
             if profile is not None:
-                age = time.time() - float(profile.get('last_seen', 0.0))
+                if track.face_feature is not None:
+                    locked_sim = self._locked_face_similarity(sid, track)
+                    if locked_sim < self.server_threshold:
+                        # Do not let a contradictory visible face inherit this
+                        # student's identity. Keep the track alive, but make the
+                        # identity explicitly uncertain until the embedding is
+                        # strong enough again.
+                        return 'IDENTITY UNCERTAIN', max(0.0, locked_sim)
+                    self._refresh_profile(
+                        sid,
+                        track,
+                        frame_size,
+                        identity_source='FACE'
+                    )
+                    return sid, max(0.0, min(1.0, locked_sim))
+
                 self._refresh_profile(
                     sid,
                     track,
                     frame_size,
-                    identity_source='FACE' if track.face_feature is not None else 'TRACK_HOLD'
+                    identity_source='TRACK_HOLD'
                 )
-                return sid, 1.0 if track.face_feature is not None else max(
-                    0.82,
-                    0.95 - 0.03 * min(4.0, age)
-                )
+                return sid, 0.90
 
-        # 2. Fresh face observation: use the real Face ID roster.
+        # 2. Fresh face observation: lock only on a strong Face ID match.
+        # A visible face that does NOT reach the 70% threshold is never allowed
+        # to inherit somebody else's identity from appearance matching.
         if self.server_roster and track.face_feature is not None:
             best_label, best_score, second_score = self._match_face_to_server(track)
+            margin_ok = best_score - max(-1.0, second_score) >= self.server_margin
 
-            if (
-                best_label is not None
-                and best_score >= self.server_threshold
-                and best_score - max(-1.0, second_score) >= self.server_margin
-            ):
+            if best_label is not None and best_score >= self.server_threshold and margin_ok:
                 previous_track = self.student_to_track.get(best_label)
                 if previous_track is not None and previous_track != track.track_id:
+                    previous_status = self.active_track_status.get(previous_track, {})
+                    # Never steal a live identity.
+                    if previous_status.get('visible') and previous_status.get('confirmed') and not previous_status.get('missed', 0):
+                        return 'IDENTITY UNCERTAIN', 0.0
                     self.track_to_student.pop(previous_track, None)
 
                 if best_label not in self.student_profiles:
@@ -1135,14 +1543,15 @@ class IdentityLock:
                         identity_source='FACE'
                     )
 
-                return best_label, max(
-                    0.0,
-                    min(1.0, best_score)
-                )
+                return best_label, max(0.0, min(1.0, best_score))
 
-        # 3. Face temporarily unavailable: recover a recently known identity
-        # using the same person's appearance + position. This is deliberately
-        # conservative and only operates on identities seen earlier in session.
+            # A visible but weak/mismatching embedding must stay uncertain.
+            return 'IDENTITY UNCERTAIN', max(0.0, min(1.0, best_score))
+
+        # 3. Face temporarily unavailable: recover a previously LOCKED identity
+        # from the same person's appearance only. This path is intentionally
+        # unavailable while a face embedding is visible, preventing cross-person
+        # identity transfer when the current face contradicts the stored face.
         sid, reid_score = self._recover_from_profile(track, frame_size)
         if sid is not None:
             return sid, reid_score
@@ -1217,7 +1626,7 @@ class SmartVision:
                 continue
             try:
                 if hasattr(cv2, 'FaceDetectorYN') and yunet_path.stat().st_size > 100000:
-                    self.face_detector = cv2.FaceDetectorYN.create(str(yunet_path), '', (320, 320), 0.65, 0.30, 5000)
+                    self.face_detector = cv2.FaceDetectorYN.create(str(yunet_path), '', (320, 320), 0.50, 0.30, 5000)
                 if hasattr(cv2, 'FaceRecognizerSF') and sface_path.stat().st_size > 100000:
                     self.face_recognizer = cv2.FaceRecognizerSF.create(str(sface_path), '')
                 if self.face_detector is not None and self.face_recognizer is not None:
@@ -1259,16 +1668,43 @@ class SmartVision:
     def _sface_feature(self, frame, face):
         if self.face_recognizer is None or face is None:
             return None
+
+        features = []
         try:
             aligned = self.face_recognizer.alignCrop(frame, face)
             feature = self.face_recognizer.feature(aligned)
             feature = np.asarray(feature, dtype=np.float32).ravel()
             norm = float(np.linalg.norm(feature))
-            if feature.size == 0 or norm <= 1e-8:
-                return None
-            return feature / norm
+            if feature.size and norm > 1e-8:
+                features.append(feature / norm)
         except Exception:
+            pass
+
+        # Low-light / mildly blurred faces get a second embedding from a
+        # contrast-enhanced view. We combine the two only when both are valid;
+        # this improves robustness without changing the identity metric.
+        try:
+            lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            l2 = clahe.apply(l)
+            enhanced = cv2.cvtColor(cv2.merge((l2, a, b)), cv2.COLOR_LAB2BGR)
+            aligned2 = self.face_recognizer.alignCrop(enhanced, face)
+            feature2 = self.face_recognizer.feature(aligned2)
+            feature2 = np.asarray(feature2, dtype=np.float32).ravel()
+            norm2 = float(np.linalg.norm(feature2))
+            if feature2.size and norm2 > 1e-8:
+                features.append(feature2 / norm2)
+        except Exception:
+            pass
+
+        if not features:
             return None
+        if len(features) == 1:
+            return features[0]
+        merged = np.mean(np.stack(features, axis=0), axis=0).astype(np.float32)
+        norm = float(np.linalg.norm(merged))
+        return merged / norm if norm > 1e-8 else features[0]
 
     def _find_model(self):
         roots = [
@@ -1584,6 +2020,65 @@ class SmartVision:
         return float(np.clip((float(np.mean(diff)) / 255.0) * 4.5, 0.0, 1.0))
 
     @staticmethod
+    def _nearest_face_anchor(faces, person_box, frame_width, frame_height):
+        """Find the face most likely belonging to a person detection.
+
+        YOLO can occasionally return a badly shifted person box (for example,
+        a chair/background region next to the student).  YuNet sees the face
+        independently, so use the nearest face as a hard geometric anchor.
+        """
+        if not faces:
+            return None
+        px, py, pw, ph = [float(v) for v in person_box]
+        pcx = px + 0.5 * pw
+        pcy = py + 0.22 * ph
+        best = None
+        best_score = 1e9
+        for face in faces:
+            try:
+                fx, fy, fw, fh = [float(v) for v in face[:4]]
+            except Exception:
+                continue
+            if fw < 20 or fh < 20:
+                continue
+            fcx = fx + 0.5 * fw
+            fcy = fy + 0.5 * fh
+            d = math.hypot(fcx - pcx, fcy - pcy)
+            # Normalize by the larger expected person dimension.
+            gate = max(90.0, 1.35 * max(pw, ph), 0.22 * max(frame_width, frame_height))
+            if d > gate:
+                continue
+            # Prefer a face near the expected head position and with decent size.
+            vertical_penalty = abs((fcy - py) / max(1.0, ph) - 0.22)
+            score = d + 120.0 * vertical_penalty - 0.15 * math.sqrt(fw * fh)
+            if score < best_score:
+                best_score = score
+                best = face
+        return best
+
+    @staticmethod
+    def _recenter_person_box_on_face(person_box, face, width, height, strength=0.92):
+        """Recenter a person box so its upper body is actually attached to face."""
+        if face is None:
+            return person_box
+        try:
+            x, y, w, h = [float(v) for v in person_box]
+            fx, fy, fw, fh = [float(v) for v in face[:4]]
+            fcx = fx + 0.5 * fw
+            # The face should sit roughly 20% from the top of the person box.
+            desired_x = fcx - 0.50 * w
+            desired_y = (fy + 0.5 * fh) - 0.20 * h
+            new_x = x + float(strength) * (desired_x - x)
+            new_y = y + float(strength) * (desired_y - y)
+            return SmartVision._clamp_box((
+                int(round(new_x)), int(round(new_y)),
+                int(round(max(w, fw * 2.45))),
+                int(round(max(h, fh * 3.25))),
+            ), width, height)
+        except Exception:
+            return person_box
+
+    @staticmethod
     def _object_name(cls_id):
         return {63: 'LAPTOP', 65: 'REMOTE', 67: 'PHONE', 73: 'BOOK'}.get(int(cls_id), 'OBJECT')
 
@@ -1608,7 +2103,7 @@ class SmartVision:
                     conf=0.35,
                     iou=0.48,
                     imgsz=640,
-                    max_det=50,
+                    max_det=40,
                     device='cpu',
                     verbose=False,
                 )
@@ -1635,18 +2130,31 @@ class SmartVision:
                     x1, y1, x2, y2 = coords
                     box = self._clamp_box((int(x1), int(y1), int(x2 - x1), int(y2 - y1)), width, height)
                     if cls_id == 0:
-                        if conf >= 0.48 and self._person_box_ok(box, width, height, conf):
+                        if conf >= 0.42 and self._person_box_ok(box, width, height, conf):
                             persons.append((box, conf))
                     elif cls_id in (63, 65, 67, 73) and conf >= 0.30:
                         if box[2] >= 18 and box[3] >= 12:
                             objects.append((box, cls_id, conf))
         yunet_faces = self._yunet_faces(frame)
 
+        # Hard geometric face anchor: this fixes badly shifted YOLO person
+        # boxes and prevents the lock box from sitting on a chair/background.
+        if persons and yunet_faces:
+            anchored_persons = []
+            for person_box, person_conf in persons:
+                anchor = self._nearest_face_anchor(yunet_faces, person_box, width, height)
+                if anchor is not None:
+                    person_box = self._recenter_person_box_on_face(
+                        person_box, anchor, width, height, strength=0.92
+                    )
+                anchored_persons.append((person_box, person_conf))
+            persons = anchored_persons
+
         # No YOLO model (or YOLO failed): use YuNet face boxes as person tracks.
         # This keeps Face ID + tracking functional without requiring a large
         # YOLO weights file on the development machine.
         if not persons and yunet_faces:
-            for face in yunet_faces[:50]:
+            for face in yunet_faces[:40]:
                 try:
                     fx, fy, fw, fh = [float(v) for v in face[:4]]
                 except Exception:
@@ -1729,6 +2237,7 @@ class SmartVision:
                 task_activity=float(task_activity),
             ))
         detections.sort(key=lambda d: d.person_score, reverse=True)
+        detections = detections[:40]
         self.last_detections = detections
         self.previous_gray = gray.copy()
         self.previous_frame = frame.copy()
@@ -1739,21 +2248,34 @@ class SmartVision:
 
 class BehaviorEngine:
     """
-    God Eyes behavior engine - v32 Sleep Guard.
+    God Eyes classroom behavior engine.
 
     Rules:
-    - Head turn LEFT/RIGHT: abs(yaw) > 40 degrees for 4 continuous seconds.
-    - Face-down / face-missing: keep the already locked identity and wait 5 seconds.
-    - After 5 seconds of plausible face loss, emit OB_SLEEP once until the face returns.
-    - Short detector gaps are tolerated to avoid false triggers.
+    1) Head turn LEFT/RIGHT:
+       - abs(yaw) > 50 degrees
+       - continuously for 3 seconds
+       - emit one event per turn episode.
+
+    2) Face not visible:
+       - keep the already locked identity while the person track remains valid.
+       - if the person is moving, do NOT generate a sleep-like event.
+       - if the person is not moving and the face remains unavailable for
+         5 seconds, emit one OB_SLEEP event for that episode.
+
+    This is an observation signal, not a medical or definitive determination.
     """
 
-    YAW_THRESHOLD_DEG = 40.0
-    YAW_CONFIRM_SECONDS = 4.0
-    FACE_LOST_SLEEP_SECONDS = 5.0
+    YAW_THRESHOLD_DEG = 50.0
+    YAW_CONFIRM_SECONDS = 5.0
+
+    NO_FACE_STILL_SLEEP_SECONDS = 5.0
     FACE_GAP_GRACE_SECONDS = 0.40
-    HEAD_DOWN_MIN_RATIO = 0.36
-    HEAD_DOWN_DELTA = 0.07
+
+    # Motion thresholds. Movement can be seen from body/hand/task activity or
+    # from visible person-center displacement.
+    MOTION_THRESHOLD = 0.16
+    CENTER_MOVE_THRESHOLD = 0.055
+
     EVENT_COOLDOWN = 8.0
 
     def __init__(self, board_side='RIGHT'):
@@ -1770,11 +2292,10 @@ class BehaviorEngine:
                 'turn_start': None,
                 'last_yaw': 0.0,
                 'last_face_time': 0.0,
+
                 'face_missing_start': None,
-                'head_down_start': None,
-                'face_y_ratio_ema': None,
                 'sleep_latched': False,
-                'turn_latched': False,
+
                 'last_event': {},
                 'last_seen': 0.0,
             }
@@ -1788,6 +2309,46 @@ class BehaviorEngine:
     @staticmethod
     def _event(key, confidence, details):
         return key, float(confidence), str(details)
+
+    @staticmethod
+    def _center_speed(track):
+        """
+        Estimate recent person movement from the tracked box center.
+
+        The value is normalized by person height so the same threshold works
+        better at different camera distances.
+        """
+        history = list(getattr(track, 'center_history', []) or [])
+        if len(history) < 2:
+            return 0.0
+
+        try:
+            x1, y1 = history[-2]
+            x2, y2 = history[-1]
+            dx = float(x2) - float(x1)
+            dy = float(y2) - float(y1)
+            height = max(60.0, float(getattr(track, 'box', (0, 0, 0, 60))[3]))
+            normalized = math.hypot(dx, dy) / height
+            return float(max(0.0, min(1.0, normalized / 0.20)))
+        except Exception:
+            return 0.0
+
+    def _movement_score(self, track):
+        """
+        Combine person motion signals.
+
+        - lower_motion: lower/body motion
+        - hand_motion: upper-body/hand movement
+        - task_activity: combined body/task activity
+        - center movement: actual tracked person displacement
+        """
+        values = [
+            float(getattr(track, 'lower_motion', 0.0)),
+            float(getattr(track, 'hand_motion', 0.0)),
+            float(getattr(track, 'task_activity', 0.0)),
+            self._center_speed(track),
+        ]
+        return float(max(0.0, min(1.0, max(values))))
 
     def evaluate(self, sid, track, now=None):
         now = time.time() if now is None else float(now)
@@ -1803,17 +2364,15 @@ class BehaviorEngine:
         yaw = float(getattr(track, 'head_yaw_deg', 0.0))
         head_quality = float(getattr(track, 'head_quality', 0.0))
         person_score = float(getattr(track, 'person_score', 0.0))
+        movement_score = self._movement_score(track)
 
+        # ---------------------------------------------------------
+        # 1) HEAD TURN > 50°, continuously for 3 seconds
+        # ---------------------------------------------------------
         if face_valid:
             state['last_yaw'] = yaw
             state['last_face_time'] = now
 
-        # ---------------------------------------------------------
-        # 1) HEAD TURN > 40°, confirm for 4 continuous seconds
-        #    A short face-detector gap (<= 0.4s) does not reset the timer.
-        #    Emit once per continuous turn episode; re-arm when the head
-        #    returns within the threshold.
-        # ---------------------------------------------------------
         turned = bool(face_valid and abs(yaw) > self.YAW_THRESHOLD_DEG)
         direction = -1 if yaw < 0 else 1 if yaw > 0 else 0
 
@@ -1823,17 +2382,24 @@ class BehaviorEngine:
                 state['turn_start'] = now
                 state['turn_latched'] = False
 
-            elapsed = now - float(state['turn_start'] or now)
+            # IMPORTANT: do not use "or now" here because 0.0 is valid.
+            turn_start = state.get('turn_start')
+            elapsed = now - float(turn_start) if turn_start is not None else 0.0
 
-            if elapsed >= self.YAW_CONFIRM_SECONDS and not state['turn_latched']:
+            if (
+                elapsed >= self.YAW_CONFIRM_SECONDS
+                and not state['turn_latched']
+            ):
                 key = 'HEAD_TURN_LEFT' if direction < 0 else 'HEAD_TURN_RIGHT'
                 side = 'left' if direction < 0 else 'right'
+
                 confidence = min(
                     0.97,
                     0.60
                     + 0.22 * min(1.0, head_quality)
                     + 0.15 * min(1.0, person_score),
                 )
+
                 events.append(self._event(
                     key,
                     confidence,
@@ -1845,12 +2411,13 @@ class BehaviorEngine:
                 ))
                 state['last_event'][key] = now
                 state['turn_latched'] = True
+
         elif (
             not face_valid
             and state['turn_side'] != 0
             and (now - float(state.get('last_face_time', 0.0))) <= self.FACE_GAP_GRACE_SECONDS
         ):
-            # Keep the current turn timer through a brief detector gap.
+            # Keep the turn timer through a very short face-detector gap.
             pass
         else:
             state['turn_side'] = 0
@@ -1858,102 +2425,52 @@ class BehaviorEngine:
             state['turn_latched'] = False
 
         # ---------------------------------------------------------
-        # 2) HEAD DOWN + FACE LOST -> possible sleep
+        # 2) FACE NOT VISIBLE
         #
-        # face_y_ratio is an existing project heuristic. When the face is
-        # visible, a clear downward shift starts a head-down candidate.
-        # When the face then disappears, the identity remains locked by
-        # IdentityLock and the five-second timer can continue.
+        # IdentityLock keeps the student's identity on the person track.
+        # We only care about motion here:
+        #   moving      -> no sleep event
+        #   not moving  -> start stationary/no-face timer
         # ---------------------------------------------------------
-        downward = False
-
         if face_valid:
-            ratio = float(getattr(track, 'face_y_ratio', 0.0))
-            baseline = state['face_y_ratio_ema']
-
-            if baseline is None:
-                state['face_y_ratio_ema'] = ratio
-                baseline = ratio
-            elif 0.05 <= ratio <= 0.85 and abs(ratio - baseline) <= 0.12:
-                state['face_y_ratio_ema'] = 0.985 * baseline + 0.015 * ratio
-                baseline = state['face_y_ratio_ema']
-
-            downward = (
-                ratio >= max(
-                    self.HEAD_DOWN_MIN_RATIO,
-                    float(baseline) + self.HEAD_DOWN_DELTA,
-                )
-            )
-
-            if downward:
-                if state['head_down_start'] is None:
-                    state['head_down_start'] = now
-            else:
-                state['head_down_start'] = None
-
-            # Face is back: cancel the missing-face sleep timer.
             state['face_missing_start'] = None
-
-            # Re-arm sleep detection for a later episode.
-            if state['sleep_latched']:
-                state['sleep_latched'] = False
-
+            state['sleep_latched'] = False
         else:
-            # Do not classify a strong sideways turn alone as sleep.
-            # Start the five-second timer only if the last known pose was
-            # near-forward or a head-down candidate had already started.
-            last_yaw = float(state.get('last_yaw', 0.0))
-            plausible_sleep_context = (
-                abs(last_yaw) <= self.YAW_THRESHOLD_DEG
-                or state['head_down_start'] is not None
-            )
+            is_moving = movement_score >= self.MOTION_THRESHOLD
 
-            if plausible_sleep_context:
+            if is_moving:
+                # The person is still tracked and moving. No sleep signal.
+                state['face_missing_start'] = None
+                state['sleep_latched'] = False
+            else:
                 if state['face_missing_start'] is None:
                     state['face_missing_start'] = now
 
-                # After 5 seconds, emit exactly one OB_SLEEP event for this
-                # episode. The identity is still held by IdentityLock.
                 missing_elapsed = now - float(state['face_missing_start'])
 
                 if (
-                    missing_elapsed >= self.FACE_LOST_SLEEP_SECONDS
+                    missing_elapsed >= self.NO_FACE_STILL_SLEEP_SECONDS
                     and not state['sleep_latched']
                     and self._cooldown_ok(state, 'OB_SLEEP', now)
                 ):
-                    down_context = state['head_down_start'] is not None
                     confidence = min(
-                        0.86,
+                        0.90,
                         0.62
-                        + (0.12 if down_context else 0.0)
-                        + 0.08 * min(1.0, person_score),
+                        + 0.10 * min(1.0, person_score)
+                        + 0.08 * (1.0 - min(1.0, movement_score)),
                     )
-                    details = (
-                        'OB_SLEEP • Không thấy khuôn mặt liên tục '
-                        f'{self.FACE_LOST_SLEEP_SECONDS:.0f} giây'
-                    )
-                    if down_context:
-                        details += (
-                            ' sau tín hiệu cúi đầu; đây là dấu hiệu hình ảnh '
-                            'nghi ngờ ngủ/gục và cần giáo viên xác nhận.'
-                        )
-                    else:
-                        details += (
-                            '; đây là tín hiệu nghi ngờ ngủ/gục và cần giáo viên '
-                            'xác nhận.'
-                        )
 
                     events.append(self._event(
                         'OB_SLEEP',
                         confidence,
-                        details,
+                        (
+                            'Không thấy khuôn mặt và gần như không di chuyển '
+                            f'trong {self.NO_FACE_STILL_SLEEP_SECONDS:.0f} giây; '
+                            'đây là tín hiệu nghi ngờ ngủ gật và cần giáo viên xác nhận.'
+                        ),
                     ))
                     state['last_event']['OB_SLEEP'] = now
                     state['sleep_latched'] = True
-            else:
-                # Strong sideways disappearance: keep identity locked, but
-                # do not start the sleep timer yet.
-                state['face_missing_start'] = None
 
         return events
 
@@ -1983,7 +2500,7 @@ class AIWorker(QThread):
         self.active = True
         self.mode = 'scan'
         self.session_id = None
-        self.target_fps = 3.0
+        self.target_fps = 10.0
         self.next_run = 0.0
         self.last_status = ''
         self.last_error_time = 0.0
@@ -2015,7 +2532,7 @@ class AIWorker(QThread):
         with self._config_lock:
             self.session_id = session_id
             self.mode = str(mode)
-            self.target_fps = max(1.0, min(8.0, float(fps)))
+            self.target_fps = max(6.0, min(12.0, float(fps)))
             self.board_side = board_side
             self.behavior.set_board_side(board_side)
             self.active = True
@@ -2047,8 +2564,9 @@ class AIWorker(QThread):
             frame_size = (frame.shape[1], frame.shape[0])
         with self._state_lock:
             mapping = self.identity.lock(self.tracker.tracks.values(), frame_size)
+        self.tracker.set_protected_track_ids(mapping.keys() if mapping else [])
         if mapping:
-            self.status.emit(f'IDENTITIES LOCKED • {len(mapping)} students')
+            self.status.emit(f'IDENTITIES LOCKED • {len(mapping)} students • SMOOTH FOLLOW ON')
         else:
             self.status.emit('IDENTITY LOCK FAILED • no stable students')
         return mapping
@@ -2137,14 +2655,14 @@ class AIWorker(QThread):
         gray=self.vision._prepare_gray(frame)
         detections=[]
         h,w=frame.shape[:2]
-        for face in faces[:50]:
+        for face in faces[:40]:
             try:
                 fx,fy,fw,fh=[float(v) for v in face[:4]]
             except Exception:
                 continue
             box=self.vision._clamp_box((int(fx),int(fy),int(fw),int(fh)),w,h)
             x,y,bw,bh=box
-            if bw < 42 or bh < 42:
+            if bw < 30 or bh < 30:
                 continue
             conf=float(face[14]) if len(face) >= 15 else 0.85
             if conf < 0.55:
@@ -2164,7 +2682,7 @@ class AIWorker(QThread):
                 face_y_ratio=0.5, object_types=(), object_scores=(),
                 lower_motion=0.0, hand_motion=0.0, task_activity=0.0
             ))
-        return detections
+        return detections[:40]
 
     def _process_once(self, frame):
         if self.vision is None:
@@ -2177,14 +2695,47 @@ class AIWorker(QThread):
                 self.tracks_ready.emit([])
                 return
             face_mode = 'SFACE READY' if self.vision.face_recognizer is not None else 'SFACE MODEL MISSING'
-            self._emit_status(f'AI READY • {Path(self.vision.model_source).name} • {face_mode} • HEAD TURN 40°/4s • OB_SLEEP 5s', 0.5)
+            self._emit_status(f'AI READY • {Path(self.vision.model_source).name} • {face_mode} • LOCKED TRACK • SMOOTH FOLLOW • HEAD TURN >50°/5s • NO-FACE+STILL 5s • SESSION-LONG ID LOCK • EMBEDDING GUARD', 0.5)
 
         if self.mode == 'scan':
             detections = self._scan_face_detections(frame)
         else:
-            detections, _ = self.vision.detect(frame)
+            raw_detections, _ = self.vision.detect(frame)
+            # SmartVision returns serializable dicts; PersonTracker operates on
+            # Detection instances.  Converting here prevents the recurring
+            # 'dict has no attribute box' AI PROCESS ERROR loop.
+            detections = [
+                Detection(**item) if isinstance(item, dict) else item
+                for item in (raw_detections or [])
+            ]
         with self._state_lock:
+            self.tracker.set_protected_track_ids(self.identity.mapping().keys())
             track_objects = self.tracker.update(detections)
+            # IdentityLock needs the current tracker state before resolving
+            # identities, so a lost old track can be handed off safely to a
+            # newly created track of the same student.
+            self.identity.begin_frame(track_objects)
+            # Once a student is locked, make a final face-anchor correction on
+            # that track. This keeps the visible box attached to the actual
+            # person even when the detector's body box jitters.
+            if self.mode == 'monitor' and getattr(self.vision, 'face_detector', None) is not None:
+                face_anchors = self.vision._yunet_faces(frame)
+                if face_anchors:
+                    for track in track_objects:
+                        if track.track_id not in self.identity.mapping():
+                            continue
+                        anchor = self.vision._nearest_face_anchor(
+                            face_anchors, track.box, frame.shape[1], frame.shape[0]
+                        )
+                        if anchor is None:
+                            continue
+                        corrected = self.vision._recenter_person_box_on_face(
+                            track.box, anchor, frame.shape[1], frame.shape[0], strength=0.22
+                        )
+                        track.box = tuple(
+                            float(a) * 0.58 + float(b) * 0.42
+                            for a, b in zip(track.box, corrected)
+                        )
         frame_size = (frame.shape[1], frame.shape[0])
         payload = []
         active_student_ids = set()
@@ -2221,11 +2772,11 @@ class AIWorker(QThread):
         visible_tracks = sum(1 for item in payload if item['missed'] == 0 and item['confirmed'])
         if self.vision.last_inference_ms > 0:
             self._emit_status(
-                f'AI ONLINE • {visible_tracks} PERSON(S) • {self.vision.last_inference_ms:.0f}ms',
+                f'AI ONLINE • {visible_tracks}/40 PERSON(S) • {self.vision.last_inference_ms:.0f}ms',
                 1.5,
             )
         else:
-            self._emit_status(f'AI ONLINE • {visible_tracks} PERSON(S)', 1.5)
+            self._emit_status(f'AI ONLINE • {visible_tracks}/40 PERSON(S)', 1.5)
         self.tracks_ready.emit(payload)
 
     def run(self):
