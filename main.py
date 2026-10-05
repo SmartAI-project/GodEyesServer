@@ -59,7 +59,7 @@ app = FastAPI(
     version="1.3.0"
 )
 
-GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v1"
+GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v2-frame-average"
 
 app.include_router(teacher_admin_router)
 
@@ -6311,34 +6311,49 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
     """
 
 
-FOCUS_EVENT_PENALTIES = {
-    "OB_SLEEP": 12.0,
-    "HEAD_TURN_LEFT": 6.0,
-    "HEAD_TURN_RIGHT": 6.0,
-    "HEAD_DOWN": 6.0,
+FOCUS_FRAME_DEFAULTS = {
+    "OB_SLEEP": 25.0,
+    "HEAD_DOWN": 65.0,
+    "HEAD_TURN_LEFT": 75.0,
+    "HEAD_TURN_RIGHT": 75.0,
+    "NORMAL": 100.0,
+    "FOCUS_FRAME": 100.0,
+    "SAFE": 100.0,
 }
-FOCUS_DEFAULT_PENALTY = 3.0
 
 
-def _focus_event_penalty(event_type: str, duration_seconds: float = 0.0) -> float:
-    """Return an observation-based focus loss.
+def _frame_focus_score(event_type: str, details: str = "", explicit_score=None) -> float:
+    """Return a 0..100 focus score for one stored frame/observation.
 
-    Current Desktop versions do not yet send an explicit observation duration.
-    Until they do, the server uses a deterministic per-event impact weight.
-    Newer clients may send duration_seconds; that duration is then blended into
-    the impact instead of being silently ignored.
+    A client may send an explicit ``focus_score``. Older clients do not, so
+    the server derives a stable fallback from the recorded behavior signal.
+    Confidence is deliberately NOT used as Focus; it remains an AI certainty
+    value for the individual observation.
     """
-    event_type = str(event_type or "OBSERVATION").strip().upper()
-    base = float(FOCUS_EVENT_PENALTIES.get(event_type, FOCUS_DEFAULT_PENALTY))
-    try:
-        duration = max(0.0, min(float(duration_seconds or 0.0), 300.0))
-    except Exception:
-        duration = 0.0
-    if duration > 0:
-        # 1 point of focus loss per 10 seconds, capped so one bad record cannot
-        # destroy the complete session score by itself.
-        return max(base, min(base + duration / 10.0, base + 12.0))
-    return base
+    if explicit_score is not None:
+        try:
+            value = float(explicit_score)
+            if 0.0 <= value <= 1.0:
+                value *= 100.0
+            return max(0.0, min(100.0, value))
+        except (TypeError, ValueError):
+            pass
+
+    et = str(event_type or "OBSERVATION").strip().upper()
+    detail = str(details or "").strip().lower()
+    if et in FOCUS_FRAME_DEFAULTS:
+        return FOCUS_FRAME_DEFAULTS[et]
+    if "ob_sleep" in detail or "nghi ngờ ngủ" in detail or "nghi ngo ngu" in detail or "ngủ/gục" in detail:
+        return 25.0
+    if "cúi đầu" in detail or "cui dau" in detail or "head down" in detail:
+        return 65.0
+    if "quay left" in detail or "quay trái" in detail or "quay trai" in detail:
+        return 75.0
+    if "quay right" in detail or "quay phải" in detail or "quay phai" in detail:
+        return 75.0
+    if et == "OBSERVATION":
+        return 75.0
+    return 100.0
 
 
 def _focus_severity(focus: float) -> tuple[str, str, int]:
@@ -6360,33 +6375,38 @@ def _format_clock_seconds(value: float) -> str:
 
 
 def _student_focus_records(session_duration: float, observations: list[dict]) -> dict[int, dict]:
-    """Build one summary per student and attach focus/severity to every observation."""
+    """Build one summary per student from the AVERAGE of frame focus scores."""
     grouped: dict[int, dict] = {}
-    state: dict[int, float] = {}
-    # Preserve chronological calculation for the per-event focus snapshot.
-    ordered = sorted(observations, key=lambda r: (str(r.get("observed_at") or ""), int(r.get("id") or 0)))
+    ordered = sorted(
+        observations,
+        key=lambda r: (str(r.get("observed_at") or ""), int(r.get("id") or 0)),
+    )
     for row in ordered:
         sid = int(row.get("student_id") or 0)
         if sid <= 0:
             continue
-        current = float(state.get(sid, 100.0))
-        duration = float(row.get("duration_seconds") or 0.0)
-        penalty = _focus_event_penalty(str(row.get("event_type") or ""), duration)
-        current = max(0.0, current - penalty)
-        state[sid] = current
-        sev_label, sev_class, sev_rank = _focus_severity(current)
+
+        frame_focus = _frame_focus_score(
+            row.get("event_type"),
+            row.get("details"),
+            row.get("focus_score"),
+        )
+        sev_label, sev_class, sev_rank = _focus_severity(frame_focus)
         item = dict(row)
-        item["focus_after"] = current
-        item["penalty"] = penalty
+        item["focus_at_frame"] = frame_focus
+        item["focus_after"] = frame_focus
         item["severity"] = sev_label
         item["severity_class"] = sev_class
         item["severity_rank"] = sev_rank
-        item["duration_seconds"] = duration
+        item["duration_seconds"] = float(row.get("duration_seconds") or 0.0)
+
         bucket = grouped.setdefault(sid, {
             "student_id": sid,
             "student_code": row.get("student_code") or "",
             "full_name": row.get("full_name") or "Học sinh",
-            "focus": current,
+            "focus": 100.0,
+            "focus_sum": 0.0,
+            "focus_count": 0,
             "observation_count": 0,
             "danger_count": 0,
             "attention_count": 0,
@@ -6394,9 +6414,11 @@ def _student_focus_records(session_duration: float, observations: list[dict]) ->
             "ob_time_seconds": 0.0,
             "observations": [],
         })
-        bucket["focus"] = current
+        bucket["focus_sum"] += frame_focus
+        bucket["focus_count"] += 1
+        bucket["focus"] = bucket["focus_sum"] / bucket["focus_count"]
         bucket["observation_count"] += 1
-        bucket["ob_time_seconds"] += duration
+        bucket["ob_time_seconds"] += float(row.get("duration_seconds") or 0.0)
         bucket["observations"].append(item)
         if sev_class == "danger":
             bucket["danger_count"] += 1
@@ -6406,7 +6428,6 @@ def _student_focus_records(session_duration: float, observations: list[dict]) ->
             bucket["safe_count"] += 1
 
     return grouped
-
 
 def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | None:
     with SessionLocal() as db:
@@ -6442,7 +6463,8 @@ def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | No
             text("""
                 SELECT id, student_id, student_code, full_name, observed_at, event_type,
                        confidence, assessment, details, evidence_id,
-                       COALESCE(duration_seconds, 0) AS duration_seconds
+                       COALESCE(duration_seconds, 0) AS duration_seconds,
+                       focus_score
                 FROM observations
                 WHERE session_id = :session_id
                 ORDER BY observed_at ASC, id ASC
@@ -6500,7 +6522,7 @@ def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | No
                 </div>
                 <div class="focus-score-row">
                     <div>
-                        <div class="focus-label">FOCUS SCORE</div>
+                        <div class="focus-label">AVERAGE FOCUS</div>
                         <div class="focus-value">{focus}%</div>
                     </div>
                     <div class="focus-meter"><span style="width:{focus}%"></span></div>
@@ -6649,7 +6671,8 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
             text("""
                 SELECT id, student_id, student_code, full_name, observed_at, event_type,
                        confidence, assessment, details, evidence_id,
-                       COALESCE(duration_seconds, 0) AS duration_seconds
+                       COALESCE(duration_seconds, 0) AS duration_seconds,
+                       focus_score
                 FROM observations
                 WHERE session_id = :session_id AND student_id = :student_id
                 ORDER BY observed_at ASC, id ASC
@@ -6712,13 +6735,13 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
                 <div class="observation-frame">{visual}<div class="frame-number">#{number:02d}</div></div>
                 <div class="observation-card-content">
                     <div class="observation-card-header"><div><div class="observation-time">{escape(format_server_dt(row['observed_at']))}</div><h4>{event_type}</h4></div><span class="severity-badge {sev_class}">{escape(severity)}</span></div>
-                    <div class="observation-focus-highlight"><span>FOCUS AT EVENT</span><strong>{focus_at}%</strong></div>
+                    <div class="observation-focus-highlight"><span>FOCUS AT FRAME</span><strong>{focus_at}%</strong></div>
                     <div class="observation-data-grid">
                         <div><span>OB TIME</span><strong>{escape(duration)}</strong></div>
                         <div><span>CONFIDENCE</span><strong>{confidence}%</strong></div>
                     </div>
                     <div class="observation-details">{escape(str(row.get('details') or 'Observation recorded for teacher review.'))}</div>
-                    <div class="observation-footer"><span>Evidence {('available' if evidence_id else 'not available')}</span><span>Impact −{float(row['penalty']):.0f}%</span></div>
+                    <div class="observation-footer"><span>Evidence {('available' if evidence_id else 'not available')}</span><span>Frame focus {focus_at}%</span></div>
                 </div>
             </article>
         """
@@ -6757,7 +6780,7 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
                     <div><span>EVIDENCE</span><strong>{int(evidence_count or 0)}</strong></div>
                 </div>
 
-                <div class="review-note"><strong>Teacher review</strong><span>God Eyes uses recorded observations and evidence to prioritize frames for review. The Focus Score is an observation-based indicator, not a final judgment about the student.</span></div>
+                <div class="review-note"><strong>Teacher review</strong><span>God Eyes uses recorded observations and evidence to prioritize frames for review. The Focus Score is an average of recorded frame-level focus scores, not a final judgment about the student.</span></div>
                 {html_sections if html_sections else '<div class="focus-empty">No observations recorded for this student in this session.</div>'}
             </section>
             <style>
@@ -8127,6 +8150,8 @@ def ensure_session_tables():
         observation_columns = _table_columns(db, "observations")
         if "duration_seconds" not in observation_columns:
             db.execute(text("ALTER TABLE observations ADD COLUMN duration_seconds REAL NOT NULL DEFAULT 0"))
+        if "focus_score" not in observation_columns:
+            db.execute(text("ALTER TABLE observations ADD COLUMN focus_score REAL"))
 
         # Existing sessions table migration.
         session_columns = _table_columns(db, "sessions")
@@ -8982,15 +9007,16 @@ async def api_session_events(request: Request, session_id: int):
                 duration_seconds = max(0.0, min(float(event.get("duration_seconds") or 0.0), 300.0))
             except (TypeError, ValueError):
                 duration_seconds = 0.0
+            focus_score = _frame_focus_score(event_type, details, event.get("focus_score"))
 
             result = db.execute(
                 text("""
                     INSERT INTO observations
                         (session_id, student_id, student_code, full_name, observed_at,
-                         event_type, confidence, assessment, details, evidence_id, duration_seconds)
+                         event_type, confidence, assessment, details, evidence_id, duration_seconds, focus_score)
                     VALUES
                         (:session_id, :student_id, :student_code, :full_name, :observed_at,
-                         :event_type, :confidence, :assessment, :details, :evidence_id, :duration_seconds)
+                         :event_type, :confidence, :assessment, :details, :evidence_id, :duration_seconds, :focus_score)
                     RETURNING id
                 """),
                 {
@@ -9005,6 +9031,7 @@ async def api_session_events(request: Request, session_id: int):
                     "details": details,
                     "evidence_id": api_int(event.get("evidence_id")) or None,
                     "duration_seconds": duration_seconds,
+                    "focus_score": focus_score,
                 }
             )
             inserted_ids.append(int(result.scalar_one()))
