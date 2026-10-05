@@ -7137,6 +7137,21 @@ def _student_given_name_sort_key(full_name: str):
 
 
 def teacher_history_detail_content(teacher_id: int, session_id: int, student_search: str = "", student_page: int = 1, student_sort: str = "severity") -> str | None:
+    # Explicit page-level labels prevent legacy History templates from leaking
+    # English technical labels into the Vietnamese interface.
+    _prefs = get_teacher_preferences(int(teacher_id))
+    _en = str(_prefs.get("language") or "vi").lower() == "en"
+    L_SESSION = "SESSION" if _en else "BUỔI HỌC"
+    L_FOCUS_OVERVIEW = "FOCUS OVERVIEW" if _en else "TỔNG QUAN TẬP TRUNG"
+    L_CLASS_OVERVIEW = "CLASS OVERVIEW" if _en else "TỔNG QUAN LỚP HỌC"
+    L_FOCUS_SCORE = "FOCUS SCORE" if _en else "ĐIỂM TẬP TRUNG"
+    L_FOCUS = "FOCUS" if _en else "TẬP TRUNG"
+    L_OB = "OB" if _en else "SỐ OB"
+    L_DANGER = "DANGER" if _en else "NGHIÊM TRỌNG"
+    L_ATTENTION = "ATTENTION" if _en else "CHÚ Ý"
+    L_OB_TIME = "OB TIME" if _en else "THỜI GIAN OB"
+    L_OBSERVATIONS = "observations" if _en else "lần ghi nhận"
+    L_EVIDENCE = "evidence" if _en else "minh chứng"
     with SessionLocal() as db:
         session = db.execute(
             text("""
@@ -7270,31 +7285,31 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
                         <div class="student-list-name-wrap">
                             <div class="student-list-name">{escape(str(student['full_name']))}</div>
                             <div class="student-list-code">{escape(str(student['student_code'] or '-'))}</div>
-                            <div class="student-list-meta-line">{student['observation_count']} OB <span>•</span> {('Lần gần nhất ' + escape(format_server_dt(student.get('last_observed_at') or ''))) if student.get('last_observed_at') else 'Chưa có OB'}</div>
+                            <div class="student-list-meta-line">{student['observation_count']} {L_OB} <span>•</span> {('Lần gần nhất ' + escape(format_server_dt(student.get('last_observed_at') or ''))) if student.get('last_observed_at') else 'Chưa có OB'}</div>
                         </div>
                     </div>
                 </div>
                 <div class="student-list-focus">
                     <div class="student-list-focus-head">
                         <strong>{focus}%</strong>
-                        <span>Focus</span>
+                        <span>{L_FOCUS}</span>
                     </div>
                     <div class="student-list-meter"><span style="width:{focus}%"></span></div>
                 </div>
                 <div class="student-list-metric">
-                    <span>OB</span>
+                    <span>{L_OB}</span>
                     <strong>{student['observation_count']}</strong>
                 </div>
                 <div class="student-list-metric">
-                    <span>DANGER</span>
+                    <span>{L_DANGER}</span>
                     <strong>{student['danger_count']}</strong>
                 </div>
                 <div class="student-list-metric">
-                    <span>ATTENTION</span>
+                    <span>{L_ATTENTION}</span>
                     <strong>{student['attention_count']}</strong>
                 </div>
                 <div class="student-list-metric student-list-time">
-                    <span>OB TIME</span>
+                    <span>{L_OB_TIME}</span>
                     <strong>{_format_clock_seconds(student['ob_time_seconds'])}</strong>
                 </div>
                 <div class="student-list-status">
@@ -7316,7 +7331,7 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
             <div class="history-focus-hero">
                 <div>
                     <a class="back-link" href="/teacher?section=history">← Quay lại lịch sử</a>
-                    <div class="eyebrow-small">SESSION #{int(session['id'])}</div>
+                    <div class="eyebrow-small">{L_SESSION} #{int(session['id'])}</div>
                     <h2>{escape(session['class_name'])}</h2>
                     <p>{escape(session['class_code'])} <span>•</span> {format_server_dt(session['started_at'])}</p>
                 </div>
@@ -7325,18 +7340,18 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
 
             <div class="session-overview-grid">
                 <div class="overview-card overview-card-main">
-                    <span>FOCUS OVERVIEW</span>
+                    <span>{L_FOCUS_OVERVIEW}</span>
                     <strong>{danger_students}</strong>
                     <small>học sinh cần xem lại</small>
                 </div>
                 <div class="overview-card"><span>HỌC SINH</span><strong>{len(student_cards)}</strong><small>được chọn để quét</small></div>
-                <div class="overview-card"><span>NOT REALLY DANGER</span><strong>{attention_students}</strong><small>học sinh cần chú ý</small></div>
-                <div class="overview-card"><span>SAFE</span><strong>{safe_students}</strong><small>không có tín hiệu đáng chú ý</small></div>
+                <div class="overview-card"><span>{L_ATTENTION}</span><strong>{attention_students}</strong><small>học sinh cần chú ý</small></div>
+                <div class="overview-card"><span>{"SAFE" if _en else "BÌNH THƯỜNG"}</span><strong>{safe_students}</strong><small>không có tín hiệu đáng chú ý</small></div>
             </div>
 
             <div class="history-focus-section-head">
-                <div><div class="eyebrow-small">CLASS OVERVIEW</div><h3>Học sinh trong buổi học</h3><p>Mỗi học sinh chỉ xuất hiện một lần. Chọn một dòng để xem các frame quan trọng.</p></div>
-                <div class="session-meta-pill">{len(student_cards)} học sinh · {int(session['observation_count'] or 0)} observations · {evidence_count} evidence</div>
+                <div><div class="eyebrow-small">{L_CLASS_OVERVIEW}</div><h3>Học sinh trong buổi học</h3><p>Mỗi học sinh chỉ xuất hiện một lần. Chọn một dòng để xem các frame quan trọng.</p></div>
+                <div class="session-meta-pill">{len(student_cards)} học sinh · {int(session['observation_count'] or 0)} {L_OBSERVATIONS} · {evidence_count} {L_EVIDENCE}</div>
             </div>
 
             <form class="student-roster-toolbar" method="get" action="/teacher/history/session/{int(session_id)}">
@@ -7366,11 +7381,11 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
             <div class="student-focus-list-wrap">
                 <div class="student-focus-list-header">
                     <div class="list-head student-head-student">HỌC SINH</div>
-                    <div class="list-head student-head-focus">FOCUS SCORE</div>
-                    <div class="list-head">OB</div>
-                    <div class="list-head">DANGER</div>
-                    <div class="list-head">ATTENTION</div>
-                    <div class="list-head">OB TIME</div>
+                    <div class="list-head student-head-focus">{L_FOCUS_SCORE}</div>
+                    <div class="list-head">{L_OB}</div>
+                    <div class="list-head">{L_DANGER}</div>
+                    <div class="list-head">{L_ATTENTION}</div>
+                    <div class="list-head">{L_OB_TIME}</div>
                     <div class="list-head student-head-status" aria-label="Mức độ"></div>
                 </div>
                 {list_rows_html if list_rows_html else ('<div class="focus-empty">Không tìm thấy học sinh phù hợp.</div>' if student_search else '<div class="focus-empty">Chưa có học sinh trong roster của session.</div>')}
