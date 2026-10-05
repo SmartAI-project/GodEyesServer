@@ -1487,27 +1487,39 @@ class IdentityLock:
         return sid, best[0]
 
     def resolve(self, track, frame_size=None):
-        # 1. Existing track: keep identity even when face disappears.
+        # 1. Existing LOCKED track.
+        #    When the face returns, always re-verify the embedding against the
+        #    enrolled roster. The old identity is NEVER allowed to silently
+        #    switch to another student because of a track/box association.
         if track.track_id in self.track_to_student:
             sid = self.track_to_student[track.track_id]
             profile = self.student_profiles.get(sid)
 
             if profile is not None:
                 if track.face_feature is not None:
-                    locked_sim = self._locked_face_similarity(sid, track)
-                    if locked_sim < self.server_threshold:
-                        # Do not let a contradictory visible face inherit this
-                        # student's identity. Keep the track alive, but make the
-                        # identity explicitly uncertain until the embedding is
-                        # strong enough again.
-                        return 'IDENTITY UNCERTAIN', max(0.0, locked_sim)
+                    # Re-match the returning face against the complete enrolled
+                    # dataset first. Only the original locked label may resume.
+                    best_label, best_score, second_score = self._match_face_to_server(track)
+                    margin_ok = best_score - max(-1.0, second_score) >= self.server_margin
+
+                    # If the roster match is absent/weak/ambiguous, keep the
+                    # identity uncertain. Do not fall back to appearance.
+                    if (
+                        best_label is None
+                        or best_score < self.server_threshold
+                        or not margin_ok
+                        or best_label != sid
+                    ):
+                        locked_sim = self._locked_face_similarity(sid, track)
+                        return 'IDENTITY UNCERTAIN', max(0.0, min(1.0, max(best_score, locked_sim)))
+
                     self._refresh_profile(
                         sid,
                         track,
                         frame_size,
-                        identity_source='FACE'
+                        identity_source='FACE_REVERIFIED'
                     )
-                    return sid, max(0.0, min(1.0, locked_sim))
+                    return sid, max(0.0, min(1.0, best_score))
 
                 self._refresh_profile(
                     sid,
@@ -2253,16 +2265,22 @@ class BehaviorEngine:
     Rules:
     1) Head turn LEFT/RIGHT:
        - abs(yaw) > 50 degrees
-       - continuously for 3 seconds
+       - continuously for 5 seconds
        - emit one event per turn episode.
 
-    2) Face not visible:
-       - keep the already locked identity while the person track remains valid.
-       - if the person is moving, do NOT generate a sleep-like event.
-       - if the person is not moving and the face remains unavailable for
-         5 seconds, emit one OB_SLEEP event for that episode.
+    2) Locked student + face suddenly unavailable:
+       - keep the existing person box/identity alive;
+       - inspect the tracked box motion, not only detector-side face motion;
+       - any meaningful body-box movement keeps the student in TRACK_HOLD;
+       - if the tracked box is effectively stationary for 5 continuous seconds,
+         emit one OB_SLEEP observation for that locked student.
 
-    This is an observation signal, not a medical or definitive determination.
+    3) When the face returns, IdentityLock re-verifies its embedding against the
+       complete enrolled roster. Only the same locked student is allowed to
+       resume; a different student's embedding can never steal this track.
+
+    These are visual observation signals and should be presented to the teacher
+    as signals requiring confirmation, not as definitive conclusions.
     """
 
     YAW_THRESHOLD_DEG = 50.0
@@ -2271,10 +2289,12 @@ class BehaviorEngine:
     NO_FACE_STILL_SLEEP_SECONDS = 5.0
     FACE_GAP_GRACE_SECONDS = 0.40
 
-    # Motion thresholds. Movement can be seen from body/hand/task activity or
-    # from visible person-center displacement.
-    MOTION_THRESHOLD = 0.16
-    CENTER_MOVE_THRESHOLD = 0.055
+    # A short-window box-center displacement, normalized by tracked box height.
+    # This is intentionally small: even light genuine movement should prevent
+    # the sleep timer from firing, while sub-pixel/box-jitter noise is ignored.
+    BOX_MOVE_WINDOW_SECONDS = 0.80
+    BOX_MOVE_THRESHOLD = 0.018
+    BOX_SIZE_CHANGE_THRESHOLD = 0.025
 
     EVENT_COOLDOWN = 8.0
 
@@ -2290,12 +2310,11 @@ class BehaviorEngine:
             self.state[sid] = {
                 'turn_side': 0,
                 'turn_start': None,
+                'turn_latched': False,
                 'last_yaw': 0.0,
                 'last_face_time': 0.0,
-
                 'face_missing_start': None,
                 'sleep_latched': False,
-
                 'last_event': {},
                 'last_seen': 0.0,
             }
@@ -2311,44 +2330,51 @@ class BehaviorEngine:
         return key, float(confidence), str(details)
 
     @staticmethod
-    def _center_speed(track):
-        """
-        Estimate recent person movement from the tracked box center.
+    def _box_motion_in_window(track, now, window_seconds):
+        """Measure recent tracked-box movement, normalized by box height.
 
-        The value is normalized by person height so the same threshold works
-        better at different camera distances.
+        The tracker keeps a filtered center history even during detector misses.
+        We look back a short time window so a little real movement prevents a
+        false sleep signal, while tiny per-frame jitter does not reset the timer.
         """
         history = list(getattr(track, 'center_history', []) or [])
         if len(history) < 2:
-            return 0.0
+            return 0.0, 0.0
 
+        box = getattr(track, 'box', (0.0, 0.0, 100.0, 100.0))
+        height = max(60.0, float(box[3]))
+        current_center = history[-1]
+        current_index = len(history) - 1
+
+        # center_history does not store timestamps, so use a conservative frame
+        # rate estimate from the AI loop.  At 6-12 FPS this window corresponds to
+        # roughly 5-10 recent samples.
+        samples_back = max(2, int(round(float(window_seconds) * 10.0)))
+        start_index = max(0, current_index - samples_back)
+        reference = history[start_index]
         try:
-            x1, y1 = history[-2]
-            x2, y2 = history[-1]
-            dx = float(x2) - float(x1)
-            dy = float(y2) - float(y1)
-            height = max(60.0, float(getattr(track, 'box', (0, 0, 0, 60))[3]))
-            normalized = math.hypot(dx, dy) / height
-            return float(max(0.0, min(1.0, normalized / 0.20)))
+            displacement = math.hypot(
+                float(current_center[0]) - float(reference[0]),
+                float(current_center[1]) - float(reference[1]),
+            ) / height
         except Exception:
-            return 0.0
+            displacement = 0.0
 
-    def _movement_score(self, track):
-        """
-        Combine person motion signals.
+        # Also consider box size change. A student writing/adjusting posture can
+        # change the tracked box even when the center hardly moves.
+        size_change = 0.0
+        try:
+            # Height history is aligned with center history in PersonTrack.
+            heights = list(getattr(track, 'height_history', []) or [])
+            if heights:
+                ref_h_index = max(0, len(heights) - 1 - (current_index - start_index))
+                ref_h = max(1.0, float(heights[ref_h_index]))
+                cur_h = max(1.0, float(heights[-1]))
+                size_change = abs(cur_h - ref_h) / max(ref_h, cur_h)
+        except Exception:
+            size_change = 0.0
 
-        - lower_motion: lower/body motion
-        - hand_motion: upper-body/hand movement
-        - task_activity: combined body/task activity
-        - center movement: actual tracked person displacement
-        """
-        values = [
-            float(getattr(track, 'lower_motion', 0.0)),
-            float(getattr(track, 'hand_motion', 0.0)),
-            float(getattr(track, 'task_activity', 0.0)),
-            self._center_speed(track),
-        ]
-        return float(max(0.0, min(1.0, max(values))))
+        return float(displacement), float(size_change)
 
     def evaluate(self, sid, track, now=None):
         now = time.time() if now is None else float(now)
@@ -2364,15 +2390,14 @@ class BehaviorEngine:
         yaw = float(getattr(track, 'head_yaw_deg', 0.0))
         head_quality = float(getattr(track, 'head_quality', 0.0))
         person_score = float(getattr(track, 'person_score', 0.0))
-        movement_score = self._movement_score(track)
 
-        # ---------------------------------------------------------
-        # 1) HEAD TURN > 50°, continuously for 3 seconds
-        # ---------------------------------------------------------
         if face_valid:
             state['last_yaw'] = yaw
             state['last_face_time'] = now
 
+        # ---------------------------------------------------------
+        # 1) HEAD TURN > 50°, continuously for 5 seconds
+        # ---------------------------------------------------------
         turned = bool(face_valid and abs(yaw) > self.YAW_THRESHOLD_DEG)
         direction = -1 if yaw < 0 else 1 if yaw > 0 else 0
 
@@ -2382,24 +2407,18 @@ class BehaviorEngine:
                 state['turn_start'] = now
                 state['turn_latched'] = False
 
-            # IMPORTANT: do not use "or now" here because 0.0 is valid.
             turn_start = state.get('turn_start')
             elapsed = now - float(turn_start) if turn_start is not None else 0.0
 
-            if (
-                elapsed >= self.YAW_CONFIRM_SECONDS
-                and not state['turn_latched']
-            ):
+            if elapsed >= self.YAW_CONFIRM_SECONDS and not state['turn_latched']:
                 key = 'HEAD_TURN_LEFT' if direction < 0 else 'HEAD_TURN_RIGHT'
                 side = 'left' if direction < 0 else 'right'
-
                 confidence = min(
                     0.97,
                     0.60
                     + 0.22 * min(1.0, head_quality)
                     + 0.15 * min(1.0, person_score),
                 )
-
                 events.append(self._event(
                     key,
                     confidence,
@@ -2411,13 +2430,11 @@ class BehaviorEngine:
                 ))
                 state['last_event'][key] = now
                 state['turn_latched'] = True
-
         elif (
             not face_valid
             and state['turn_side'] != 0
             and (now - float(state.get('last_face_time', 0.0))) <= self.FACE_GAP_GRACE_SECONDS
         ):
-            # Keep the turn timer through a very short face-detector gap.
             pass
         else:
             state['turn_side'] = 0
@@ -2425,21 +2442,25 @@ class BehaviorEngine:
             state['turn_latched'] = False
 
         # ---------------------------------------------------------
-        # 2) FACE NOT VISIBLE
-        #
-        # IdentityLock keeps the student's identity on the person track.
-        # We only care about motion here:
-        #   moving      -> no sleep event
-        #   not moving  -> start stationary/no-face timer
+        # 2) LOCKED TRACK + FACE LOST
         # ---------------------------------------------------------
         if face_valid:
+            # Face returned. The IdentityLock layer will re-verify its embedding
+            # against the complete roster before allowing the identity to resume.
             state['face_missing_start'] = None
             state['sleep_latched'] = False
         else:
-            is_moving = movement_score >= self.MOTION_THRESHOLD
+            displacement, size_change = self._box_motion_in_window(
+                track, now, self.BOX_MOVE_WINDOW_SECONDS
+            )
+            moving = (
+                displacement >= self.BOX_MOVE_THRESHOLD
+                or size_change >= self.BOX_SIZE_CHANGE_THRESHOLD
+            )
 
-            if is_moving:
-                # The person is still tracked and moving. No sleep signal.
+            if moving:
+                # The same lock box is still changing, even if the face is gone.
+                # Do not call it sleep; keep the lock and keep following.
                 state['face_missing_start'] = None
                 state['sleep_latched'] = False
             else:
@@ -2447,26 +2468,24 @@ class BehaviorEngine:
                     state['face_missing_start'] = now
 
                 missing_elapsed = now - float(state['face_missing_start'])
-
                 if (
                     missing_elapsed >= self.NO_FACE_STILL_SLEEP_SECONDS
                     and not state['sleep_latched']
                     and self._cooldown_ok(state, 'OB_SLEEP', now)
                 ):
                     confidence = min(
-                        0.90,
-                        0.62
+                        0.92,
+                        0.66
                         + 0.10 * min(1.0, person_score)
-                        + 0.08 * (1.0 - min(1.0, movement_score)),
+                        + 0.10 * (1.0 - min(1.0, displacement / max(self.BOX_MOVE_THRESHOLD, 1e-6))),
                     )
-
                     events.append(self._event(
                         'OB_SLEEP',
                         confidence,
                         (
-                            'Không thấy khuôn mặt và gần như không di chuyển '
-                            f'trong {self.NO_FACE_STILL_SLEEP_SECONDS:.0f} giây; '
-                            'đây là tín hiệu nghi ngờ ngủ gật và cần giáo viên xác nhận.'
+                            'Khuôn mặt tạm thời không còn nhìn thấy; '
+                            f'khung người gần như đứng yên liên tục {self.NO_FACE_STILL_SLEEP_SECONDS:.0f} giây. '
+                            'Đây là tín hiệu nghi ngờ ngủ/gục và cần giáo viên xác nhận.'
                         ),
                     ))
                     state['last_event']['OB_SLEEP'] = now
