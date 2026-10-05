@@ -983,6 +983,76 @@ TEACHER_I18N_VI_EN.update({
 })
 
 
+
+# v14 strict history/dashboard terminology normalization.
+# These labels were previously hard-coded in legacy page templates, so they
+# could bypass the bilingual map and remain in English in Vietnamese mode.
+TEACHER_I18N_VI_EN.update({
+    # History overview / student focus list
+    'SESSION': 'BUỔI HỌC',
+    'FOCUS OVERVIEW': 'TỔNG QUAN TẬP TRUNG',
+    'CLASS OVERVIEW': 'TỔNG QUAN LỚP HỌC',
+    'NOT REALLY DANGER': 'HƠI NGHIÊM TRỌNG',
+    'SAFE': 'BÌNH THƯỜNG',
+    'DANGER': 'NGHIÊM TRỌNG',
+    'ATTENTION': 'CHÚ Ý',
+    'OB TIME': 'THỜI GIAN OB',
+    'FOCUS SCORE': 'ĐIỂM TẬP TRUNG',
+    'Focus': 'Tập trung',
+    'FOCUS': 'TẬP TRUNG',
+    'Sắp xếp': 'Sort',
+    'Mức độ • Nghiêm trọng → Bình thường': 'Severity • Danger → Normal',
+    'Tên gọi • A → Z': 'Given name • A → Z',
+    'Tên gọi • Z → A': 'Given name • Z → A',
+    'Trang': 'Page',
+    'Hiển thị': 'Showing',
+    'Lần gần nhất': 'Latest',
+    'Chưa có OB': 'No OB yet',
+    'quan sát': 'observations',
+    'minh chứng': 'evidence',
+    'khung hình': 'frame',
+    'Mỗi học sinh chỉ xuất hiện một lần. Chọn một dòng để xem các frame quan trọng.':
+        'Each student appears only once. Select a row to review important frames.',
+    'học sinh cần xem lại': 'students to review',
+    'được chọn để quét': 'selected for scanning',
+    'học sinh cần chú ý': 'students needing attention',
+    'không có tín hiệu đáng chú ý': 'no notable signals',
+    'học sinh trong buổi học': 'students in the session',
+    'Tìm học sinh theo tên hoặc mã...': 'Search by student name or code...',
+})
+
+TEACHER_I18N_EN_VI_EXTRA.update({
+    # Exact English labels used by the legacy History template.
+    'SESSION': 'BUỔI HỌC',
+    'FOCUS OVERVIEW': 'TỔNG QUAN TẬP TRUNG',
+    'CLASS OVERVIEW': 'TỔNG QUAN LỚP HỌC',
+    'NOT REALLY DANGER': 'HƠI NGHIÊM TRỌNG',
+    'SAFE': 'BÌNH THƯỜNG',
+    'DANGER': 'NGHIÊM TRỌNG',
+    'ATTENTION': 'CHÚ Ý',
+    'OB TIME': 'THỜI GIAN OB',
+    'FOCUS SCORE': 'ĐIỂM TẬP TRUNG',
+    'Focus': 'Tập trung',
+    'FOCUS': 'TẬP TRUNG',
+    'Severity • Danger → Normal': 'Mức độ • Nghiêm trọng → Bình thường',
+    'Given name • A → Z': 'Tên gọi • A → Z',
+    'Given name • Z → A': 'Tên gọi • Z → A',
+    'Page': 'Trang',
+    'Showing': 'Hiển thị',
+    'Latest': 'Lần gần nhất',
+    'No OB yet': 'Chưa có OB',
+    'students in the session': 'học sinh trong buổi học',
+    'students to review': 'học sinh cần xem lại',
+    'selected for scanning': 'được chọn để quét',
+    'students needing attention': 'học sinh cần chú ý',
+    'no notable signals': 'không có tín hiệu đáng chú ý',
+    'Search by student name or code...': 'Tìm học sinh theo tên hoặc mã...',
+    'observations': 'quan sát',
+    'evidence': 'minh chứng',
+    'frame': 'khung hình',
+})
+
+
 def _teacher_localize_text(value: str, language: str) -> str:
     text = str(value or '')
     if language == 'en':
