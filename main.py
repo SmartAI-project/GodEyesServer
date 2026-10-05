@@ -1350,6 +1350,8 @@ def _issue_face_scan_token(student_id: int, admin_id: int) -> str:
     return token
 
 
+print("[GodEyes][BUILD] V25 student-create fixes loaded")
+
 def ensure_student_tables():
     """Create/migrate student + SMS tables with isolated, repairable transactions."""
     import traceback
@@ -3594,7 +3596,7 @@ def admin_create_student(
             duplicate = db.scalar(text("SELECT s.id FROM students s JOIN class_students cs ON cs.student_id=s.id WHERE cs.class_id=:class_id AND UPPER(s.student_code)=:student_code LIMIT 1"), {"class_id":class_id,"student_code":student_code})
             if duplicate is not None: return RedirectResponse(url=f"/admin?section=students&class_id={class_id}&error=code", status_code=303)
             if photo is not None and photo.filename: new_photo_path = save_student_photo(photo)
-            result = db.execute(text("INSERT INTO students (owner_type,owner_id,student_code,full_name,guardian_phone,photo_path,face_status,face_embedding) VALUES ('MAIN_ADMIN',:owner_id,:student_code,:full_name,:photo_path,:face_status,'') RETURNING id"), {"owner_id":admin_id,"student_code":student_code,"full_name":full_name,"guardian_phone":guardian_phone,"photo_path":new_photo_path,"face_status":"PENDING" if new_photo_path else "NO_DATA"})
+            result = db.execute(text("INSERT INTO students (owner_type,owner_id,student_code,full_name,guardian_phone,photo_path,face_status,face_embedding) VALUES ('MAIN_ADMIN',:owner_id,:student_code,:full_name,:guardian_phone,:photo_path,:face_status,'') RETURNING id"), {"owner_id":admin_id,"student_code":student_code,"full_name":full_name,"guardian_phone":guardian_phone,"photo_path":new_photo_path,"face_status":"PENDING" if new_photo_path else "NO_DATA"})
             student_id=int(result.scalar_one())
             db.execute(text("INSERT INTO class_students (class_id,student_id) VALUES (:class_id,:student_id)"), {"class_id":class_id,"student_id":student_id})
             if new_photo_path:
@@ -4373,6 +4375,23 @@ def teacher_student_photo(request: Request, filename: str):
     return FileResponse(str(file_path))
 
 
+@app.get("/teacher/students/create")
+def create_student_page(request: Request):
+    """Open the integrated student-creation panel from a clean URL.
+
+    The actual creation form lives on /teacher?section=students.
+    A GET to /teacher/students/create must therefore never fall through to
+    the POST-only handler or produce a 500/405-looking dead end.
+    """
+    payload = get_teacher_payload(request)
+    if payload is None:
+        return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(
+        url="/teacher?section=students&create=1#them-hoc-sinh",
+        status_code=303,
+    )
+
+
 @app.post("/teacher/students/create")
 def create_student(request: Request, class_id: int = Form(...), full_name: str = Form(...), student_code: str = Form(""), guardian_phone: str = Form(""), photo: UploadFile | None = File(None)):
     payload=get_teacher_payload(request)
@@ -4387,7 +4406,7 @@ def create_student(request: Request, class_id: int = Form(...), full_name: str =
             dup=db.scalar(text("SELECT s.id FROM students s JOIN class_students cs ON cs.student_id=s.id WHERE cs.class_id=:class_id AND UPPER(s.student_code)=:student_code LIMIT 1"), {"class_id":class_id,"student_code":student_code})
             if dup is not None: return RedirectResponse(url=f"/teacher?section=students&class_id={class_id}&error=code",status_code=303)
             if photo is not None and photo.filename: new_photo_path=save_student_photo(photo)
-            result=db.execute(text("INSERT INTO students (owner_type,owner_id,student_code,full_name,guardian_phone,photo_path,face_status,face_embedding) VALUES ('TEACHER',:owner_id,:student_code,:full_name,:photo_path,:face_status,'') RETURNING id"), {"owner_id":teacher_id,"student_code":student_code,"full_name":full_name,"guardian_phone":guardian_phone,"photo_path":new_photo_path,"face_status":"PENDING" if new_photo_path else "NO_DATA"})
+            result=db.execute(text("INSERT INTO students (owner_type,owner_id,student_code,full_name,guardian_phone,photo_path,face_status,face_embedding) VALUES ('TEACHER',:owner_id,:student_code,:full_name,:guardian_phone,:photo_path,:face_status,'') RETURNING id"), {"owner_id":teacher_id,"student_code":student_code,"full_name":full_name,"guardian_phone":guardian_phone,"photo_path":new_photo_path,"face_status":"PENDING" if new_photo_path else "NO_DATA"})
             student_id=int(result.scalar_one())
             db.execute(text("INSERT INTO class_students (class_id,student_id) VALUES (:class_id,:student_id)"), {"class_id":class_id,"student_id":student_id})
             if new_photo_path:
@@ -7946,11 +7965,9 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
         evidence_id = int(row.get("evidence_id") or 0)
         if evidence_id:
             visual = f"""
-                <a class="observation-frame-link" href="/api/v1/evidence/{evidence_id}" target="_blank" rel="noopener" aria-label="{'Mở ảnh minh chứng' if is_vi else 'Open evidence image'}">
-                    <img src="/api/v1/evidence/{evidence_id}" alt="" loading="lazy"
-                         onerror="this.hidden=true;this.parentElement.classList.add('is-unavailable');">
-                    <span class="observation-frame-open">{'Mở ảnh lớn ↗' if is_vi else 'Open full image ↗'}</span>
-                    <span class="observation-frame-unavailable">{'Ảnh không còn trên máy chủ' if is_vi else 'Image no longer available on server'}</span>
+                <a class=\"observation-frame-link\" href=\"/api/v1/evidence/{evidence_id}\" target=\"_blank\">
+                    <img src=\"/api/v1/evidence/{evidence_id}\" alt=\"Evidence {evidence_id}\" loading=\"lazy\">
+                    <span>{'Mở ảnh lớn ↗' if is_vi else 'Open full image ↗'}</span>
                 </a>
             """
         else:
@@ -8028,22 +8045,17 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
             continue
         evt = escape(str(ob.get('event_type') or 'OB').replace('_', ' '))
         ts = escape(format_server_dt(ob.get('observed_at')))
-        open_label = 'Mở ảnh lớn ↗' if is_vi else 'Open image ↗'
+        open_label = 'Mở ảnh lớn ↗' if is_vi else 'Open full image ↗'
         missing_label = 'Ảnh không khả dụng' if is_vi else 'Image unavailable'
         sms_frame_options += f"""
             <label class="sms-frame-choice">
                 <input type="radio" name="evidence_id" value="{eid}">
-                <div class="sms-frame-thumb">
-                    <img src="/api/v1/evidence/{eid}" alt="" loading="lazy"
-                         onerror="this.hidden=true;this.parentElement.classList.add('is-unavailable');">
-                    <span class="sms-thumb-unavailable">{missing_label}</span>
-                    <a class="sms-image-open" href="/api/v1/evidence/{eid}" target="_blank" rel="noopener" onclick="event.preventDefault();event.stopPropagation();window.open(this.href,'_blank','noopener');">{open_label}</a>
-                    <span class="sms-frame-index">#{eid}</span>
-                </div>
-                <div class="sms-frame-meta">
-                    <strong>{evt}</strong>
-                    <small>{ts}</small>
-                </div>
+                <a class="sms-frame-open" href="/api/v1/evidence/{eid}" target="_blank" rel="noopener" onclick="event.stopPropagation();">
+                    <img src="/api/v1/evidence/{eid}" alt="Frame {eid}" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false;">
+                    <span class="sms-thumb-fallback" hidden>{missing_label}</span>
+                    <b>{open_label}</b>
+                </a>
+                <span class="sms-frame-meta"><strong>{evt}</strong><small>{ts}</small></span>
             </label>
         """
     if not sms_frame_options:
@@ -8087,10 +8099,8 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
                     </div>
                     <form method="post" action="/teacher/history/session/{session_id}/student/{student_id}/sms" onsubmit="return confirm('{sms_confirm}');">
                         <div class="sms-frame-grid">{sms_frame_options}</div>
-                        <div class="sms-compose">
-                            <textarea name="message" rows="4" maxlength="900" {'disabled' if not sms_enabled else ''} placeholder="{sms_placeholder}"></textarea>
-                            <button type="submit" class="sms-send-button" {'disabled' if not sms_enabled else ''}>{sms_button}</button>
-                        </div>
+                        <textarea name="message" rows="4" maxlength="900" {'disabled' if not sms_enabled else ''} placeholder="{sms_placeholder}"></textarea>
+                        <button type="submit" class="sms-send-button" {'disabled' if not sms_enabled else ''}>{sms_button}</button>
                     </form>
                 </div>
                 <div class="review-note"><strong>{ui["review_note_title"]}</strong><span>{ui["review_note_text"]}</span></div>
@@ -8152,48 +8162,6 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
                 .observation-details {{ margin-top:13px; color:#62778b; font-size:11px; line-height:1.6; }}
                 .observation-footer {{ display:flex; justify-content:space-between; gap:12px; margin-top:15px; padding-top:12px; border-top:1px solid #edf2f7; color:#8999a7; font-size:9px; font-weight:800; }}
                 .focus-empty {{ margin-top:25px; padding:40px; text-align:center; border:1px dashed #cfdeea; border-radius:22px; color:#8191a2; }}
-                .observation-frame-link.is-unavailable {{ cursor:not-allowed; background:#eef4fa; }}
-                .observation-frame-open {{ position:absolute; right:13px; bottom:13px; padding:7px 10px; border-radius:999px; background:rgba(24,52,79,.88); color:#fff; font-size:9px; font-weight:850; }}
-                .observation-frame-unavailable {{ display:none; position:absolute; inset:0; align-items:center; justify-content:center; padding:20px; text-align:center; background:linear-gradient(135deg,#eef4fa,#f8fbfe); color:#7d8f9f; font-size:11px; font-weight:800; }}
-                .observation-frame-link.is-unavailable .observation-frame-unavailable {{ display:flex; }}
-                .observation-frame-link.is-unavailable .observation-frame-open {{ display:none; }}
-
-                .sms-detail-panel {{ margin:22px 0 26px; padding:24px; border:1px solid #dbe8f3; border-radius:24px; background:linear-gradient(145deg,#ffffff 0%,#f5f9fd 100%); box-shadow:0 14px 34px rgba(36,83,126,.07); }}
-                .sms-detail-head {{ display:flex; justify-content:space-between; align-items:flex-start; gap:18px; padding-bottom:18px; border-bottom:1px solid #e7eef5; }}
-                .sms-detail-head .section-kicker {{ color:#2b78c5; font-size:9px; font-weight:900; letter-spacing:1px; }}
-                .sms-detail-head h3 {{ margin:5px 0 6px; color:#19364f; font-size:20px; }}
-                .sms-detail-head p {{ margin:0; max-width:760px; color:#71869a; font-size:11px; line-height:1.6; }}
-                .sms-recipient {{ min-width:240px; padding:14px 16px; border:1px solid #d8e5ef; border-radius:16px; background:#fff; }}
-                .sms-recipient span {{ display:block; color:#8b9bab; font-size:9px; font-weight:900; letter-spacing:.8px; text-transform:uppercase; }}
-                .sms-recipient strong {{ display:block; margin-top:6px; color:#203f5a; font-size:14px; }}
-                .sms-frame-grid {{ display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin:18px 0; max-height:340px; overflow:auto; padding:2px 2px 6px; }}
-                .sms-frame-choice {{ position:relative; min-width:0; padding:8px; border:1px solid #dbe7f1; border-radius:16px; background:#fff; cursor:pointer; transition:transform .14s ease,border-color .14s ease,box-shadow .14s ease; }}
-                .sms-frame-choice:hover {{ transform:translateY(-1px); border-color:#b9d2e5; box-shadow:0 8px 18px rgba(36,83,126,.08); }}
-                .sms-frame-choice:has(input:checked) {{ border:2px solid #2b78c5; padding:7px; box-shadow:0 8px 20px rgba(43,120,197,.12); }}
-                .sms-frame-choice input {{ position:absolute; opacity:0; pointer-events:none; }}
-                .sms-frame-thumb {{ position:relative; width:100%; aspect-ratio:16/9; overflow:hidden; border-radius:11px; background:#eef4fa; }}
-                .sms-frame-thumb img {{ width:100%; height:100%; display:block; object-fit:cover; }}
-                .sms-frame-thumb.is-unavailable {{ background:linear-gradient(135deg,#edf4fa,#f8fbfe); }}
-                .sms-thumb-unavailable {{ display:none; position:absolute; inset:0; align-items:center; justify-content:center; padding:10px; text-align:center; color:#8396a8; font-size:9px; font-weight:800; background:linear-gradient(135deg,#edf4fa,#f8fbfe); }}
-                .sms-frame-thumb.is-unavailable .sms-thumb-unavailable {{ display:flex; }}
-                .sms-image-open {{ position:absolute; right:7px; bottom:7px; padding:5px 8px; border-radius:999px; background:rgba(20,44,66,.88); color:#fff; font-size:8px; font-weight:850; }}
-                .sms-frame-index {{ position:absolute; left:7px; top:7px; padding:4px 6px; border-radius:8px; background:rgba(255,255,255,.92); color:#315a77; border:1px solid rgba(220,232,242,.85); font-size:8px; font-weight:900; }}
-                .sms-frame-meta {{ display:flex; justify-content:space-between; align-items:center; gap:7px; margin-top:8px; min-width:0; }}
-                .sms-frame-meta strong {{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#294861; font-size:9px; font-weight:850; }}
-                .sms-frame-meta small {{ flex:0 0 auto; color:#8395a6; font-size:8px; }}
-                .sms-frame-empty {{ padding:22px; border:1px dashed #cedeea; border-radius:16px; color:#8295a6; text-align:center; font-size:11px; background:#fff; }}
-                .sms-compose {{ margin-top:2px; display:grid; grid-template-columns:1fr auto; gap:12px; align-items:end; }}
-                .sms-detail-panel textarea {{ width:100%; min-height:94px; border:1px solid #d4e2ed; border-radius:14px; padding:12px 13px; resize:vertical; outline:none; color:#243e55; background:#fff; font:inherit; font-size:12px; line-height:1.55; }}
-                .sms-detail-panel textarea:focus {{ border-color:#5d9fd6; box-shadow:0 0 0 3px rgba(43,120,197,.10); }}
-                .sms-send-button {{ min-height:46px; padding:0 20px; border:0; border-radius:13px; background:#2b78c5; color:#fff; font-weight:850; font-size:12px; cursor:pointer; box-shadow:0 8px 18px rgba(43,120,197,.17); }}
-                .sms-send-button:hover {{ background:#246ba9; }}
-                .sms-send-button:disabled {{ opacity:.5; cursor:not-allowed; box-shadow:none; }}
-                .sms-detail-notice {{ margin-bottom:14px; padding:11px 13px; border-radius:12px; font-size:11px; font-weight:750; }}
-                .sms-detail-notice.success {{ border:1px solid #cfe6d8; background:#effaf3; color:#2a7c4c; }}
-                .sms-detail-notice.error {{ border:1px solid #f0d1d5; background:#fff4f5; color:#ae323b; }}
-                @media (max-width:1100px) {{ .sms-frame-grid {{ grid-template-columns:repeat(4,minmax(0,1fr)); }} }}
-                @media (max-width:850px) {{ .sms-detail-head {{ flex-direction:column; }} .sms-recipient {{ width:100%; }} .sms-frame-grid {{ grid-template-columns:repeat(3,minmax(0,1fr)); }} .sms-compose {{ grid-template-columns:1fr; }} }}
-                @media (max-width:560px) {{ .sms-frame-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} }}
                 @media (max-width:1050px) {{ .observation-focus-grid {{ grid-template-columns:1fr; }} }}
                 @media (max-width:800px) {{ .student-detail-hero {{ flex-direction:column; align-items:flex-start; }} .focus-hero-score {{ width:auto; flex:none; align-self:stretch; }} .student-detail-stats {{ grid-template-columns:repeat(2,1fr); }} }}
                 @media (max-width:560px) {{ .student-detail-stats {{ grid-template-columns:1fr; }} .review-note {{ flex-direction:column; }} }}
@@ -8498,6 +8466,36 @@ def teacher_history_student_day(request: Request, student_id: int, date: str):
                 @media (max-width:800px) {{ .student-day-top {{ flex-direction:column; }} .student-profile-card {{ align-items:flex-start; }} .student-profile-side {{ margin-left:auto; }} .student-day-metrics {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} .observation-card {{ grid-template-columns:1fr; }} .observation-visual {{ min-height:220px; }} }}
                 @media (max-width:560px) {{ .student-day-metrics {{ grid-template-columns:1fr; }} .student-profile-card {{ flex-wrap:wrap; }} .student-profile-side {{ margin-left:65px; text-align:left; }} }}
             
+            .sms-detail-panel { margin:20px 0 22px; padding:20px; border:1px solid #dce8f2; border-radius:24px; background:linear-gradient(135deg,#fbfdff,#f4f9fe); box-shadow:0 12px 30px rgba(36,83,126,.06); }
+            .sms-detail-head { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; }
+            .sms-detail-head h3 { margin:5px 0 5px; color:#18344f; font-size:19px; }
+            .sms-detail-head p { margin:0; max-width:760px; color:#7890a4; font-size:11px; line-height:1.55; }
+            .sms-recipient { min-width:210px; padding:12px 14px; border:1px solid #d7e5f0; border-radius:15px; background:#fff; box-shadow:0 5px 14px rgba(36,83,126,.04); }
+            .sms-recipient span { display:block; color:#8798a8; font-size:9px; font-weight:800; letter-spacing:.7px; text-transform:uppercase; }
+            .sms-recipient strong { display:block; margin-top:5px; color:#24425e; font-size:13px; }
+            .sms-frame-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:9px; margin:16px 0; max-height:315px; overflow:auto; padding:2px; }
+            .sms-frame-choice { position:relative; display:flex; flex-direction:column; gap:6px; padding:6px; border:1px solid #dfeaf5; border-radius:13px; background:#fff; cursor:pointer; transition:transform .12s ease,border-color .12s ease,box-shadow .12s ease; }
+            .sms-frame-choice:hover { transform:translateY(-1px); border-color:#b9d1e5; box-shadow:0 7px 16px rgba(36,83,126,.08); }
+            .sms-frame-choice:has(input:checked) { border:2px solid #2b78c5; padding:5px; box-shadow:0 8px 20px rgba(43,120,197,.11); }
+            .sms-frame-choice input { position:absolute; opacity:0; pointer-events:none; }
+            .sms-frame-open { position:relative; display:block; width:100%; aspect-ratio:16/9; border-radius:9px; overflow:hidden; background:#eef4fa; text-decoration:none; }
+            .sms-frame-open img { width:100%; height:100%; display:block; object-fit:cover; }
+            .sms-frame-open b { position:absolute; right:5px; bottom:5px; padding:4px 6px; border-radius:999px; background:rgba(24,52,79,.88); color:#fff; font-size:7px; font-weight:850; }
+            .sms-thumb-fallback { position:absolute; inset:0; display:grid; place-items:center; padding:8px; background:linear-gradient(135deg,#eef4fa,#f8fbfe); color:#8699aa; font-size:8px; font-weight:800; text-align:center; }
+            .sms-frame-meta { display:flex; justify-content:space-between; gap:5px; align-items:center; min-width:0; }
+            .sms-frame-meta strong { color:#284963; font-size:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+            .sms-frame-meta small { color:#8397a8; font-size:7px; white-space:nowrap; }
+            .sms-frame-empty { padding:15px; border:1px dashed #d6e3ee; border-radius:14px; color:#8699aa; font-size:11px; background:#fff; }
+            .sms-detail-panel textarea { width:100%; min-height:84px; border:1px solid #d6e3ee; border-radius:14px; padding:12px; resize:vertical; outline:none; color:#243e55; background:#fff; font:inherit; font-size:12px; }
+            .sms-detail-panel textarea:focus { border-color:#5d9fd6; box-shadow:0 0 0 3px rgba(43,120,197,.10); }
+            .sms-send-button { margin-top:11px; min-height:43px; padding:0 20px; border:0; border-radius:12px; background:#2b78c5; color:#fff; font-weight:850; font-size:12px; cursor:pointer; box-shadow:0 7px 16px rgba(43,120,197,.16); }
+            .sms-send-button:hover { background:#246ba9; }
+            .sms-send-button:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
+            .sms-detail-notice { margin-bottom:14px; padding:11px 13px; border-radius:12px; font-size:11px; font-weight:750; }
+            .sms-detail-notice.success { border:1px solid #cfe6d8; background:#effaf3; color:#2a7c4c; }
+            .sms-detail-notice.error { border:1px solid #f0d1d5; background:#fff4f5; color:#ae323b; }
+            @media (max-width:1050px) {{ .sms-frame-grid {{ grid-template-columns:repeat(4,minmax(0,1fr)); }} }}
+            @media (max-width:800px) {{ .sms-frame-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); max-height:360px; }} .sms-detail-head {{ flex-direction:column; }} .sms-recipient {{ width:100%; }} }}
 </style>
         """,
         section="history",
