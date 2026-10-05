@@ -2563,7 +2563,8 @@ def create_teacher_page_v2(
                             column_name,
                             data_type,
                             is_nullable,
-                            column_default
+                            column_default,
+                            is_identity
                         FROM information_schema.columns
                         WHERE table_schema = current_schema()
                           AND table_name = 'teacher_accounts'
@@ -2581,6 +2582,7 @@ def create_teacher_page_v2(
                         "data_type": str(row[2] or ""),
                         "is_nullable": "NO" if int(row[3] or 0) else "YES",
                         "column_default": row[4],
+                        "is_identity": "NO",
                     }
                     for row in rows
                 ]
@@ -2594,6 +2596,18 @@ def create_teacher_page_v2(
                 str(c["column_name"])
                 for c in columns
             }
+
+            id_meta = next(
+                (c for c in columns if str(c["column_name"]) == "id"),
+                None,
+            )
+            id_generated = bool(
+                id_meta
+                and (
+                    str(id_meta.get("column_default") or "").strip()
+                    or str(id_meta.get("is_identity") or "").upper() == "YES"
+                )
+            )
 
             required_without_default = [
                 str(c["column_name"])
@@ -2613,14 +2627,32 @@ def create_teacher_page_v2(
                 "created_at": datetime.now(timezone.utc),
             }
 
-            # Remove id/unknown fields and let DB defaults generate fields such
-            # as identity IDs. For known timestamp/text legacy columns the value
-            # is adapted to the column data type.
+            # Legacy PostgreSQL tables can have a NOT NULL id without an
+            # identity/default. When that happens, generate the next id inside
+            # this transaction. Modern identity/sequence-backed databases keep
+            # using the native generator.
+            insert_id_value = None
+            if "id" in column_names and not id_generated:
+                if dialect_name == "postgresql":
+                    db.execute(
+                        text("LOCK TABLE teacher_accounts IN SHARE ROW EXCLUSIVE MODE")
+                    )
+                next_id = db.execute(
+                    text("""
+                        SELECT COALESCE(MAX(id), 0) + 1
+                        FROM teacher_accounts
+                    """)
+                ).scalar_one()
+                insert_id_value = int(next_id)
+
             insert_columns = []
             insert_params = {}
 
             for column in column_names:
                 if column == "id":
+                    if insert_id_value is not None:
+                        insert_columns.append(column)
+                        insert_params[column] = insert_id_value
                     continue
                 if column not in values:
                     continue
@@ -2706,6 +2738,7 @@ def create_teacher_page_v2(
                 f"admin_id={admin_id} "
                 f"username={username!r} "
                 f"dialect={dialect_name!r} "
+                f"id_generated={id_generated if 'id_generated' in locals() else 'unknown'} "
                 f"error={exc!r}",
                 flush=True,
             )
