@@ -6979,7 +6979,7 @@ def _student_focus_records(session_duration: float, observations: list[dict]) ->
 
     return grouped
 
-def teacher_history_detail_content(teacher_id: int, session_id: int, student_search: str = "", student_page: int = 1) -> str | None:
+def teacher_history_detail_content(teacher_id: int, session_id: int, student_search: str = "", student_page: int = 1, student_sort: str = "severity") -> str | None:
     with SessionLocal() as db:
         session = db.execute(
             text("""
@@ -7047,8 +7047,30 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
         summary["full_name"] = row["full_name"] or summary["full_name"] or "Học sinh"
         student_cards.append(summary)
 
-    # Sort weakest students first so the teacher sees the most important cases immediately.
-    student_cards.sort(key=lambda x: (x["focus"], -x["observation_count"], x["full_name"]))
+    # Teacher-controlled ordering. Severity is the default so the most important
+    # students stay at the top; alphabetical modes are available for roster work.
+    student_sort = str(student_sort or "severity").strip().lower()
+    if student_sort not in {"severity", "az", "za"}:
+        student_sort = "severity"
+
+    if student_sort == "az":
+        student_cards.sort(key=lambda x: (
+            str(x.get("full_name") or "").casefold(),
+            str(x.get("student_code") or "").casefold(),
+        ))
+    elif student_sort == "za":
+        student_cards.sort(key=lambda x: (
+            str(x.get("full_name") or "").casefold(),
+            str(x.get("student_code") or "").casefold(),
+        ), reverse=True)
+    else:
+        student_cards.sort(key=lambda x: (
+            _focus_severity(float(x.get("focus") or 100.0))[2],
+            float(x.get("focus") or 100.0),
+            -int(x.get("observation_count") or 0),
+            str(x.get("full_name") or "").casefold(),
+        ))
+
     danger_students = sum(1 for x in student_cards if x["focus"] < 50.0)
     attention_students = sum(1 for x in student_cards if 50.0 <= x["focus"] < 80.0)
     safe_students = len(student_cards) - danger_students - attention_students
@@ -7165,8 +7187,16 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
                     <span class="student-roster-search-icon">⌕</span>
                     <input name="q" value="{escape(student_search)}" placeholder="Tìm học sinh theo tên hoặc mã..." autocomplete="off">
                 </div>
+                <div class="student-roster-sort-wrap">
+                    <label for="student-sort">Sắp xếp</label>
+                    <select id="student-sort" name="sort">
+                        <option value="severity" {"selected" if student_sort == "severity" else ""}>Mức độ • Nghiêm trọng → Bình thường</option>
+                        <option value="az" {"selected" if student_sort == "az" else ""}>Tên • A → Z</option>
+                        <option value="za" {"selected" if student_sort == "za" else ""}>Tên • Z → A</option>
+                    </select>
+                </div>
                 <button class="student-roster-search-button" type="submit">Tìm học sinh</button>
-                {('<a class="student-roster-clear" href="/teacher/history/session/'+str(int(session_id))+'">Xóa</a>' if student_search else '')}
+                {('<a class="student-roster-clear" href="/teacher/history/session/'+str(int(session_id))+'?sort='+url_quote(student_sort)+'">Xóa tìm kiếm</a>' if student_search else '')}
                 <div class="student-roster-page-info">{total_visible if student_search else len(student_cards)} học sinh · Trang {student_page}/{total_pages}</div>
             </form>
 
@@ -7192,9 +7222,9 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
             <div class="student-pagination">
                 <div class="student-pagination-summary">Hiển thị {((page_start + 1) if total_visible else 0)}–{min(page_start + students_per_page, total_visible)} / {total_visible}</div>
                 <div class="student-pagination-buttons">
-                    {('<a class="page-button" href="/teacher/history/session/'+str(int(session_id))+'?q='+url_quote(student_search)+'&page='+str(student_page-1)+'">← Trước</a>' if student_page > 1 else '<span class="page-button disabled">← Trước</span>')}
-                    {''.join(f'<a class="page-button {"active" if page_num == student_page else ""}" href="/teacher/history/session/{int(session_id)}?q={url_quote(student_search)}&page={page_num}">{page_num}</a>' for page_num in range(1, total_pages + 1))}
-                    {('<a class="page-button" href="/teacher/history/session/'+str(int(session_id))+'?q='+url_quote(student_search)+'&page='+str(student_page+1)+'">Sau →</a>' if student_page < total_pages else '<span class="page-button disabled">Sau →</span>')}
+                    {('<a class="page-button" href="/teacher/history/session/'+str(int(session_id))+'?q='+url_quote(student_search)+'&sort='+url_quote(student_sort)+'&page='+str(student_page-1)+'">← Trước</a>' if student_page > 1 else '<span class="page-button disabled">← Trước</span>')}
+                    {''.join(f'<a class="page-button {"active" if page_num == student_page else ""}" href="/teacher/history/session/{int(session_id)}?q={url_quote(student_search)}&sort={url_quote(student_sort)}&page={page_num}">{page_num}</a>' for page_num in range(1, total_pages + 1))}
+                    {('<a class="page-button" href="/teacher/history/session/'+str(int(session_id))+'?q='+url_quote(student_search)+'&sort='+url_quote(student_sort)+'&page='+str(student_page+1)+'">Sau →</a>' if student_page < total_pages else '<span class="page-button disabled">Sau →</span>')}
                 </div>
             </div>
         </section>
@@ -7276,6 +7306,10 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
             .student-roster-search-button:hover {{ background:#1f64a4; }}
             .student-roster-clear {{ color:#70849a; font-size:11px; font-weight:800; text-decoration:none; padding:0 3px; }}
             .student-roster-page-info {{ margin-left:auto; color:#7f92a5; font-size:11px; font-weight:800; white-space:nowrap; }}
+            .student-roster-sort-wrap {{ display:flex; align-items:center; gap:8px; flex:0 0 auto; }}
+            .student-roster-sort-wrap label {{ color:#71869a; font-size:10px; font-weight:900; letter-spacing:.45px; text-transform:uppercase; white-space:nowrap; }}
+            .student-roster-sort-wrap select {{ min-width:255px; height:44px; padding:0 36px 0 12px; border:1px solid #d7e3ef; border-radius:12px; background:#fff; color:#29445d; font-size:12px; font-weight:750; outline:none; }}
+            .student-roster-sort-wrap select:focus {{ border-color:#94bde2; box-shadow:0 0 0 4px #edf6ff; }}
             .student-pagination {{ display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 2px 2px; }}
             .student-pagination-summary {{ color:#7a8d9f; font-size:11px; font-weight:700; }}
             .student-pagination-buttons {{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }}
@@ -7283,6 +7317,11 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
             .page-button:hover {{ background:#f5faff; border-color:#bcd5eb; color:#2469a8; }}
             .page-button.active {{ background:#2b78c5; color:#fff; border-color:#2b78c5; box-shadow:0 5px 12px rgba(43,120,197,.17); }}
             .page-button.disabled {{ color:#b5c0ca; background:#f7f9fb; cursor:default; }}
+            @media (max-width:1050px) {{
+                .student-roster-sort-wrap {{ flex:1 1 100%; }}
+                .student-roster-sort-wrap select {{ min-width:0; flex:1; }}
+                .student-roster-page-info {{ margin-left:0; }}
+            }}
             @media (max-width:1100px) {{
                 .session-overview-grid {{ grid-template-columns:repeat(2,1fr); }}
                 .student-focus-list-wrap {{ overflow:auto; }}
@@ -7839,7 +7878,8 @@ def teacher_history_session(request: Request, session_id: int):
         student_page = max(1, int(request.query_params.get("page", "1") or "1"))
     except (TypeError, ValueError):
         student_page = 1
-    content = teacher_history_detail_content(teacher_id, session_id, student_search, student_page)
+    student_sort = str(request.query_params.get("sort", "severity") or "severity").strip().lower()
+    content = teacher_history_detail_content(teacher_id, session_id, student_search, student_page, student_sort)
     if content is None:
         return RedirectResponse(url="/teacher?section=history", status_code=303)
 
