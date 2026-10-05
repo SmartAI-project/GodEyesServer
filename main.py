@@ -59,7 +59,7 @@ app = FastAPI(
     version="1.3.0"
 )
 
-GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v2-frame-average"
+GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v3-one-percent-per-ob"
 
 app.include_router(teacher_admin_router)
 
@@ -6375,38 +6375,34 @@ def _format_clock_seconds(value: float) -> str:
 
 
 def _student_focus_records(session_duration: float, observations: list[dict]) -> dict[int, dict]:
-    """Build one summary per student from the AVERAGE of frame focus scores."""
+    """Build one summary per student using a simple Focus Score rule.
+
+    Every recorded OB observation costs exactly 1 Focus point, starting from
+    100. Focus is therefore independent of confidence and duration:
+
+        Focus = max(0, 100 - number_of_OBs)
+
+    The focus shown on each observation card is the score immediately after
+    that OB is recorded. Older observations without an explicit focus_score
+    are still handled by the same deterministic rule.
+    """
     grouped: dict[int, dict] = {}
     ordered = sorted(
         observations,
         key=lambda r: (str(r.get("observed_at") or ""), int(r.get("id") or 0)),
     )
+
     for row in ordered:
         sid = int(row.get("student_id") or 0)
         if sid <= 0:
             continue
-
-        frame_focus = _frame_focus_score(
-            row.get("event_type"),
-            row.get("details"),
-            row.get("focus_score"),
-        )
-        sev_label, sev_class, sev_rank = _focus_severity(frame_focus)
-        item = dict(row)
-        item["focus_at_frame"] = frame_focus
-        item["focus_after"] = frame_focus
-        item["severity"] = sev_label
-        item["severity_class"] = sev_class
-        item["severity_rank"] = sev_rank
-        item["duration_seconds"] = float(row.get("duration_seconds") or 0.0)
 
         bucket = grouped.setdefault(sid, {
             "student_id": sid,
             "student_code": row.get("student_code") or "",
             "full_name": row.get("full_name") or "Học sinh",
             "focus": 100.0,
-            "focus_sum": 0.0,
-            "focus_count": 0,
+            "ob_count": 0,
             "observation_count": 0,
             "danger_count": 0,
             "attention_count": 0,
@@ -6414,9 +6410,22 @@ def _student_focus_records(session_duration: float, observations: list[dict]) ->
             "ob_time_seconds": 0.0,
             "observations": [],
         })
-        bucket["focus_sum"] += frame_focus
-        bucket["focus_count"] += 1
-        bucket["focus"] = bucket["focus_sum"] / bucket["focus_count"]
+
+        # In the current God Eyes history model, each stored observation is an
+        # OB signal. One OB = -1 Focus point, never below 0.
+        bucket["ob_count"] += 1
+        focus_after = max(0.0, 100.0 - float(bucket["ob_count"]))
+        sev_label, sev_class, sev_rank = _focus_severity(focus_after)
+
+        item = dict(row)
+        item["focus_at_frame"] = focus_after
+        item["focus_after"] = focus_after
+        item["severity"] = sev_label
+        item["severity_class"] = sev_class
+        item["severity_rank"] = sev_rank
+        item["duration_seconds"] = float(row.get("duration_seconds") or 0.0)
+
+        bucket["focus"] = focus_after
         bucket["observation_count"] += 1
         bucket["ob_time_seconds"] += float(row.get("duration_seconds") or 0.0)
         bucket["observations"].append(item)
@@ -6522,7 +6531,7 @@ def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | No
                 </div>
                 <div class="focus-score-row">
                     <div>
-                        <div class="focus-label">AVERAGE FOCUS</div>
+                        <div class="focus-label">FOCUS SCORE</div>
                         <div class="focus-value">{focus}%</div>
                     </div>
                     <div class="focus-meter"><span style="width:{focus}%"></span></div>
