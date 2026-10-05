@@ -1053,11 +1053,49 @@ TEACHER_I18N_EN_VI_EXTRA.update({
 })
 
 
+
+# v16: harden English mode against legacy reverse-mapping collisions.
+# Some older templates stored English->Vietnamese pairs inside the main map,
+# which caused an English page to be translated back into Vietnamese.  These
+# exact Vietnamese labels are now explicitly converted to English in English mode.
+STRICT_VI_LABELS_TO_EN = {
+    'TỔNG QUAN TẬP TRUNG': 'FOCUS OVERVIEW',
+    'TỔNG QUAN LỚP HỌC': 'CLASS OVERVIEW',
+    'ĐIỂM TẬP TRUNG': 'FOCUS SCORE',
+    'TẬP TRUNG': 'FOCUS',
+    'SỐ OB': 'OB',
+    'NGHIÊM TRỌNG': 'DANGER',
+    'CHÚ Ý': 'ATTENTION',
+    'THỜI GIAN OB': 'OB TIME',
+    'HỌC SINH': 'STUDENTS',
+    'BÌNH THƯỜNG': 'NORMAL',
+    'HƠI NGHIÊM TRỌNG': 'ATTENTION',
+    'BUỔI HỌC': 'SESSION',
+    'LẦN GHI NHẬN': 'OBSERVATIONS',
+    'MINH CHỨNG': 'EVIDENCE',
+    'MỨC ĐỘ': 'SEVERITY',
+    'TÌM HỌC SINH': 'SEARCH STUDENT',
+    'QUAY LẠI LỊCH SỬ': 'BACK TO HISTORY',
+    'XÓA BUỔI HỌC': 'DELETE SESSION',
+    'HIỂN THỊ': 'SHOWING',
+    'TRANG': 'PAGE',
+    'LẦN GẦN NHẤT': 'LATEST',
+    'ĐƯỢC CHỌN ĐỂ QUÉT': 'SELECTED FOR SCANNING',
+    'HỌC SINH CẦN XEM LẠI': 'STUDENTS TO REVIEW',
+    'HỌC SINH CẦN CHÚ Ý': 'STUDENTS NEEDING ATTENTION',
+    'KHÔNG CÓ TÍN HIỆU ĐÁNG CHÚ Ý': 'NO NOTABLE SIGNALS',
+    'HỌC SINH TRONG BUỔI HỌC': 'STUDENTS IN THE SESSION',
+}
+
+
 def _teacher_localize_text(value: str, language: str) -> str:
     text = str(value or '')
     if language == 'en':
-        mapping = dict(TEACHER_I18N_VI_EN)
+        # English mode must never apply legacy English->Vietnamese entries.
+        # Use only Vietnamese-source entries plus the strict English overrides.
+        mapping = {k: v for k, v in TEACHER_I18N_VI_EN.items() if any(ch in k for ch in 'ăâđêôơưĂÂĐÊÔƠƯáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ')}
         mapping.update(STRICT_VI_TO_EN)
+        mapping.update(STRICT_VI_LABELS_TO_EN)
     else:
         mapping = {v: k for k, v in TEACHER_I18N_VI_EN.items() if v != k}
         mapping.update(TEACHER_I18N_EN_VI_EXTRA)
