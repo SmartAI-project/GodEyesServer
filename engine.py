@@ -2337,8 +2337,19 @@ class BehaviorEngine:
     YAW_THRESHOLD_DEG = 40.0
     YAW_CONFIRM_SECONDS = 5.0
 
+    # A face may disappear during writing, looking down, or turning around.
+    # Sleep must therefore require sustained inactivity of the person/body,
+    # not merely loss of the face.
     NO_FACE_STILL_SLEEP_SECONDS = 5.0
     FACE_GAP_GRACE_SECONDS = 0.40
+    SLEEP_ACTIVITY_MEMORY_SECONDS = 2.5
+
+    # Activity thresholds are intentionally lower than the talking threshold:
+    # small hand/arm/body movements (e.g. writing) should keep the student
+    # out of the sleep timer, while tiny detector noise should not.
+    SLEEP_HAND_ACTIVITY_THRESHOLD = 0.055
+    SLEEP_LOWER_ACTIVITY_THRESHOLD = 0.055
+    SLEEP_TASK_ACTIVITY_THRESHOLD = 0.075
 
     # Face-hidden talking heuristic:
     # - the student's identity is already LOCKED;
@@ -2376,6 +2387,7 @@ class BehaviorEngine:
                 'last_yaw': 0.0,
                 'last_face_time': 0.0,
                 'face_missing_start': None,
+                'last_activity_time': 0.0,
                 'sleep_latched': False,
                 'talking_start': None,
                 'talking_latched': False,
@@ -2571,54 +2583,97 @@ class BehaviorEngine:
                     state['talking_latched'] = False
 
         # ---------------------------------------------------------
-        # 3) LOCKED TRACK + FACE LOST
+        # 3) LOCKED TRACK + FACE LOST -> ROBUST OB_SLEEP
         # ---------------------------------------------------------
+        # IMPORTANT:
+        # - Face hidden != sleep.
+        # - Head-down writing may hide the face while the hands/arms/body move.
+        # - Turning around to talk may also hide the face while the body moves.
+        # - The sleep timer starts ONLY after sustained inactivity, and any
+        #   meaningful activity immediately resets it.
         if face_valid:
-            # Face returned. The IdentityLock layer will re-verify its embedding
-            # against the complete roster before allowing the identity to resume.
             state['face_missing_start'] = None
             state['sleep_latched'] = False
+            state['last_activity_time'] = now
         else:
             displacement, size_change = self._box_motion_in_window(
                 track, now, self.BOX_MOVE_WINDOW_SECONDS
             )
-            moving = (
+
+            hand_motion = float(getattr(track, 'hand_motion', 0.0) or 0.0)
+            lower_motion = float(getattr(track, 'lower_motion', 0.0) or 0.0)
+            task_activity = float(getattr(track, 'task_activity', 0.0) or 0.0)
+
+            box_activity = (
                 displacement >= self.BOX_MOVE_THRESHOLD
                 or size_change >= self.BOX_SIZE_CHANGE_THRESHOLD
             )
+            hand_activity = hand_motion >= self.SLEEP_HAND_ACTIVITY_THRESHOLD
+            lower_activity = lower_motion >= self.SLEEP_LOWER_ACTIVITY_THRESHOLD
+            task_active = task_activity >= self.SLEEP_TASK_ACTIVITY_THRESHOLD
 
-            if moving:
-                # The same lock box is still changing, even if the face is gone.
-                # Do not call it sleep; keep the lock and keep following.
+            meaningful_activity = bool(
+                box_activity
+                or hand_activity
+                or lower_activity
+                or task_active
+            )
+
+            if meaningful_activity:
+                # Any genuine hand/arm/body/box activity means the student is
+                # active. This is the key protection against false OB_SLEEP
+                # while writing with the head down.
+                state['last_activity_time'] = now
                 state['face_missing_start'] = None
                 state['sleep_latched'] = False
             else:
-                if state['face_missing_start'] is None:
-                    state['face_missing_start'] = now
+                # Give short pauses a memory window so a student can stop writing
+                # for a moment without immediately entering the sleep timer.
+                last_activity = float(state.get('last_activity_time', 0.0) or 0.0)
+                recent_activity = (
+                    last_activity > 0.0
+                    and (now - last_activity) <= self.SLEEP_ACTIVITY_MEMORY_SECONDS
+                )
 
-                missing_elapsed = now - float(state['face_missing_start'])
-                if (
-                    missing_elapsed >= self.NO_FACE_STILL_SLEEP_SECONDS
-                    and not state['sleep_latched']
-                    and self._cooldown_ok(state, 'OB_SLEEP', now)
-                ):
-                    confidence = min(
-                        0.92,
-                        0.66
-                        + 0.10 * min(1.0, person_score)
-                        + 0.10 * (1.0 - min(1.0, displacement / max(self.BOX_MOVE_THRESHOLD, 1e-6))),
-                    )
-                    events.append(self._event(
-                        'OB_SLEEP',
-                        confidence,
-                        (
-                            'Khuôn mặt tạm thời không còn nhìn thấy; '
-                            f'khung người gần như đứng yên liên tục {self.NO_FACE_STILL_SLEEP_SECONDS:.0f} giây. '
-                            'Đây là tín hiệu nghi ngờ ngủ/gục và cần giáo viên xác nhận.'
-                        ),
-                    ))
-                    state['last_event']['OB_SLEEP'] = now
-                    state['sleep_latched'] = True
+                if recent_activity:
+                    state['face_missing_start'] = None
+                    state['sleep_latched'] = False
+                else:
+                    if state['face_missing_start'] is None:
+                        state['face_missing_start'] = now
+
+                    still_elapsed = now - float(state['face_missing_start'])
+
+                    if (
+                        still_elapsed >= self.NO_FACE_STILL_SLEEP_SECONDS
+                        and not state['sleep_latched']
+                        and self._cooldown_ok(state, 'OB_SLEEP', now)
+                    ):
+                        # Confidence is based only on observable signal quality,
+                        # not on a claim about the student's mental state.
+                        confidence = min(
+                            0.92,
+                            0.64
+                            + 0.12 * min(1.0, person_score)
+                            + 0.10 * min(
+                                1.0,
+                                still_elapsed / self.NO_FACE_STILL_SLEEP_SECONDS
+                            ),
+                        )
+
+                        events.append(self._event(
+                            'OB_SLEEP',
+                            confidence,
+                            (
+                                'Khuôn mặt không còn nhìn thấy và không phát hiện '
+                                f'chuyển động đáng kể của tay, thân người hoặc khung người '
+                                f'trong {self.NO_FACE_STILL_SLEEP_SECONDS:.0f} giây liên tục. '
+                                'Đây là tín hiệu nghi ngờ ngủ/gục và cần giáo viên xác nhận.'
+                            ),
+                        ))
+
+                        state['last_event']['OB_SLEEP'] = now
+                        state['sleep_latched'] = True
 
         return events
 
