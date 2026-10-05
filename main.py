@@ -62,7 +62,7 @@ app = FastAPI(
 )
 
 GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v6-student-search-polish"
-GODEYES_MAIN_ACCOUNT_CREATE_VERSION = "v19-raw-sql"
+GODEYES_MAIN_ACCOUNT_CREATE_VERSION = "v20-raw-sql-type-safe"
 
 app.include_router(teacher_admin_router)
 
@@ -2474,19 +2474,39 @@ def create_teacher_page(
                     status_code=303
                 )
 
+            # Existing Render databases may have legacy BOOLEAN/INTEGER variants
+            # for is_active. Detect the real column type and send a compatible SQL literal
+            # instead of relying on implicit casts. This fixes the recurring create_failed
+            # on older PostgreSQL schemas.
+            dialect = getattr(getattr(db, "bind", None), "dialect", None)
+            dialect_name = getattr(dialect, "name", "")
+            active_sql = "TRUE"
+            if dialect_name == "postgresql":
+                active_type_row = db.execute(
+                    text("""
+                        SELECT data_type
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'teacher_accounts'
+                          AND column_name = 'is_active'
+                        LIMIT 1
+                    """),
+                ).first()
+                active_type = str(active_type_row[0]).lower() if active_type_row else "boolean"
+                active_sql = "1" if active_type in {"integer", "smallint", "bigint", "numeric", "decimal", "real", "double precision"} else "TRUE"
+
             db.execute(
-                text("""
+                text(f"""
                     INSERT INTO teacher_accounts
                         (main_account_id, username, password_hash, full_name, is_active, created_at)
                     VALUES
-                        (:main_account_id, :username, :password_hash, :full_name, :is_active, CURRENT_TIMESTAMP)
+                        (:main_account_id, :username, :password_hash, :full_name, {active_sql}, CURRENT_TIMESTAMP)
                 """),
                 {
                     "main_account_id": main_account_id,
                     "username": username,
                     "password_hash": hash_password(password),
                     "full_name": full_name,
-                    "is_active": True,
                 },
             )
             db.commit()
