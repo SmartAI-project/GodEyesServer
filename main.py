@@ -59,7 +59,7 @@ app = FastAPI(
     version="1.3.0"
 )
 
-GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v4-student-list"
+GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v5-login-polish-student-search-pagination"
 
 app.include_router(teacher_admin_router)
 
@@ -1205,11 +1205,37 @@ LOGIN_PAGE = """
             margin: 0;
             min-height: 100vh;
             font-family: "Segoe UI", Arial, sans-serif;
-            background: #f5f6f8;
+            background:
+                radial-gradient(circle at 18% 18%, rgba(46,169,255,.13), transparent 28%),
+                radial-gradient(circle at 82% 24%, rgba(23,105,213,.10), transparent 30%),
+                radial-gradient(circle at 50% 88%, rgba(90,170,238,.10), transparent 34%),
+                linear-gradient(135deg, #eef5fb 0%, #f8fbfe 46%, #edf5fb 100%);
             color: #20242a;
             display: flex;
             align-items: center;
             justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image: radial-gradient(rgba(65,119,169,.09) 1px, transparent 1px);
+            background-size: 26px 26px;
+            mask-image: linear-gradient(to bottom, rgba(0,0,0,.34), transparent 74%);
+        }
+        body::after {
+            content: "";
+            position: fixed;
+            width: 420px;
+            height: 420px;
+            border-radius: 50%;
+            right: -160px;
+            bottom: -190px;
+            background: radial-gradient(circle, rgba(33,139,234,.12), rgba(33,139,234,0) 68%);
+            pointer-events: none;
         }
         .login-page {
             width: 100%;
@@ -6438,7 +6464,7 @@ def _student_focus_records(session_duration: float, observations: list[dict]) ->
 
     return grouped
 
-def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | None:
+def teacher_history_detail_content(teacher_id: int, session_id: int, student_search: str = "", student_page: int = 1) -> str | None:
     with SessionLocal() as db:
         session = db.execute(
             text("""
@@ -6511,8 +6537,31 @@ def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | No
     attention_students = sum(1 for x in student_cards if 50.0 <= x["focus"] < 80.0)
     safe_students = len(student_cards) - danger_students - attention_students
 
+    # Search + pagination: keep the complete class metrics above, but filter the visible roster.
+    student_search = str(student_search or "").strip()
+    try:
+        student_page = max(1, int(student_page))
+    except (TypeError, ValueError):
+        student_page = 1
+
+    visible_students = student_cards
+    if student_search:
+        needle = student_search.casefold()
+        visible_students = [
+            item for item in student_cards
+            if needle in str(item.get("full_name") or "").casefold()
+            or needle in str(item.get("student_code") or "").casefold()
+        ]
+
+    students_per_page = 10
+    total_visible = len(visible_students)
+    total_pages = max(1, (total_visible + students_per_page - 1) // students_per_page)
+    student_page = min(student_page, total_pages)
+    page_start = (student_page - 1) * students_per_page
+    page_students = visible_students[page_start:page_start + students_per_page]
+
     list_rows_html = ""
-    for index, student in enumerate(student_cards, start=1):
+    for index, student in enumerate(page_students, start=page_start + 1):
         focus = max(0, min(100, round(student["focus"])))
         severity, sev_class, _ = _focus_severity(focus)
         row_cls = " student-focus-list-row-danger" if sev_class == "danger" else ""
@@ -6592,6 +6641,16 @@ def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | No
                 <div class="session-meta-pill">{len(student_cards)} học sinh · {int(session['observation_count'] or 0)} observations · {evidence_count} evidence</div>
             </div>
 
+            <form class="student-roster-toolbar" method="get" action="/teacher/history/session/{int(session_id)}">
+                <div class="student-roster-search-wrap">
+                    <span class="student-roster-search-icon">⌕</span>
+                    <input name="q" value="{escape(student_search)}" placeholder="Tìm học sinh theo tên hoặc mã..." autocomplete="off">
+                </div>
+                <button class="student-roster-search-button" type="submit">Tìm học sinh</button>
+                {('<a class="student-roster-clear" href="/teacher/history/session/'+str(int(session_id))+'">Xóa</a>' if student_search else '')}
+                <div class="student-roster-page-info">{total_visible if student_search else len(student_cards)} học sinh · Trang {student_page}/{total_pages}</div>
+            </form>
+
             <div class="student-focus-list-wrap">
                 <div class="student-focus-list-header">
                     <div class="list-head student-head-student">HỌC SINH</div>
@@ -6602,7 +6661,16 @@ def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | No
                     <div class="list-head">OB TIME</div>
                     <div class="list-head student-head-status">TRẠNG THÁI</div>
                 </div>
-                {list_rows_html if list_rows_html else '<div class="focus-empty">Chưa có học sinh trong roster của session.</div>'}
+                {list_rows_html if list_rows_html else ('<div class="focus-empty">Không tìm thấy học sinh phù hợp.</div>' if student_search else '<div class="focus-empty">Chưa có học sinh trong roster của session.</div>')}
+            </div>
+
+            <div class="student-pagination">
+                <div class="student-pagination-summary">Hiển thị {((page_start + 1) if total_visible else 0)}–{min(page_start + students_per_page, total_visible)} / {total_visible}</div>
+                <div class="student-pagination-buttons">
+                    {('<a class="page-button" href="/teacher/history/session/'+str(int(session_id))+'?q='+url_quote(student_search)+'&page='+str(student_page-1)+'">← Trước</a>' if student_page > 1 else '<span class="page-button disabled">← Trước</span>')}
+                    {''.join(f'<a class="page-button {"active" if page_num == student_page else ""}" href="/teacher/history/session/{int(session_id)}?q={url_quote(student_search)}&page={page_num}">{page_num}</a>' for page_num in range(1, total_pages + 1))}
+                    {('<a class="page-button" href="/teacher/history/session/'+str(int(session_id))+'?q='+url_quote(student_search)+'&page='+str(student_page+1)+'">Sau →</a>' if student_page < total_pages else '<span class="page-button disabled">Sau →</span>')}
+                </div>
             </div>
         </section>
         <style>
@@ -6654,6 +6722,22 @@ def teacher_history_detail_content(teacher_id: int, session_id: int) -> str | No
             .student-list-status {{ display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }}
             .student-list-arrow {{ color:#2b78c5; font-size:18px; font-weight:900; line-height:1; }}
             .focus-empty {{ padding:40px; text-align:center; color:#8191a2; border-radius:22px; }}
+            .student-roster-toolbar {{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px; padding:10px 2px; }}
+            .student-roster-search-wrap {{ position:relative; flex:1 1 320px; min-width:260px; }}
+            .student-roster-search-icon {{ position:absolute; left:13px; top:50%; transform:translateY(-51%); color:#7f92a5; font-size:18px; pointer-events:none; }}
+            .student-roster-search-wrap input {{ width:100%; height:44px; padding:0 14px 0 38px; border:1px solid #d7e3ef; border-radius:12px; background:#fff; color:#203247; font-size:13px; outline:none; transition:border-color .15s, box-shadow .15s; }}
+            .student-roster-search-wrap input:focus {{ border-color:#94bde2; box-shadow:0 0 0 4px #edf6ff; }}
+            .student-roster-search-button {{ height:44px; border:0; border-radius:12px; padding:0 17px; background:#2b78c5; color:#fff; font-size:12px; font-weight:850; cursor:pointer; }}
+            .student-roster-search-button:hover {{ background:#1f64a4; }}
+            .student-roster-clear {{ color:#70849a; font-size:11px; font-weight:800; text-decoration:none; padding:0 3px; }}
+            .student-roster-page-info {{ margin-left:auto; color:#7f92a5; font-size:11px; font-weight:800; white-space:nowrap; }}
+            .student-pagination {{ display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 2px 2px; }}
+            .student-pagination-summary {{ color:#7a8d9f; font-size:11px; font-weight:700; }}
+            .student-pagination-buttons {{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }}
+            .page-button {{ display:inline-flex; align-items:center; justify-content:center; min-width:34px; height:34px; padding:0 10px; border:1px solid #d7e3ef; border-radius:10px; background:#fff; color:#50687f; font-size:11px; font-weight:850; text-decoration:none; }}
+            .page-button:hover {{ background:#f5faff; border-color:#bcd5eb; color:#2469a8; }}
+            .page-button.active {{ background:#2b78c5; color:#fff; border-color:#2b78c5; box-shadow:0 5px 12px rgba(43,120,197,.17); }}
+            .page-button.disabled {{ color:#b5c0ca; background:#f7f9fb; cursor:default; }}
             @media (max-width:1100px) {{
                 .session-overview-grid {{ grid-template-columns:repeat(2,1fr); }}
                 .student-focus-list-wrap {{ overflow:auto; }}
@@ -7205,7 +7289,12 @@ def teacher_history_session(request: Request, session_id: int):
         return RedirectResponse(url="/", status_code=303)
 
     teacher_id = int(payload["sub"])
-    content = teacher_history_detail_content(teacher_id, session_id)
+    student_search = str(request.query_params.get("q", "") or "").strip()
+    try:
+        student_page = max(1, int(request.query_params.get("page", "1") or "1"))
+    except (TypeError, ValueError):
+        student_page = 1
+    content = teacher_history_detail_content(teacher_id, session_id, student_search, student_page)
     if content is None:
         return RedirectResponse(url="/teacher?section=history", status_code=303)
 
