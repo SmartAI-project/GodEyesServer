@@ -6979,6 +6979,23 @@ def _student_focus_records(session_duration: float, observations: list[dict]) ->
 
     return grouped
 
+def _student_given_name_sort_key(full_name: str):
+    """Sort Vietnamese student names by given name (last name token), accent-insensitive.
+
+    Example: ``Anh Kiệt`` is sorted under ``K`` because ``Kiệt`` is the given
+    name. ``Trần Gia Huy`` is sorted under ``H`` because ``Huy`` is the given
+    name. The full normalized name/code remain stable tie-breakers.
+    """
+    import unicodedata
+    text = str(full_name or "").strip()
+    given = text.split()[-1] if text else ""
+    def norm(value: str) -> str:
+        value = unicodedata.normalize("NFD", value)
+        value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
+        return value.casefold()
+    return (norm(given), norm(text))
+
+
 def teacher_history_detail_content(teacher_id: int, session_id: int, student_search: str = "", student_page: int = 1, student_sort: str = "severity") -> str | None:
     with SessionLocal() as db:
         session = db.execute(
@@ -7055,12 +7072,12 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
 
     if student_sort == "az":
         student_cards.sort(key=lambda x: (
-            str(x.get("full_name") or "").casefold(),
+            _student_given_name_sort_key(str(x.get("full_name") or "")),
             str(x.get("student_code") or "").casefold(),
         ))
     elif student_sort == "za":
         student_cards.sort(key=lambda x: (
-            str(x.get("full_name") or "").casefold(),
+            _student_given_name_sort_key(str(x.get("full_name") or "")),
             str(x.get("student_code") or "").casefold(),
         ), reverse=True)
     else:
@@ -7191,8 +7208,8 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
                     <label for="student-sort">Sắp xếp</label>
                     <select id="student-sort" name="sort">
                         <option value="severity" {"selected" if student_sort == "severity" else ""}>Mức độ • Nghiêm trọng → Bình thường</option>
-                        <option value="az" {"selected" if student_sort == "az" else ""}>Tên • A → Z</option>
-                        <option value="za" {"selected" if student_sort == "za" else ""}>Tên • Z → A</option>
+                        <option value="az" {"selected" if student_sort == "az" else ""}>Tên gọi • A → Z</option>
+                        <option value="za" {"selected" if student_sort == "za" else ""}>Tên gọi • Z → A</option>
                     </select>
                 </div>
                 <button class="student-roster-search-button" type="submit">Tìm học sinh</button>
