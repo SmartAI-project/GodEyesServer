@@ -1,4 +1,4 @@
-# GodEyes Engine v38 — real-time camera smoothness / capture-AI decoupling patch
+# GodEyes Engine v39 — responsive real-time tracking box patch
 # GodEyes Engine v34 • 40-track session lock • 5s head-turn • 70% Face ID gate • 30 FPS preview
 from pathlib import Path
 import math
@@ -639,15 +639,30 @@ class PersonTrack:
             for i in range(4)
         )
 
-        # Incremental follow: never jump directly to the detector box.
-        alpha_pos = 0.58 if not protected else 0.72
-        alpha_size = 0.36 if not protected else 0.48
-        smooth = self._blend_box(
-            previous_box,
-            fused,
-            alpha_pos=alpha_pos,
-            alpha_size=alpha_size,
-        )
+        # Responsive follow for the live overlay. Small detector noise is smoothed,
+        # but a meaningful displacement is applied immediately so the visible box
+        # never trails behind a moving student. Internal tracking remains smooth
+        # enough for behavior calculations.
+        prev_cx, prev_cy = self._raw_center(previous_box)
+        fused_cx, fused_cy = self._raw_center(fused)
+        center_shift = math.hypot(fused_cx - prev_cx, fused_cy - prev_cy)
+        size_ref = max(24.0, float(previous_box[3]))
+        jump_threshold = size_ref * (0.10 if protected else 0.14)
+
+        if protected and center_shift >= jump_threshold:
+            # Locked student moved enough to require an immediate box refresh.
+            # Keep the latest detector geometry instead of leaving a stale box
+            # behind for several inference cycles.
+            smooth = tuple(float(v) for v in fused)
+        else:
+            alpha_pos = 0.72 if not protected else 0.84
+            alpha_size = 0.44 if not protected else 0.58
+            smooth = self._blend_box(
+                previous_box,
+                fused,
+                alpha_pos=alpha_pos,
+                alpha_size=alpha_size,
+            )
 
         self.prev_box = previous_box
         self.raw_box = raw
@@ -2694,7 +2709,13 @@ class AIWorker(QThread):
             'identity_source': str(self.identity.student_profiles.get(sid, {}).get('identity_source', 'UNKNOWN')) if sid not in ('IDENTITY UNCERTAIN',) else 'UNKNOWN',
             'missed': track.missed,
             'score': float(max(0.0, min(1.0, score))),
-            'box': tuple(int(v) for v in track.box),
+            # For visible tracks, expose the current responsive box. When a
+            # detector frame is temporarily missed, keep the predicted track box
+            # so the renderer can follow motion briefly without freezing the old
+            # location.
+            'box': tuple(int(max(0, v)) for v in track.box),
+            'raw_box': tuple(int(max(0, v)) for v in track.raw_box),
+            'box_updated_at': float(track.last_update_time),
             'confirmed': bool(track.confirmed),
             'person_confidence': float(track.person_score),
             'face_side': track.face_side,
