@@ -1350,7 +1350,7 @@ def _issue_face_scan_token(student_id: int, admin_id: int) -> str:
     return token
 
 
-print("[GodEyes][BUILD] V25 student-create fixes loaded")
+print("[GodEyes][BUILD] V26 student-create + SMS migration + compact gallery fixes loaded")
 
 def ensure_student_tables():
     """Create/migrate student + SMS tables with isolated, repairable transactions."""
@@ -1392,9 +1392,9 @@ def ensure_student_tables():
             db.execute(text("CREATE INDEX IF NOT EXISTS idx_class_students_class ON class_students(class_id)"))
             db.execute(text("CREATE INDEX IF NOT EXISTS idx_class_students_student ON class_students(student_id)"))
             db.commit()
-        print('[GodEyes][SMS_MIGRATION] V23 student schema OK (guardian_phone ready)')
+        print('[GodEyes][SMS_MIGRATION] V26 student schema OK (guardian_phone ready)')
     except Exception:
-        print('[GodEyes][SMS_MIGRATION] V23 student schema warning; server will continue:')
+        print('[GodEyes][SMS_MIGRATION] V26 student schema warning; server will continue:')
         traceback.print_exc()
 
     try:
@@ -1426,7 +1426,7 @@ def ensure_student_tables():
                         provider_message_id TEXT NOT NULL DEFAULT '',
                         provider_name TEXT NOT NULL DEFAULT '',
                         error_message TEXT NOT NULL DEFAULT '',
-                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        created_at TIMESTAMP NULL
                     )
                 """))
                 db.commit()
@@ -1463,7 +1463,7 @@ def ensure_student_tables():
                     if data_type == 'text':
                         # The legacy V17/V18 schema could make this column TEXT.
                         # Rebuild only this column, retaining parseable timestamps.
-                        db.execute(text("ALTER TABLE sms_notifications ADD COLUMN created_at_v23 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"))
+                        db.execute(text("ALTER TABLE sms_notifications ADD COLUMN created_at_v23 TIMESTAMP NULL"))
                         db.execute(text("""
                             UPDATE sms_notifications
                             SET created_at_v23 = CASE
@@ -1479,9 +1479,9 @@ def ensure_student_tables():
             db.execute(text("CREATE INDEX IF NOT EXISTS idx_sms_notifications_teacher ON sms_notifications(teacher_id, created_at)"))
             db.execute(text("CREATE INDEX IF NOT EXISTS idx_sms_notifications_student ON sms_notifications(student_id, created_at)"))
             db.commit()
-        print('[GodEyes][SMS_MIGRATION] V23 SMS schema OK')
+        print('[GodEyes][SMS_MIGRATION] V26 SMS schema OK')
     except Exception:
-        print('[GodEyes][SMS_MIGRATION] V23 SMS schema warning; server will continue:')
+        print('[GodEyes][SMS_MIGRATION] V26 SMS schema warning; server will continue:')
         traceback.print_exc()
 
 ensure_student_tables()
@@ -8162,6 +8162,36 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
                 .observation-details {{ margin-top:13px; color:#62778b; font-size:11px; line-height:1.6; }}
                 .observation-footer {{ display:flex; justify-content:space-between; gap:12px; margin-top:15px; padding-top:12px; border-top:1px solid #edf2f7; color:#8999a7; font-size:9px; font-weight:800; }}
                 .focus-empty {{ margin-top:25px; padding:40px; text-align:center; border:1px dashed #cfdeea; border-radius:22px; color:#8191a2; }}
+                .sms-detail-panel {{ margin:22px 0 26px; padding:20px; border:1px solid #dbe8f3; border-radius:22px; background:linear-gradient(145deg,#ffffff 0%,#f6faff 100%); box-shadow:0 12px 30px rgba(36,83,126,.06); }}
+                .sms-detail-head {{ display:flex; justify-content:space-between; align-items:flex-start; gap:16px; padding-bottom:14px; border-bottom:1px solid #e7eef5; }}
+                .sms-detail-head .section-kicker {{ color:#2b78c5; font-size:9px; font-weight:900; letter-spacing:1px; }}
+                .sms-detail-head h3 {{ margin:4px 0 5px; color:#18344f; font-size:19px; }}
+                .sms-detail-head p {{ margin:0; max-width:720px; color:#71869a; font-size:10px; line-height:1.55; }}
+                .sms-recipient {{ min-width:210px; padding:11px 13px; border:1px solid #d8e5ef; border-radius:14px; background:#fff; }}
+                .sms-recipient span {{ display:block; color:#8b9bab; font-size:8px; font-weight:900; letter-spacing:.8px; text-transform:uppercase; }}
+                .sms-recipient strong {{ display:block; margin-top:5px; color:#203f5a; font-size:13px; }}
+                .sms-frame-grid {{ display:grid; grid-template-columns:repeat(8,minmax(74px,1fr)); gap:8px; margin:16px 0; max-height:220px; overflow:auto; padding:2px; }}
+                .sms-frame-choice {{ position:relative; min-width:0; padding:5px; border:1px solid #dbe7f1; border-radius:11px; background:#fff; cursor:pointer; }}
+                .sms-frame-choice:hover {{ border-color:#b9d2e5; box-shadow:0 5px 12px rgba(36,83,126,.07); }}
+                .sms-frame-choice:has(input:checked) {{ border:2px solid #2b78c5; padding:4px; box-shadow:0 5px 14px rgba(43,120,197,.10); }}
+                .sms-frame-choice input {{ position:absolute; opacity:0; pointer-events:none; }}
+                .sms-frame-open {{ position:relative; display:block; width:100%; aspect-ratio:16/9; border-radius:7px; overflow:hidden; background:#eef4fa; text-decoration:none; }}
+                .sms-frame-open img {{ width:100%; height:100%; display:block; object-fit:cover; }}
+                .sms-frame-open b {{ position:absolute; right:4px; bottom:4px; padding:3px 5px; border-radius:999px; background:rgba(24,52,79,.88); color:#fff; font-size:6px; font-weight:850; }}
+                .sms-thumb-fallback {{ position:absolute; inset:0; display:grid; place-items:center; padding:5px; background:#eef4fa; color:#8396a8; font-size:7px; font-weight:800; text-align:center; }}
+                .sms-frame-meta {{ display:flex; justify-content:space-between; gap:4px; align-items:center; min-width:0; margin-top:5px; }}
+                .sms-frame-meta strong {{ color:#284963; font-size:7px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+                .sms-frame-meta small {{ color:#8397a8; font-size:6px; white-space:nowrap; }}
+                .sms-frame-empty {{ padding:18px; border:1px dashed #d6e3ee; border-radius:14px; color:#8699aa; font-size:10px; background:#fff; }}
+                .sms-compose {{ display:grid; grid-template-columns:1fr auto; gap:10px; align-items:end; margin-top:5px; }}
+                .sms-detail-panel textarea {{ width:100%; min-height:72px; border:1px solid #d6e3ee; border-radius:12px; padding:10px 11px; resize:vertical; outline:none; color:#243e55; background:#fff; font:inherit; font-size:11px; line-height:1.5; }}
+                .sms-send-button {{ min-height:42px; padding:0 18px; border:0; border-radius:11px; background:#2b78c5; color:#fff; font-weight:850; font-size:11px; cursor:pointer; }}
+                .sms-send-button:disabled {{ opacity:.5; cursor:not-allowed; }}
+                .sms-detail-notice {{ margin-bottom:12px; padding:10px 12px; border-radius:11px; font-size:10px; font-weight:750; }}
+                .sms-detail-notice.success {{ border:1px solid #cfe6d8; background:#effaf3; color:#2a7c4c; }}
+                .sms-detail-notice.error {{ border:1px solid #f0d1d5; background:#fff4f5; color:#ae323b; }}
+                @media (max-width:1050px) {{ .sms-frame-grid {{ grid-template-columns:repeat(6,minmax(74px,1fr)); }} }}
+                @media (max-width:800px) {{ .sms-frame-grid {{ grid-template-columns:repeat(4,minmax(70px,1fr)); max-height:240px; }} .sms-detail-head {{ flex-direction:column; }} .sms-recipient {{ width:100%; }} .sms-compose {{ grid-template-columns:1fr; }} }}
                 @media (max-width:1050px) {{ .observation-focus-grid {{ grid-template-columns:1fr; }} }}
                 @media (max-width:800px) {{ .student-detail-hero {{ flex-direction:column; align-items:flex-start; }} .focus-hero-score {{ width:auto; flex:none; align-self:stretch; }} .student-detail-stats {{ grid-template-columns:repeat(2,1fr); }} }}
                 @media (max-width:560px) {{ .student-detail-stats {{ grid-template-columns:1fr; }} .review-note {{ flex-direction:column; }} }}
