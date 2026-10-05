@@ -562,6 +562,10 @@ class PersonTrack:
         self.hand_motion = float(detection.hand_motion)
         self.task_activity = float(detection.task_activity)
         self.velocity = [0.0, 0.0, 0.0, 0.0]
+        self.follow_vx = 0.0
+        self.follow_vy = 0.0
+        self.follow_vw = 0.0
+        self.follow_vh = 0.0
         self.raw_center_history = [self.center]
         self.center_history = [self.center]
         self.face_center_history = []
@@ -677,6 +681,15 @@ class PersonTrack:
         raw_vy = (new_cy - old_cy) / dt
         raw_vw = (smooth[2] - previous_box[2]) / dt
         raw_vh = (smooth[3] - previous_box[3]) / dt
+
+        # UI follow velocity is based on the accepted track box itself.
+        # It is intentionally separate from the heavily damped prediction
+        # velocity used by association.
+        self.follow_vx = raw_vx
+        self.follow_vy = raw_vy
+        self.follow_vw = raw_vw
+        self.follow_vh = raw_vh
+
         # Velocity is filtered separately so prediction remains stable.
         self.velocity[0] = 0.62 * self.velocity[0] + 0.38 * raw_vx * 0.12
         self.velocity[1] = 0.62 * self.velocity[1] + 0.38 * raw_vy * 0.12
@@ -749,6 +762,12 @@ class PersonTrack:
         )
         decay = 0.88 if protected else 0.82
         self.velocity = [v * decay for v in self.velocity]
+
+        # Keep the visual follow velocity coherent during a short detector gap.
+        self.follow_vx *= 0.92 if protected else 0.86
+        self.follow_vy *= 0.92 if protected else 0.86
+        self.follow_vw *= 0.90 if protected else 0.84
+        self.follow_vh *= 0.90 if protected else 0.84
         self.center_history.append(self.center)
         if len(self.center_history) > 30:
             self.center_history.pop(0)
@@ -2845,6 +2864,15 @@ class AIWorker(QThread):
             'box': tuple(int(max(0, v)) for v in track.box),
             'raw_box': tuple(int(max(0, v)) for v in track.raw_box),
             'box_updated_at': float(track.last_update_time),
+            # Actual accepted-box velocity used only by the UI to extrapolate
+            # between 6-FPS AI updates. This keeps the overlay visually attached
+            # to the latest camera frame without running heavier inference.
+            'box_follow_velocity': (
+                float(getattr(track, 'follow_vx', 0.0)),
+                float(getattr(track, 'follow_vy', 0.0)),
+                float(getattr(track, 'follow_vw', 0.0)),
+                float(getattr(track, 'follow_vh', 0.0)),
+            ),
             'confirmed': bool(track.confirmed),
             'person_confidence': float(track.person_score),
             'face_side': track.face_side,
