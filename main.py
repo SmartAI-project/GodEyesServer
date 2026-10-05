@@ -8796,7 +8796,7 @@ def teacher_open_app_web(request: Request):
 <h2>Đang mở God Eyes…</h2>
 <p>Windows sẽ mở ứng dụng God Eyes trên máy này.</p>
 <p style="margin:0 0 12px;"><a href="{safe_launch_url}" style="display:inline-block;padding:12px 18px;border-radius:10px;background:#2b78c5;color:#fff;text-decoration:none;font-weight:700">MỞ GOD EYES</a></p>
-<p style="margin:0;"><a href="/" style="display:inline-block;padding:10px 16px;border-radius:10px;border:1px solid #cfd8e3;background:#fff;color:#294762;text-decoration:none;font-weight:700">QUAY VỀ HOME</a></p>
+<p style="margin:0;"><a href="/teacher" style="display:inline-block;padding:10px 16px;border-radius:10px;border:1px solid #cfd8e3;background:#fff;color:#294762;text-decoration:none;font-weight:700">QUAY VỀ HOME</a></p>
 <script>window.location.href = {json.dumps(launch_url)};</script>
 </body></html>
 """)
