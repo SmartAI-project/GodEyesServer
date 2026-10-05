@@ -3475,10 +3475,16 @@ def teacher(request: Request):
             class_id = int(class_id_raw) if class_id_raw else None
         except ValueError:
             class_id = None
+        try:
+            student_page = max(1, int(request.query_params.get("page", "1") or "1"))
+        except ValueError:
+            student_page = 1
         content = teacher_students_content(
             teacher_id,
             class_id,
-            request.query_params.get("error", "") or request.query_params.get("status", "")
+            request.query_params.get("error", "") or request.query_params.get("status", ""),
+            request.query_params.get("q", ""),
+            student_page,
         )
     elif section == "history":
         title = "Lịch sử"
@@ -4232,7 +4238,13 @@ def delete_student(request: Request, student_id: int = Form(...)):
     return RedirectResponse(url="/teacher?section=students&deleted=1", status_code=303)
 
 
-def teacher_students_content(teacher_id: int, selected_class_id: int | None = None, status_raw: str = "") -> str:
+def teacher_students_content(teacher_id: int, selected_class_id: int | None = None, status_raw: str = "", search_query: str = "", page: int = 1) -> str:
+    search_query = str(search_query or "").strip()
+    try:
+        page = max(1, int(page or 1))
+    except (TypeError, ValueError):
+        page = 1
+
     classes = get_teacher_class_options(teacher_id)
     selected_class = None
     if selected_class_id is not None:
@@ -4248,6 +4260,10 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
         if selected_class is not None:
             where += " AND cs.class_id = :class_id"
             params["class_id"] = selected_class_id
+
+        if search_query:
+            where += " AND (LOWER(COALESCE(s.full_name, '')) LIKE LOWER(:student_q) OR LOWER(COALESCE(s.student_code, '')) LIKE LOWER(:student_q))"
+            params["student_q"] = f"%{search_query}%"
 
         rows = db.execute(
             text(f"""
@@ -4269,6 +4285,14 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
             params
         ).mappings().all()
 
+    per_page = 10
+    total_students = len(rows)
+    total_pages = max(1, int(math.ceil(total_students / per_page)))
+    page = min(page, total_pages)
+    page_start = (page - 1) * per_page
+    page_rows = rows[page_start:page_start + per_page]
+    search_value = escape(search_query)
+
     class_options = '<option value="">Tất cả lớp học</option>' + "".join(
         f'<option value="{r["id"]}" '
         f'{"selected" if selected_class is not None and int(r["id"]) == selected_class_id else ""}>'
@@ -4277,7 +4301,7 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
     )
 
     cards = ""
-    for row in rows:
+    for row in page_rows:
         face_text, face_class = student_face_label(row["face_status"])
 
         cards += f"""
@@ -4344,9 +4368,56 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
             </div>
         """
     else:
+        table_rows = ""
+        for row_index, row in enumerate(page_rows, start=page_start + 1):
+            face_text, face_class = student_face_label(row["face_status"])
+            retry_html = (
+                '<form method="post" action="/teacher/students/rebuild-face" class="student-row-inline-form">'
+                '<input type="hidden" name="student_id" value="'+str(row["id"])+'">'
+                '<button class="student-row-button face" type="submit">Tạo lại Face ID</button>'
+                '</form>'
+            ) if row["photo_path"] and row["face_status"] == 'REVIEW' else ''
+            table_rows += f"""
+                <tr>
+                    <td class="student-row-index"><strong>{row_index:02d}</strong></td>
+                    <td>
+                        <div class="student-row-person">
+                            <div class="student-row-avatar">{student_avatar(row)}</div>
+                            <div class="student-row-main">
+                                <div class="student-row-name">{escape(row['full_name'])}</div>
+                                <div class="student-row-code">{escape(row['student_code'])}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td><div class="student-row-primary">{escape(row['class_name'])}</div><div class="student-row-secondary">{escape(row['class_code'])}</div></td>
+                    <td><span class="modern-face-status {face_class}">{escape(face_text)}</span></td>
+                    <td>
+                        <div class="student-row-actions">
+                            {retry_html}
+                            <a class="student-row-button" href="/teacher/students/edit?student_id={row['id']}">Chỉnh sửa</a>
+                            <form method="post" action="/teacher/students/delete" class="student-row-inline-form" onsubmit="return confirm('Bạn có chắc muốn xóa hồ sơ học sinh này không?');">
+                                <input type="hidden" name="student_id" value="{row['id']}">
+                                <button class="student-row-button danger" type="submit">Xóa</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            """
+
         empty = f"""
-            <div class="modern-student-grid">
-                {cards}
+            <div class="students-history-table-wrap">
+                <table class="students-history-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Học sinh</th>
+                            <th>Lớp</th>
+                            <th>Face ID</th>
+                            <th>Thao tác</th>
+                        </tr>
+                    </thead>
+                    <tbody>{table_rows}</tbody>
+                </table>
             </div>
         """
 
@@ -4437,13 +4508,33 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                         <div>
                             <h3>Danh sách học sinh</h3>
                             <p>
-                                {len(rows)} học sinh
+                                {total_students} học sinh
                                 {'trong lớp đã chọn' if selected_class else 'đang được quản lý'}
+                                · trang {page}/{total_pages}
                             </p>
                         </div>
                     </section>
 
+                    <form class="student-search students-page-search" method="get" action="/teacher">
+                        <input type="hidden" name="section" value="students">
+                        {('<input type="hidden" name="class_id" value="'+str(selected_class_id)+'">' if selected_class_id is not None else '')}
+                        <div class="student-search-input-wrap">
+                            <span class="student-search-icon">⌕</span>
+                            <input name="q" value="{search_value}" placeholder="Tìm tên hoặc mã học sinh..." autocomplete="off">
+                        </div>
+                        <button class="student-search-button" type="submit">Tìm kiếm</button>
+                        {('<a class="student-search-clear" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+'">Xóa tìm kiếm</a>' if search_query else '')}
+                    </form>
+
                     {empty}
+
+                    <div class="students-pagination">
+                        {('<a class="students-page-button disabled" href="#">‹ Trước</a>' if page <= 1 else '<a class="students-page-button" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+('&q='+url_quote(search_query) if search_query else '')+'&page='+str(page-1)+'">‹ Trước</a>')}
+                        <div class="students-page-numbers">
+                            {''.join(f'<a class="students-page-number {"active" if n == page else ""}" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+('&q='+url_quote(search_query) if search_query else '')+'&page='+str(n)+'">{n}</a>' for n in range(1, total_pages+1))}
+                        </div>
+                        {('<a class="students-page-button disabled" href="#">Sau ›</a>' if page >= total_pages else '<a class="students-page-button" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+('&q='+url_quote(search_query) if search_query else '')+'&page='+str(page+1)+'">Sau ›</a>')}
+                    </div>
 
                 </main>
 
@@ -5410,7 +5501,41 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                     grid-template-columns: 1fr;
                 }}
             }}
-        </style>
+        
+            .students-page-search {{ margin: 0 0 12px; }}
+            .students-history-table-wrap {{ overflow:auto; border:1px solid #dfeaf5; border-radius:14px; background:#fff; }}
+            .students-history-table {{ width:100%; min-width:980px; border-collapse:collapse; }}
+            .students-history-table th, .students-history-table td {{ padding:13px 14px; border-bottom:1px solid #edf2f7; text-align:left; font-size:13px; vertical-align:middle; }}
+            .students-history-table th {{ background:#f7fbff; color:#6d7d90; font-size:11px; letter-spacing:.5px; text-transform:uppercase; }}
+            .students-history-table tbody tr {{ transition:background .12s ease; }}
+            .students-history-table tbody tr:hover {{ background:#fbfdff; }}
+            .student-row-index {{ width:48px; color:#9aabbc; text-align:center !important; }}
+            .student-row-index strong {{ font-size:11px; }}
+            .student-row-person {{ display:flex; align-items:center; gap:11px; min-width:220px; }}
+            .student-row-avatar {{ width:46px; height:46px; flex:0 0 46px; overflow:hidden; border-radius:12px; }}
+            .student-row-avatar .student-avatar {{ width:46px; height:46px; min-width:46px; min-height:46px; border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; font-size:17px; background:var(--blue-soft); color:var(--blue); }}
+            .student-row-avatar .student-avatar img {{ width:100% !important; height:100% !important; object-fit:cover; display:block; }}
+            .student-row-main {{ min-width:0; }}
+            .student-row-name {{ color:#203247; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:300px; }}
+            .student-row-code {{ color:#7f8da0; font-size:11px; margin-top:3px; }}
+            .student-row-primary {{ color:#203247; font-weight:750; }}
+            .student-row-secondary {{ color:#7f8da0; font-size:11px; margin-top:3px; }}
+            .student-row-actions {{ display:flex; gap:7px; align-items:center; flex-wrap:wrap; }}
+            .student-row-inline-form {{ display:inline; margin:0; }}
+            .student-row-button {{ display:inline-flex; align-items:center; justify-content:center; min-height:32px; border:1px solid #d6e2ee; background:#fff; color:#38556f; border-radius:9px; padding:7px 10px; font-size:11px; font-weight:750; text-decoration:none; cursor:pointer; }}
+            .student-row-button:hover {{ background:#f7fbff; }}
+            .student-row-button.face {{ color:#2b78c5; border-color:#cfe2f4; }}
+            .student-row-button.danger {{ color:#b4232d; border-color:#ecd4d7; }}
+            .students-pagination {{ display:flex; align-items:center; justify-content:center; gap:8px; margin:14px 0 3px; flex-wrap:wrap; }}
+            .students-page-numbers {{ display:flex; align-items:center; gap:5px; }}
+            .students-page-button, .students-page-number {{ display:inline-flex; align-items:center; justify-content:center; min-width:36px; height:34px; padding:0 10px; border:1px solid #d6e2ee; border-radius:9px; background:#fff; color:#38556f; text-decoration:none; font-size:11px; font-weight:800; }}
+            .students-page-number {{ min-width:34px; padding:0 8px; }}
+            .students-page-number.active {{ background:#2b78c5; border-color:#2b78c5; color:#fff; }}
+            .students-page-button:hover, .students-page-number:hover {{ background:#f7fbff; }}
+            .students-page-number.active:hover {{ background:#2b78c5; }}
+            .students-page-button.disabled {{ color:#aab7c4; background:#f7fafc; cursor:default; pointer-events:none; }}
+            @media (max-width:800px) {{ .students-page-search {{ flex-wrap:wrap; }} .students-history-table {{ min-width:820px; }} }}
+</style>
     """
 
 
