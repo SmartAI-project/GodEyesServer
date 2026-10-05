@@ -2404,7 +2404,11 @@ def new_teacher_page(request: Request):
         '<div style="margin-bottom:16px;padding:12px 14px;border:1px solid #f1c7cb;background:#fff4f4;color:#b4232d;border-radius:12px;font-size:13px;font-weight:650;">'
         'Không thể tạo tài khoản. Hệ thống đã hủy thao tác để không làm hỏng dữ liệu. Kiểm tra Server log để xem lỗi cơ sở dữ liệu.'
         '</div>'
-    ) if error == "create_failed" else ""
+    ) if error == "create_failed" else (
+        '<div style="margin-bottom:16px;padding:12px 14px;border:1px solid #f1c7cb;background:#fff4f4;color:#b4232d;border-radius:12px;font-size:13px;font-weight:650;">'
+        'Tên đăng nhập này đã được dùng cho Main Account. Hãy chọn tên đăng nhập khác cho giáo viên.'
+        '</div>'
+    ) if error == "username_reserved" else ""
 
     content = f"""
         {error_html}
@@ -2420,7 +2424,7 @@ def new_teacher_page(request: Request):
                 </a>
             </div>
 
-            <form method="post" action="/admin/accounts/create">
+            <form method="post" action="/admin/accounts/create-v2">
                 <div class="field">
                     <label for="full_name">Họ và tên</label>
                     <input id="full_name" name="full_name" type="text" required>
@@ -2447,6 +2451,308 @@ def new_teacher_page(request: Request):
         "Tạo tài khoản giáo viên",
         content,
         "accounts"
+    )
+
+
+@app.post("/admin/accounts/create-v2")
+def create_teacher_page_v2(
+    request: Request,
+    full_name: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(...)
+):
+    """
+    Definitive Teacher Account creation endpoint.
+
+    This endpoint intentionally has a unique path so an older route registered
+    inside teacher_admin_router cannot intercept the request.
+
+    It works with the real PostgreSQL/SQLite schema by inspecting required
+    columns and only supplying compatible values. The write is transactional:
+    any failure is rolled back and logged without exposing DB details to the UI.
+    """
+    payload = get_admin_payload(request)
+
+    if payload is None:
+        return RedirectResponse(url="/", status_code=303)
+
+    username = str(username or "").strip()
+    full_name = str(full_name or "").strip()
+    password = str(password or "")
+
+    if not username or not full_name or len(password) < 8:
+        return RedirectResponse(
+            url="/admin/accounts/new?error=invalid",
+            status_code=303
+        )
+
+    try:
+        admin_id = int(payload["sub"])
+    except (TypeError, ValueError):
+        print(
+            f"[CREATE_TEACHER_V2_ERROR] invalid admin id={payload.get('sub')!r}",
+            flush=True,
+        )
+        return RedirectResponse(
+            url="/admin/accounts/new?error=create_failed",
+            status_code=303
+        )
+
+    with SessionLocal() as db:
+        try:
+            dialect = getattr(getattr(db, "bind", None), "dialect", None)
+            dialect_name = getattr(dialect, "name", "") or ""
+
+            # Main Account must exist and be active.
+            admin_row = db.execute(
+                text("""
+                    SELECT id
+                    FROM main_accounts
+                    WHERE id = :admin_id
+                      AND COALESCE(is_active, TRUE) = TRUE
+                    LIMIT 1
+                """),
+                {"admin_id": admin_id},
+            ).first()
+
+            if admin_row is None:
+                raise RuntimeError(
+                    f"Active Main Account {admin_id} was not found."
+                )
+
+            # Avoid the ambiguous username "admin" / any Main Account username.
+            # Teacher login and Main Account login should never collide.
+            main_username_row = db.execute(
+                text("""
+                    SELECT id
+                    FROM main_accounts
+                    WHERE LOWER(username) = LOWER(:username)
+                    LIMIT 1
+                """),
+                {"username": username},
+            ).first()
+
+            if main_username_row is not None:
+                return RedirectResponse(
+                    url="/admin/accounts/new?error=username_reserved",
+                    status_code=303
+                )
+
+            teacher_username_row = db.execute(
+                text("""
+                    SELECT id
+                    FROM teacher_accounts
+                    WHERE LOWER(username) = LOWER(:username)
+                    LIMIT 1
+                """),
+                {"username": username},
+            ).first()
+
+            if teacher_username_row is not None:
+                return RedirectResponse(
+                    url="/admin?section=accounts&error=exists",
+                    status_code=303
+                )
+
+            # Read schema metadata for the actual teacher_accounts table.
+            # This supports the legacy database without destructive migrations.
+            if dialect_name == "postgresql":
+                columns = db.execute(
+                    text("""
+                        SELECT
+                            column_name,
+                            data_type,
+                            is_nullable,
+                            column_default
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'teacher_accounts'
+                        ORDER BY ordinal_position
+                    """)
+                ).mappings().all()
+            else:
+                rows = db.execute(
+                    text("PRAGMA table_info(teacher_accounts)")
+                ).all()
+
+                columns = [
+                    {
+                        "column_name": row[1],
+                        "data_type": str(row[2] or ""),
+                        "is_nullable": "NO" if int(row[3] or 0) else "YES",
+                        "column_default": row[4],
+                    }
+                    for row in rows
+                ]
+
+            if not columns:
+                raise RuntimeError(
+                    "teacher_accounts table does not exist or has no columns."
+                )
+
+            column_names = {
+                str(c["column_name"])
+                for c in columns
+            }
+
+            required_without_default = [
+                str(c["column_name"])
+                for c in columns
+                if str(c["is_nullable"]).upper() == "NO"
+                and c["column_default"] is None
+                and str(c["column_name"]) not in {"id"}
+            ]
+
+            # Values for every field that this application knows how to create.
+            values = {
+                "main_account_id": admin_id,
+                "username": username,
+                "password_hash": hash_password(password),
+                "full_name": full_name,
+                "is_active": True,
+                "created_at": datetime.now(timezone.utc),
+            }
+
+            # Remove id/unknown fields and let DB defaults generate fields such
+            # as identity IDs. For known timestamp/text legacy columns the value
+            # is adapted to the column data type.
+            insert_columns = []
+            insert_params = {}
+
+            for column in column_names:
+                if column == "id":
+                    continue
+                if column not in values:
+                    continue
+
+                value = values[column]
+                data_type = ""
+
+                for meta in columns:
+                    if str(meta["column_name"]) == column:
+                        data_type = str(meta["data_type"] or "").lower()
+                        break
+
+                if column == "is_active":
+                    if dialect_name == "postgresql" and data_type in {
+                        "smallint", "integer", "bigint", "numeric",
+                        "decimal", "real", "double precision"
+                    }:
+                        value = 1
+                    else:
+                        value = True
+
+                if column == "created_at":
+                    if data_type in {
+                        "timestamp without time zone",
+                        "timestamp with time zone",
+                        "date",
+                    }:
+                        value = datetime.now(
+                            timezone.utc
+                        )
+                    else:
+                        value = datetime.now(
+                            timezone.utc
+                        ).isoformat(timespec="seconds")
+
+                insert_columns.append(column)
+                insert_params[column] = value
+
+            missing_known = [
+                col for col in required_without_default
+                if col not in insert_columns
+            ]
+
+            if missing_known:
+                raise RuntimeError(
+                    "Unsupported NOT NULL teacher_accounts columns without "
+                    f"defaults: {missing_known}"
+                )
+
+            if not insert_columns:
+                raise RuntimeError(
+                    "No writable teacher_accounts columns were found."
+                )
+
+            # Quote fixed, schema-discovered column names. They come from
+            # information_schema/PRAGMA, never from browser input.
+            quoted_columns = ", ".join(
+                f'"{col}"' for col in insert_columns
+            )
+            bind_names = ", ".join(
+                f":{col}" for col in insert_columns
+            )
+
+            db.execute(
+                text(
+                    f"""
+                    INSERT INTO teacher_accounts
+                        ({quoted_columns})
+                    VALUES
+                        ({bind_names})
+                    """
+                ),
+                insert_params,
+            )
+
+            db.commit()
+
+        except Exception as exc:
+            db.rollback()
+
+            print(
+                "[CREATE_TEACHER_V2_ERROR] "
+                f"admin_id={admin_id} "
+                f"username={username!r} "
+                f"dialect={dialect_name!r} "
+                f"error={exc!r}",
+                flush=True,
+            )
+
+            lower = str(exc).lower()
+            if any(marker in lower for marker in (
+                "duplicate key",
+                "unique violation",
+                "unique constraint",
+                "already exists",
+            )):
+                return RedirectResponse(
+                    url="/admin?section=accounts&error=exists",
+                    status_code=303
+                )
+
+            return RedirectResponse(
+                url="/admin/accounts/new?error=create_failed",
+                status_code=303
+            )
+
+    # Read-after-commit verification with a fresh DB session.
+    with SessionLocal() as verify_db:
+        verified = verify_db.execute(
+            text("""
+                SELECT id, username, full_name, is_active
+                FROM teacher_accounts
+                WHERE LOWER(username) = LOWER(:username)
+                LIMIT 1
+            """),
+            {"username": username},
+        ).mappings().first()
+
+    if verified is None:
+        print(
+            "[CREATE_TEACHER_V2_VERIFY_ERROR] "
+            f"username={username!r} row not found after commit.",
+            flush=True,
+        )
+        return RedirectResponse(
+            url="/admin/accounts/new?error=create_failed",
+            status_code=303
+        )
+
+    return RedirectResponse(
+        url="/admin?section=accounts&created=1",
+        status_code=303
     )
 
 
