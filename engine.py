@@ -1,4 +1,4 @@
-# GodEyes Engine v37 — real-time latest-frame / CUDA acceleration patch
+# GodEyes Engine v38 — real-time camera smoothness / capture-AI decoupling patch
 # GodEyes Engine v34 • 40-track session lock • 5s head-turn • 70% Face ID gate • 30 FPS preview
 from pathlib import Path
 import math
@@ -20,6 +20,13 @@ from typing import Optional
 import cv2
 import numpy as np
 from PySide6.QtCore import QThread, Signal
+
+# Prevent large OpenCV worker pools from intermittently starving the Qt UI on
+# mid-range Windows PCs. CUDA inference remains handled by the GPU when available.
+try:
+    cv2.setNumThreads(2)
+except Exception:
+    pass
 
 
 @dataclass
@@ -282,7 +289,11 @@ class CameraWorker(QThread):
         with self._lock:
             if not self._latest_frame_time:
                 return None
-            return max(0.0, time.time() - self._latest_frame_time)
+            return max(0.0, time.monotonic() - self._latest_frame_time)
+
+    def latest_sequence(self):
+        with self._lock:
+            return int(self._frame_sequence)
 
     def _release(self):
         with self._lock:
@@ -327,6 +338,12 @@ class CameraWorker(QThread):
                         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     except Exception:
                         pass
+                    # MJPG first: this reduces USB bandwidth pressure on Windows
+                    # webcams before requesting the 1280x720 / 30 FPS mode.
+                    try:
+                        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                    except Exception:
+                        pass
                     for key, value in [
                         (cv2.CAP_PROP_FRAME_WIDTH, 1280),
                         (cv2.CAP_PROP_FRAME_HEIGHT, 720),
@@ -336,10 +353,6 @@ class CameraWorker(QThread):
                             cap.set(key, value)
                         except Exception:
                             pass
-                    try:
-                        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                    except Exception:
-                        pass
                     ok, frame = cap.read()
                     if ok and frame is not None and frame.size:
                         self.camera_index = camera_index
@@ -435,8 +448,8 @@ class CameraWorker(QThread):
         if frame is None or getattr(frame, 'size', 0) == 0:
             return
         with self._lock:
-            self._latest_frame = frame.copy()
-            self._latest_frame_time = time.time()
+            self._latest_frame = frame
+            self._latest_frame_time = time.monotonic()
             self._frame_sequence += 1
 
     def _open(self):
@@ -2308,7 +2321,7 @@ class BehaviorEngine:
     as signals requiring confirmation, not as definitive conclusions.
     """
 
-    YAW_THRESHOLD_DEG = 50.0
+    YAW_THRESHOLD_DEG = 40.0
     YAW_CONFIRM_SECONDS = 5.0
 
     NO_FACE_STILL_SLEEP_SECONDS = 5.0
@@ -2555,6 +2568,7 @@ class AIWorker(QThread):
         self.total_frames_received = 0
         self.total_inferences = 0
         self.last_frame_time = 0.0
+        self._last_processed_camera_sequence = -1
         # Do NOT subscribe AI to camera.frame_ready. That signal is a UI-preview
         # stream. Queued Qt deliveries can accumulate while inference is busy and
         # make the AI process stale frames. AIWorker pulls the shared latest frame
@@ -2567,13 +2581,14 @@ class AIWorker(QThread):
         try:
             if frame.size == 0:
                 return
-            copied = frame.copy()
+            if frame.size == 0:
+                return
         except Exception:
             return
         with self._frame_lock:
-            self.latest_frame = copied
+            self.latest_frame = frame
             self.total_frames_received += 1
-            self.last_frame_time = time.time()
+            self.last_frame_time = time.monotonic()
 
     def set_server_roster(self, roster):
         with self._state_lock:
@@ -2747,7 +2762,7 @@ class AIWorker(QThread):
                 return
             face_mode = 'SFACE READY' if self.vision.face_recognizer is not None else 'SFACE MODEL MISSING'
             accel = 'CUDA' if self.vision.yolo_device != 'cpu' else 'CPU'
-            self._emit_status(f'AI READY • {Path(self.vision.model_source).name} • YOLO {accel} • {face_mode} • LOCKED TRACK • SMOOTH FOLLOW • HEAD TURN >50°/5s • NO-FACE+STILL 5s • SESSION-LONG ID LOCK • EMBEDDING GUARD', 0.5)
+            self._emit_status(f'AI READY • {Path(self.vision.model_source).name} • YOLO {accel} • {face_mode} • LOCKED TRACK • SMOOTH FOLLOW • HEAD TURN >40°/5s • NO-FACE+STILL 5s • SESSION-LONG ID LOCK • EMBEDDING GUARD', 0.5)
 
         if self.mode == 'scan':
             detections = self._scan_face_detections(frame)
@@ -2830,19 +2845,30 @@ class AIWorker(QThread):
                 # Pull the newest frame directly from the camera buffer. This
                 # deliberately bypasses Qt queued frame signals, so inference never
                 # works through a backlog of old frames after a temporary slow pass.
-                frame = self.camera.get_latest_frame(copy=True)
-                camera_age = self.camera.latest_age()
-                if frame is None:
+                frame_sequence = self.camera.latest_sequence()
+                if frame_sequence <= 0:
                     self._emit_status('AI WAITING • no camera frame received', 1.5)
                     time.sleep(0.02)
+                    continue
+                if frame_sequence == self._last_processed_camera_sequence:
+                    # Never run inference twice on exactly the same camera frame.
+                    time.sleep(0.004)
+                    continue
+                frame = self.camera.get_latest_frame(copy=False)
+                camera_age = self.camera.latest_age()
+                if frame is None:
+                    time.sleep(0.004)
                     continue
                 if camera_age is not None and camera_age > 0.75:
                     self._emit_status('AI WARNING • newest camera frame age {:.2f}s'.format(camera_age), 0.8)
                 try:
                     self._process_once(frame)
+                    self._last_processed_camera_sequence = frame_sequence
                 except Exception as exc:
                     self._status_error('AI PROCESS ERROR', exc)
                     traceback.print_exc()
-                    time.sleep(0.35)
+                    time.sleep(0.05)
+                # Pace from completion time to avoid catch-up bursts after a slow inference.
+                self.next_run = time.time() + interval
         finally:
             self._emit_status('AI STOPPED', 0.0)
