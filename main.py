@@ -6778,7 +6778,18 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
         content=f"""
             <section class="student-focus-detail-page">
                 <div class="student-detail-hero">
-                    <div><a class="back-link" href="/teacher/history/session/{session_id}">← Back to session</a><div class="eyebrow-small">FOCUS REVIEW · SESSION #{session_id}</div><h2>{escape(str(roster['full_name']))}</h2><p>{escape(str(roster['student_code'] or '-'))} <span>•</span> {escape(str(session['class_code'] or session['class_name']))} <span>•</span> {format_server_dt(session['started_at'])}</p></div>
+                    <div>
+                        <a class="student-detail-back-button" href="/teacher?section=history">
+                            <span class="student-detail-back-icon">←</span>
+                            <span>
+                                <b>Quay lại lịch sử</b>
+                                <small>Danh sách các buổi học</small>
+                            </span>
+                        </a>
+                        <div class="eyebrow-small">FOCUS REVIEW · SESSION #{session_id}</div>
+                        <h2>{escape(str(roster['full_name']))}</h2>
+                        <p>{escape(str(roster['student_code'] or '-'))} <span>•</span> {escape(str(session['class_code'] or session['class_name']))} <span>•</span> {format_server_dt(session['started_at'])}</p>
+                    </div>
                     <div class="focus-hero-score"><span>FOCUS SCORE</span><strong>{focus}%</strong><div class="hero-meter"><span style="width:{focus}%"></span></div></div>
                 </div>
 
@@ -6795,6 +6806,11 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
             <style>
                 .student-focus-detail-page {{ padding:4px 2px 40px; }}
                 .student-detail-hero {{ display:flex; justify-content:space-between; gap:24px; align-items:center; padding:28px 30px; border-radius:28px; border:1px solid #dfeaf5; background:linear-gradient(135deg,#fff 0%,#f4f9ff 100%); box-shadow:0 18px 44px rgba(36,83,126,.08); }}
+                .student-detail-back-button {{ display:inline-flex; align-items:center; gap:11px; margin-bottom:18px; padding:10px 14px; min-width:198px; border:1.5px solid #cbdceb; border-radius:18px; background:#ffffff; color:#203f5a; text-decoration:none; box-shadow:0 8px 20px rgba(36,83,126,.07); transition:transform .15s ease, border-color .15s ease, box-shadow .15s ease, background .15s ease; }}
+                .student-detail-back-button:hover {{ transform:translateY(-1px); border-color:#b8d0e3; background:#fff; box-shadow:0 10px 24px rgba(36,83,126,.09); }}
+                .student-detail-back-icon {{ display:grid; place-items:center; width:34px; height:34px; border-radius:11px; background:#eaf4fc; color:#1973ba; font-size:16px; font-weight:900; }}
+                .student-detail-back-button b {{ display:block; color:#23435e; font-size:12px; font-weight:850; line-height:1.2; }}
+                .student-detail-back-button small {{ display:block; margin-top:3px; color:#8193a4; font-size:9px; font-weight:750; line-height:1.2; }}
                 .student-detail-hero h2 {{ margin:5px 0 7px; color:#18344f; font-size:30px; }}
                 .student-detail-hero p {{ margin:0; color:#718498; font-size:12px; font-weight:700; }}
                 .student-detail-hero p span {{ margin:0 5px; color:#a8b6c3; }}
