@@ -1353,21 +1353,20 @@ def _issue_face_scan_token(student_id: int, admin_id: int) -> str:
 def ensure_student_tables():
     """Create/upgrade student + SMS tables safely for PostgreSQL and SQLite.
 
-    SMS is an optional feature; a schema mismatch must never prevent the whole
-    God Eyes Server from starting. Existing data is preserved.
+    SMS is optional. Existing data is preserved and an incompatible legacy
+    SMS schema is repaired in-place instead of aborting the request/startup.
     """
     with SessionLocal() as db:
         dialect_name = str(getattr(getattr(db, "bind", None), "dialect", None).name or "").lower()
         is_postgres = dialect_name == "postgresql"
         id_type = "BIGSERIAL" if is_postgres else "INTEGER"
-        owner_id_type = "BIGINT" if is_postgres else "INTEGER"
         created_default = "CURRENT_TIMESTAMP"
 
         db.execute(text(f"""
             CREATE TABLE IF NOT EXISTS students (
                 id {id_type} PRIMARY KEY,
                 owner_type TEXT NOT NULL DEFAULT 'TEACHER',
-                owner_id {owner_id_type} NOT NULL,
+                owner_id INTEGER NOT NULL,
                 student_code TEXT NOT NULL,
                 full_name TEXT NOT NULL,
                 photo_path TEXT NOT NULL DEFAULT '',
@@ -1389,27 +1388,67 @@ def ensure_student_tables():
         columns = _table_columns(db, "students")
         if "face_embedding" not in columns:
             db.execute(text("ALTER TABLE students ADD COLUMN face_embedding TEXT NOT NULL DEFAULT ''"))
-            columns.add("face_embedding")
         if "guardian_phone" not in columns:
-            # Nullable avoids failures on older installations with existing rows.
             db.execute(text("ALTER TABLE students ADD COLUMN guardian_phone TEXT"))
 
-        db.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS sms_notifications (
-                id {id_type} PRIMARY KEY,
-                teacher_id INTEGER NOT NULL,
-                student_id INTEGER NOT NULL,
-                session_id INTEGER NOT NULL,
-                evidence_id INTEGER,
-                phone TEXT NOT NULL,
-                message TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'PENDING',
-                provider_message_id TEXT NOT NULL DEFAULT '',
-                provider_name TEXT NOT NULL DEFAULT '',
-                error_message TEXT NOT NULL DEFAULT '',
-                created_at TIMESTAMP NOT NULL DEFAULT {created_default}
-            )
-        """))
+        # Create the SMS table only when missing. If it already exists from an
+        # older rollout, repair/add columns individually so PostgreSQL never
+        # re-validates a legacy CREATE TABLE definition.
+        inspector_rows = db.execute(text("""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'sms_notifications'
+        """)).mappings().all() if is_postgres else []
+        sms_exists = bool(inspector_rows) if is_postgres else bool(db.execute(text(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sms_notifications'"
+        )).first())
+
+        if not sms_exists:
+            db.execute(text(f"""
+                CREATE TABLE sms_notifications (
+                    id {id_type} PRIMARY KEY,
+                    teacher_id INTEGER NOT NULL,
+                    student_id INTEGER NOT NULL,
+                    session_id INTEGER NOT NULL,
+                    evidence_id INTEGER,
+                    phone TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'PENDING',
+                    provider_message_id TEXT NOT NULL DEFAULT '',
+                    provider_name TEXT NOT NULL DEFAULT '',
+                    error_message TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMP NOT NULL DEFAULT {created_default}
+                )
+            """))
+        else:
+            sms_columns = {str(row["column_name"]) for row in inspector_rows} if is_postgres else {
+                str(row[1]) for row in db.execute(text("PRAGMA table_info(sms_notifications)"))
+            }
+            add_columns = {
+                "teacher_id": "ALTER TABLE sms_notifications ADD COLUMN teacher_id INTEGER NOT NULL DEFAULT 0",
+                "student_id": "ALTER TABLE sms_notifications ADD COLUMN student_id INTEGER NOT NULL DEFAULT 0",
+                "session_id": "ALTER TABLE sms_notifications ADD COLUMN session_id INTEGER NOT NULL DEFAULT 0",
+                "evidence_id": "ALTER TABLE sms_notifications ADD COLUMN evidence_id INTEGER",
+                "phone": "ALTER TABLE sms_notifications ADD COLUMN phone TEXT NOT NULL DEFAULT ''",
+                "message": "ALTER TABLE sms_notifications ADD COLUMN message TEXT NOT NULL DEFAULT ''",
+                "status": "ALTER TABLE sms_notifications ADD COLUMN status TEXT NOT NULL DEFAULT 'PENDING'",
+                "provider_message_id": "ALTER TABLE sms_notifications ADD COLUMN provider_message_id TEXT NOT NULL DEFAULT ''",
+                "provider_name": "ALTER TABLE sms_notifications ADD COLUMN provider_name TEXT NOT NULL DEFAULT ''",
+                "error_message": "ALTER TABLE sms_notifications ADD COLUMN error_message TEXT NOT NULL DEFAULT ''",
+                "created_at": "ALTER TABLE sms_notifications ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
+            }
+            for column, ddl in add_columns.items():
+                if column not in sms_columns:
+                    db.execute(text(ddl))
+
+            if is_postgres and "created_at" in sms_columns:
+                # Repairs the exact legacy failure seen on Render:
+                # timestamp column + text default expression.
+                db.execute(text(
+                    "ALTER TABLE sms_notifications ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP"
+                ))
+
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_sms_notifications_teacher ON sms_notifications(teacher_id, created_at)"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_sms_notifications_student ON sms_notifications(student_id, created_at)"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_students_owner ON students(owner_type, owner_id)"))
@@ -1420,11 +1459,11 @@ def ensure_student_tables():
 
 try:
     ensure_student_tables()
+    print("[GodEyes][SMS_MIGRATION] V21 robust migration OK")
 except Exception as exc:
     import traceback
     print("[GodEyes][SMS_MIGRATION] startup migration warning; server will continue:")
     traceback.print_exc()
-
 
 def _normalise_phone_number(raw: str) -> str:
     value = re.sub(r"[^0-9+]", "", str(raw or "").strip())
