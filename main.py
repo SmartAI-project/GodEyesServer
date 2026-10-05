@@ -61,7 +61,7 @@ app = FastAPI(
     version="1.3.1-students-math-fix"
 )
 
-GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v5-login-polish-student-search-pagination"
+GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v6-student-search-polish"
 
 app.include_router(teacher_admin_router)
 
@@ -5071,22 +5071,25 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
             }}
 
             .modern-list-head {{
-                display: flex;
-                justify-content: space-between;
-                align-items: end;
-                margin: 19px 3px 12px;
+                display:flex;
+                justify-content:space-between;
+                align-items:flex-end;
+                margin:18px 3px 12px;
+                padding:0 2px;
             }}
 
             .modern-list-head h3 {{
-                margin: 0;
-                font-size: 18px;
-                font-weight: 800;
+                margin:0;
+                font-size:19px;
+                line-height:1.2;
+                font-weight:850;
+                letter-spacing:-.2px;
             }}
 
             .modern-list-head p {{
-                margin: 4px 0 0;
-                color: var(--muted);
-                font-size: 12px;
+                margin:5px 0 0;
+                color:var(--muted);
+                font-size:11px;
             }}
 
             .modern-student-grid {{
@@ -5706,7 +5709,98 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                 }}
             }}
         
-            .students-page-search {{ margin: 0 0 12px; }}
+            .students-page-search {{
+                display:flex;
+                align-items:center;
+                gap:10px;
+                margin:0 0 14px;
+                padding:10px;
+                border:1px solid #dbe8f3;
+                border-radius:15px;
+                background:linear-gradient(180deg,#ffffff 0%,#f9fcff 100%);
+                box-shadow:0 8px 24px rgba(43,95,142,.045);
+            }}
+            .students-page-search .student-search-input-wrap {{
+                flex:1 1 auto;
+                min-width:0;
+                position:relative;
+            }}
+            .students-page-search .student-search-icon {{
+                position:absolute;
+                left:14px;
+                top:50%;
+                transform:translateY(-50%);
+                width:18px;
+                height:18px;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                color:#7c91a8;
+                font-size:18px;
+                pointer-events:none;
+            }}
+            .students-page-search .student-search-input-wrap::after {{
+                content:'Tìm theo tên hoặc mã học sinh';
+                position:absolute;
+                right:13px;
+                top:50%;
+                transform:translateY(-50%);
+                color:#9aabba;
+                font-size:10px;
+                font-weight:700;
+                pointer-events:none;
+            }}
+            .students-page-search input[name="q"] {{
+                width:100%;
+                height:44px;
+                box-sizing:border-box;
+                border:1px solid #d5e2ee;
+                border-radius:11px;
+                background:#fff;
+                color:#203247;
+                padding:0 205px 0 40px;
+                font-size:13px;
+                outline:none;
+                transition:border-color .15s ease, box-shadow .15s ease, background .15s ease;
+            }}
+            .students-page-search input[name="q"]::placeholder {{ color:#9aabba; }}
+            .students-page-search input[name="q"]:hover {{ border-color:#bfd2e3; }}
+            .students-page-search input[name="q"]:focus {{
+                border-color:#79a9d1;
+                box-shadow:0 0 0 3px rgba(43,120,197,.10);
+                background:#fff;
+            }}
+            .students-page-search .student-search-button {{
+                flex:0 0 auto;
+                height:44px;
+                padding:0 17px;
+                border:1px solid #2b78c5;
+                border-radius:11px;
+                background:linear-gradient(180deg,#3a8ad3 0%,#2b78c5 100%);
+                color:#fff;
+                font-size:12px;
+                font-weight:800;
+                cursor:pointer;
+                box-shadow:0 5px 14px rgba(43,120,197,.16);
+                white-space:nowrap;
+            }}
+            .students-page-search .student-search-button:hover {{ background:#236aa9; }}
+            .students-page-search .student-search-clear {{
+                flex:0 0 auto;
+                display:inline-flex;
+                align-items:center;
+                justify-content:center;
+                height:44px;
+                padding:0 10px;
+                border:1px solid #dbe5ee;
+                border-radius:11px;
+                background:#fff;
+                color:#687d92;
+                font-size:11px;
+                font-weight:750;
+                text-decoration:none;
+            }}
+            .students-page-search .student-search-clear:hover {{ background:#f6f9fc; }}
             .students-history-table-wrap {{ overflow:auto; border:1px solid #dfeaf5; border-radius:14px; background:#fff; }}
             .students-history-table {{ width:100%; min-width:980px; border-collapse:collapse; }}
             .students-history-table th, .students-history-table td {{ padding:13px 14px; border-bottom:1px solid #edf2f7; text-align:left; font-size:13px; vertical-align:middle; }}
@@ -5730,9 +5824,9 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
             .student-row-button:hover {{ background:#f7fbff; }}
             .student-row-button.face {{ color:#2b78c5; border-color:#cfe2f4; }}
             .student-row-button.danger {{ color:#b4232d; border-color:#ecd4d7; }}
-            .students-pagination {{ display:flex; align-items:center; justify-content:center; gap:8px; margin:14px 0 3px; flex-wrap:wrap; }}
+            .students-pagination {{ display:flex; align-items:center; justify-content:center; gap:8px; margin:16px 0 3px; flex-wrap:wrap; padding-top:4px; }}
             .students-page-numbers {{ display:flex; align-items:center; gap:5px; }}
-            .students-page-button, .students-page-number {{ display:inline-flex; align-items:center; justify-content:center; min-width:36px; height:34px; padding:0 10px; border:1px solid #d6e2ee; border-radius:9px; background:#fff; color:#38556f; text-decoration:none; font-size:11px; font-weight:800; }}
+            .students-page-button, .students-page-number {{ display:inline-flex; align-items:center; justify-content:center; min-width:36px; height:34px; padding:0 10px; border:1px solid #d6e2ee; border-radius:10px; background:#fff; color:#38556f; text-decoration:none; font-size:11px; font-weight:800; box-shadow:0 3px 9px rgba(43,95,142,.035); }}
             .students-page-number {{ min-width:34px; padding:0 8px; }}
             .students-page-number.active {{ background:#2b78c5; border-color:#2b78c5; color:#fff; }}
             .students-page-button:hover, .students-page-number:hover {{ background:#f7fbff; }}
