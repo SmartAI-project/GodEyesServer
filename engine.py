@@ -2340,6 +2340,17 @@ class BehaviorEngine:
     NO_FACE_STILL_SLEEP_SECONDS = 5.0
     FACE_GAP_GRACE_SECONDS = 0.40
 
+    # Face-hidden talking heuristic:
+    # - the student's identity is already LOCKED;
+    # - the last reliable face observation showed a strong turn away from camera;
+    # - face then becomes unavailable;
+    # - the tracked person keeps moving for a short continuous period.
+    #
+    # This deliberately creates an OBSERVATION signal ("possible talking/turned
+    # around"), not a definitive claim that speech occurred.
+    TALKING_TURN_THRESHOLD_DEG = 55.0
+    TALKING_CONFIRM_SECONDS = 2.0
+
     # A short-window box-center displacement, normalized by tracked box height.
     # This is intentionally small: even light genuine movement should prevent
     # the sleep timer from firing, while sub-pixel/box-jitter noise is ignored.
@@ -2366,6 +2377,8 @@ class BehaviorEngine:
                 'last_face_time': 0.0,
                 'face_missing_start': None,
                 'sleep_latched': False,
+                'talking_start': None,
+                'talking_latched': False,
                 'last_event': {},
                 'last_seen': 0.0,
             }
@@ -2496,7 +2509,69 @@ class BehaviorEngine:
             state['turn_latched'] = False
 
         # ---------------------------------------------------------
-        # 2) LOCKED TRACK + FACE LOST
+        # 2) LOCKED TRACK + FACE HIDDEN + TURNED AWAY
+        # ---------------------------------------------------------
+        # We cannot see the mouth once the student turns fully away, so this is
+        # an observation heuristic rather than a definitive speech detector.
+        # The strongest cue is a recent large yaw followed by a hidden face,
+        # while the same locked body track continues moving.
+        if face_valid:
+            state['talking_start'] = None
+            state['talking_latched'] = False
+        else:
+            last_yaw = abs(float(state.get('last_yaw', 0.0) or 0.0))
+            displacement_talk, size_change_talk = self._box_motion_in_window(
+                track, now, self.BOX_MOVE_WINDOW_SECONDS
+            )
+            body_moving = (
+                displacement_talk >= self.BOX_MOVE_THRESHOLD
+                or size_change_talk >= self.BOX_SIZE_CHANGE_THRESHOLD
+                or float(getattr(track, 'hand_motion', 0.0)) >= 0.12
+                or float(getattr(track, 'lower_motion', 0.0)) >= 0.12
+            )
+            turned_away = last_yaw >= self.TALKING_TURN_THRESHOLD_DEG
+
+            if turned_away and body_moving:
+                if state['talking_start'] is None:
+                    state['talking_start'] = now
+                talking_elapsed = now - float(state['talking_start'])
+                if (
+                    talking_elapsed >= self.TALKING_CONFIRM_SECONDS
+                    and not state['talking_latched']
+                    and self._cooldown_ok(state, 'OB_TALKING', now)
+                ):
+                    confidence = min(
+                        0.90,
+                        0.58
+                        + 0.14 * min(1.0, last_yaw / 90.0)
+                        + 0.12 * min(
+                            1.0,
+                            max(
+                                displacement_talk / max(self.BOX_MOVE_THRESHOLD, 1e-6),
+                                float(getattr(track, 'hand_motion', 0.0)) / 0.25,
+                            ),
+                        ),
+                    )
+                    events.append(self._event(
+                        'OB_TALKING',
+                        confidence,
+                        (
+                            'Khuôn mặt không còn nhìn thấy sau khi quay người khỏi camera; '
+                            f'track vẫn có chuyển động liên tục khoảng {self.TALKING_CONFIRM_SECONDS:.0f} giây. '
+                            'Đây là tín hiệu nghi ngờ nói chuyện/quay ra phía sau và cần giáo viên xác nhận.'
+                        ),
+                    ))
+                    state['last_event']['OB_TALKING'] = now
+                    state['talking_latched'] = True
+            else:
+                # Do not accumulate a talking episode while the person is merely
+                # hidden/turning without continued movement.
+                state['talking_start'] = None
+                if not body_moving:
+                    state['talking_latched'] = False
+
+        # ---------------------------------------------------------
+        # 3) LOCKED TRACK + FACE LOST
         # ---------------------------------------------------------
         if face_valid:
             # Face returned. The IdentityLock layer will re-verify its embedding
