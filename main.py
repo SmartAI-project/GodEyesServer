@@ -635,6 +635,74 @@ def _normalise_teacher_preferences(language='vi', theme='light', camera_source='
 
 # English labels that existed in older Teacher templates.# English labels that existed in older Teacher templates. They are only used when the
 # selected language is Vietnamese, so the Teacher portal never becomes a mixed-language UI.
+# Strict language layer: these terms are deliberately bilingual-normalized so the
+# Teacher Portal is never left with a half-Vietnamese / half-English interface.
+# The user's language preference controls every visible UI phrase; proper names,
+# student names, class names, codes and user-entered data are left unchanged.
+STRICT_VI_TO_EN = {
+    'Tiếng Anh': 'English', 'Tiếng Việt': 'Vietnamese',
+    'Mở ứng dụng': 'Open App', 'Tải ứng dụng': 'Download App',
+    'Kết nối camera': 'Connect Camera', 'KẾT NỐI CAMERA': 'CONNECT CAMERA',
+    'Camera đã sẵn sàng': 'Camera ready', 'Đang kết nối camera…': 'Connecting camera…',
+    'Đã kết nối': 'Connected', 'Chưa kết nối': 'Not connected',
+    'Camera tích hợp trên máy tính': 'Built-in computer camera',
+    'Webcam USB rời': 'External USB webcam', 'Camera Wi-Fi': 'Wi-Fi Camera',
+    'Nguồn camera': 'Camera source', 'Hãng camera': 'Camera brand',
+    'Chất lượng luồng': 'Stream quality', 'Chất lượng cao': 'High quality',
+    'Chất lượng tiêu chuẩn': 'Standard quality',
+    'Bình thường': 'Normal', 'Hơi nghiêm trọng': 'Attention', 'Nghiêm trọng': 'Danger',
+    'Mức độ': 'Severity', 'Tìm học sinh': 'Search student',
+    'Tìm theo tên hoặc mã học sinh': 'Search by name or student code',
+    'Xóa': 'Delete', 'Lưu': 'Save', 'Hủy': 'Cancel', 'Quay lại': 'Back',
+    'Trang chủ': 'Home', 'Trước': 'Previous', 'Sau': 'Next',
+    'Tháng': 'Month', 'Ngày': 'Day', 'Giờ': 'Time', 'Phút': 'Minute', 'Giây': 'Second',
+    'Hôm nay': 'Today', 'Hôm qua': 'Yesterday', 'Không có dữ liệu': 'No data',
+    'Đang chạy': 'Running', 'Hoàn tất': 'Completed', 'Sẵn sàng': 'Ready',
+    'Chưa sẵn sàng': 'Not ready', 'Đang hoạt động': 'Active',
+    'Quan sát': 'Observation', 'Quan sát gần nhất': 'Latest observation',
+    'Sự kiện': 'Event', 'Minh chứng': 'Evidence', 'Khung hình': 'Frame',
+    'Confidence': 'Confidence', 'Độ tin cậy': 'Confidence',
+    'Mã lớp': 'Class code', 'Tên lớp': 'Class name', 'Học sinh': 'Students',
+    'Học sinh trong lớp': 'Students in class', 'Tổng số học sinh': 'Total students',
+    'Tài khoản giáo viên': 'Teacher account', 'Tên đăng nhập': 'Username',
+    'Mật khẩu': 'Password', 'Đăng nhập': 'Sign in', 'Đăng xuất': 'Sign out',
+    'Cài đặt': 'Settings', 'Ngôn ngữ': 'Language', 'Giao diện': 'Appearance',
+    'Sáng': 'Light', 'Tối': 'Dark',
+    'LƯU CÀI ĐẶT': 'SAVE SETTINGS', 'CỔNG GIÁO VIÊN': 'TEACHER PORTAL',
+    'Thông báo': 'Notice', 'Lỗi': 'Error', 'Thành công': 'Success',
+}
+
+STRICT_EN_TO_VI = {
+    'English': 'Tiếng Anh', 'Vietnamese': 'Tiếng Việt',
+    'Open App': 'Mở ứng dụng', 'Download App': 'Tải ứng dụng',
+    'CONNECT CAMERA': 'KẾT NỐI CAMERA', 'Connect Camera': 'Kết nối camera',
+    'Camera ready': 'Camera đã sẵn sàng', 'Connecting camera…': 'Đang kết nối camera…',
+    'Connected': 'Đã kết nối', 'Not connected': 'Chưa kết nối',
+    'Built-in computer camera': 'Camera tích hợp trên máy tính',
+    'External USB webcam': 'Webcam USB rời', 'Wi-Fi Camera': 'Camera Wi-Fi',
+    'Camera source': 'Nguồn camera', 'Camera brand': 'Hãng camera',
+    'Stream quality': 'Chất lượng luồng', 'High quality': 'Chất lượng cao',
+    'Standard quality': 'Chất lượng tiêu chuẩn',
+    'Normal': 'Bình thường', 'Attention': 'Hơi nghiêm trọng', 'Danger': 'Nghiêm trọng',
+    'Severity': 'Mức độ', 'Search student': 'Tìm học sinh',
+    'Search by name or student code': 'Tìm theo tên hoặc mã học sinh',
+    'Delete': 'Xóa', 'Save': 'Lưu', 'Cancel': 'Hủy', 'Back': 'Quay lại',
+    'Home': 'Trang chủ', 'Previous': 'Trước', 'Next': 'Sau',
+    'Month': 'Tháng', 'Day': 'Ngày', 'Time': 'Giờ', 'Minute': 'Phút', 'Second': 'Giây',
+    'Today': 'Hôm nay', 'Yesterday': 'Hôm qua', 'No data': 'Không có dữ liệu',
+    'Running': 'Đang chạy', 'Completed': 'Hoàn tất', 'Ready': 'Sẵn sàng',
+    'Not ready': 'Chưa sẵn sàng', 'Active': 'Đang hoạt động',
+    'Observation': 'Quan sát', 'Latest observation': 'Quan sát gần nhất',
+    'Event': 'Sự kiện', 'Evidence': 'Minh chứng', 'Frame': 'Khung hình',
+    'Confidence': 'Độ tin cậy', 'Class code': 'Mã lớp', 'Class name': 'Tên lớp',
+    'Students': 'Học sinh', 'Total students': 'Tổng số học sinh',
+    'Teacher account': 'Tài khoản giáo viên', 'Username': 'Tên đăng nhập',
+    'Password': 'Mật khẩu', 'Sign in': 'Đăng nhập', 'Sign out': 'Đăng xuất',
+    'Settings': 'Cài đặt', 'Language': 'Ngôn ngữ', 'Appearance': 'Giao diện',
+    'Light': 'Sáng', 'Dark': 'Tối', 'SAVE SETTINGS': 'LƯU CÀI ĐẶT',
+    'TEACHER PORTAL': 'CỔNG GIÁO VIÊN', 'Notice': 'Thông báo', 'Error': 'Lỗi', 'Success': 'Thành công',
+}
+
 TEACHER_I18N_EN_VI_EXTRA = {
     'Dashboard': 'Tổng quan', 'Classes': 'Lớp học', 'Students': 'Học sinh', 'History': 'Lịch sử',
     'observation': 'quan sát', 'observations': 'quan sát', 'evidence': 'minh chứng', 'session': 'buổi học', 'sessions': 'buổi học',
@@ -918,10 +986,12 @@ TEACHER_I18N_VI_EN.update({
 def _teacher_localize_text(value: str, language: str) -> str:
     text = str(value or '')
     if language == 'en':
-        mapping = TEACHER_I18N_VI_EN
+        mapping = dict(TEACHER_I18N_VI_EN)
+        mapping.update(STRICT_VI_TO_EN)
     else:
         mapping = {v: k for k, v in TEACHER_I18N_VI_EN.items() if v != k}
         mapping.update(TEACHER_I18N_EN_VI_EXTRA)
+        mapping.update(STRICT_EN_TO_VI)
     if not text.strip():
         return text
     for src, dst in sorted(mapping.items(), key=lambda kv: len(kv[0]), reverse=True):
@@ -8609,7 +8679,7 @@ def teacher_settings_content(teacher_id: int, status: str = '') -> str:
         intro = 'These settings are shared between Teacher Web and God Eyes Desktop.'
         appearance = 'Appearance'; appearance_desc = 'Choose the interface appearance.'
         light = 'Light'; dark = 'Dark'; light_desc = 'Light interface.'; dark_desc = 'Dark interface.'
-        language_label = 'Language'; language_desc = 'Choose the language for the whole God Eyes interface.'
+        language_label = 'Language'; language_desc = 'Choose one language for the entire God Eyes interface.'
         vi = 'Vietnamese'; en = 'English'
         camera = 'Camera'; camera_desc = 'Choose the camera God Eyes uses for classroom monitoring.'
         source = 'Camera source'; built = 'Built-in computer camera'; usb = 'External USB webcam'; wifi = 'Wi-Fi Camera'
@@ -8624,8 +8694,8 @@ def teacher_settings_content(teacher_id: int, status: str = '') -> str:
         intro = 'Các thiết lập được dùng chung giữa Cổng giáo viên và God Eyes Desktop.'
         appearance = 'Giao diện'; appearance_desc = 'Chọn giao diện hiển thị.'
         light = 'Sáng'; dark = 'Tối'; light_desc = 'Giao diện sáng.'; dark_desc = 'Giao diện tối.'
-        language_label = 'Ngôn ngữ'; language_desc = 'Chọn ngôn ngữ cho toàn bộ giao diện God Eyes.'
-        vi = 'Tiếng Việt'; en = 'English'
+        language_label = 'Ngôn ngữ'; language_desc = 'Chọn một ngôn ngữ cho toàn bộ giao diện God Eyes.'
+        vi = 'Tiếng Việt'; en = 'Tiếng Anh'
         camera = 'Camera'; camera_desc = 'Chọn camera God Eyes sử dụng cho giám sát lớp học.'
         source = 'Nguồn camera'; built = 'Camera tích hợp trên máy tính'; usb = 'Webcam USB rời'; wifi = 'Camera Wi-Fi'
         brand = 'Hãng camera'; tapo = 'Tapo'
