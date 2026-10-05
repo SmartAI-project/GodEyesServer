@@ -1,5 +1,6 @@
 from html import escape
 import json
+import math
 import re
 import hashlib
 import os
@@ -56,7 +57,7 @@ def _table_columns(db, table_name: str) -> set[str]:
 
 app = FastAPI(
     title="God Eyes Server",
-    version="1.3.0"
+    version="1.3.1-students-math-fix"
 )
 
 GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v5-login-polish-student-search-pagination"
@@ -2181,7 +2182,15 @@ def new_teacher_page(request: Request):
     if get_admin_payload(request) is None:
         return RedirectResponse(url="/", status_code=303)
 
-    content = """
+    error = str(request.query_params.get("error", "")).strip().lower()
+    error_html = (
+        '<div style="margin-bottom:16px;padding:12px 14px;border:1px solid #f1c7cb;background:#fff4f4;color:#b4232d;border-radius:12px;font-size:13px;font-weight:650;">'
+        'Không thể tạo tài khoản. Hệ thống đã hủy thao tác để không làm hỏng dữ liệu. Kiểm tra Server log để xem lỗi cơ sở dữ liệu.'
+        '</div>'
+    ) if error == "create_failed" else ""
+
+    content = f"""
+        {error_html}
         <section class="card section-card form-card">
             <div class="section-head">
                 <div>
@@ -2263,11 +2272,19 @@ def create_teacher_page(
             username=username,
             password_hash=hash_password(password),
             full_name=full_name,
-            is_active=True
+            is_active=True,
+            created_at=datetime.now()
         )
 
         db.add(teacher)
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            return RedirectResponse(
+                url="/admin/accounts/new?error=create_failed",
+                status_code=303
+            )
 
     return RedirectResponse(
         url="/admin?section=accounts&created=1",
@@ -4049,199 +4066,83 @@ def edit_student_page(request: Request, student_id: int):
 
     content = f"""
         <section class="student-edit-page">
-            <div class="student-edit-breadcrumb">
-                <a href="/teacher?section=students">← Danh sách học sinh</a>
-                <span>/</span>
-                <strong>Chỉnh sửa hồ sơ</strong>
-            </div>
-
             <div class="student-edit-header">
                 <div class="student-edit-heading">
                     <div class="student-edit-icon">{ICON_STUDENTS}</div>
                     <div>
                         <div class="student-edit-kicker">HỒ SƠ HỌC SINH</div>
                         <h2>Chỉnh sửa học sinh</h2>
-                        <p>Cập nhật thông tin hồ sơ và ảnh tham chiếu. Các thay đổi sẽ được đồng bộ cho God Eyes.</p>
+                        <p>Cập nhật thông tin hồ sơ và ảnh tham chiếu của học sinh.</p>
                     </div>
                 </div>
                 <a class="teacher-back-button" href="/teacher?section=students">Quay lại danh sách</a>
             </div>
 
             <div class="student-edit-layout">
-                <aside class="student-photo-card">
-                    <div class="student-card-kicker">HÌNH ẢNH NHẬN DIỆN</div>
-                    <div class="student-photo-frame" id="student-photo-frame">
-                        {photo_preview}
-                        <div class="student-photo-sheen"></div>
-                    </div>
-                    <div class="student-photo-caption">
-                        <div class="student-photo-label">Ảnh tham chiếu hiện tại</div>
-                        <div class="student-profile-name">{escape(row['full_name'])}</div>
-                        <div class="student-profile-code">Mã học sinh · {escape(row['student_code'])}</div>
-                        <div class="face-status {face_class}"><span class="status-dot"></span>{escape(face_text)}</div>
-                    </div>
-                    <div class="student-photo-tip">
-                        <div class="student-tip-icon">i</div>
-                        <div>
-                            <strong>Ảnh rõ mặt giúp nhận diện ổn định hơn</strong>
-                            <p>Nên dùng ảnh chỉ có một khuôn mặt, đủ sáng và nhìn thẳng.</p>
-                        </div>
-                    </div>
-                </aside>
-
+                <div class="student-photo-card">
+                    {photo_preview}
+                    <div class="student-photo-label">Ảnh tham chiếu</div>
+                    <div class="face-status {face_class}">{escape(face_text)}</div>
+                </div>
                 <div class="student-edit-form-card">
-                    <div class="student-form-card-head">
-                        <div>
-                            <div class="student-card-kicker">THÔNG TIN HỒ SƠ</div>
-                            <h3>Thông tin học sinh</h3>
-                        </div>
-                        <span class="edit-id-pill">ID #{student_id}</span>
-                    </div>
-
                     <form method="post" action="/teacher/students/edit" enctype="multipart/form-data">
                         <input type="hidden" name="student_id" value="{student_id}">
-
-                        <div class="student-form-grid">
-                            <div class="form-field">
-                                <label for="edit-student-name">Họ và tên học sinh</label>
-                                <input id="edit-student-name" name="full_name" type="text" value="{escape(row['full_name'])}" maxlength="120" required>
-                            </div>
-                            <div class="form-field">
-                                <label for="edit-student-code">Mã học sinh</label>
-                                <input id="edit-student-code" name="student_code" type="text" value="{escape(row['student_code'])}" maxlength="40" required>
-                            </div>
+                        <div class="form-field">
+                            <label for="edit-student-name">Họ và tên học sinh</label>
+                            <input id="edit-student-name" name="full_name" type="text" value="{escape(row['full_name'])}" maxlength="120" required>
                         </div>
-
+                        <div class="form-field">
+                            <label for="edit-student-code">Mã học sinh</label>
+                            <input id="edit-student-code" name="student_code" type="text" value="{escape(row['student_code'])}" maxlength="40" required>
+                        </div>
                         <div class="form-field">
                             <label for="edit-student-class">Lớp học</label>
                             <select id="edit-student-class" name="class_id" required>{options}</select>
                         </div>
-
-                        <div class="form-field photo-upload-field">
-                            <div class="photo-upload-heading">
-                                <label for="edit-student-photo">Thay ảnh tham chiếu <span>Không bắt buộc</span></label>
-                                <small>JPG, PNG hoặc WEBP · tối đa 5 MB</small>
-                            </div>
-                            <label class="photo-dropzone" for="edit-student-photo">
-                                <div class="photo-upload-icon">↑</div>
-                                <div class="photo-upload-copy">
-                                    <strong>Chọn ảnh mới</strong>
-                                    <span>Nhấn để chọn tệp từ máy tính</span>
-                                </div>
-                                <div class="photo-upload-name" id="edit-photo-name">Chưa chọn tệp</div>
-                            </label>
-                            <input class="photo-file-input" id="edit-student-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp">
-                            <div class="photo-preview-inline" id="edit-photo-preview-wrap" hidden>
-                                <img id="edit-photo-preview" alt="Xem trước ảnh mới">
-                                <div>Ảnh mới đã chọn</div>
-                            </div>
+                        <div class="form-field">
+                            <label for="edit-student-photo">Thay ảnh tham chiếu <span>(không bắt buộc)</span></label>
+                            <input id="edit-student-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp">
+                            <div class="field-help">Ảnh JPG, PNG hoặc WEBP, tối đa 5 MB.</div>
                         </div>
-
                         <div class="student-form-actions">
                             <a class="secondary-button" href="/teacher?section=students">Hủy</a>
-                            <button class="primary-button" type="submit">Lưu thay đổi <span>→</span></button>
+                            <button class="primary-button" type="submit">Lưu thay đổi</button>
                         </div>
                     </form>
                 </div>
             </div>
-
-            <script>
-                (function() {{
-                    const input = document.getElementById('edit-student-photo');
-                    const name = document.getElementById('edit-photo-name');
-                    const wrap = document.getElementById('edit-photo-preview-wrap');
-                    const preview = document.getElementById('edit-photo-preview');
-                    if (!input) return;
-                    input.addEventListener('change', function() {{
-                        const file = this.files && this.files[0];
-                        if (!file) {{
-                            name.textContent = 'Chưa chọn tệp';
-                            wrap.hidden = true;
-                            return;
-                        }}
-                        name.textContent = file.name;
-                        if (file.type.startsWith('image/')) {{
-                            const reader = new FileReader();
-                            reader.onload = function(e) {{ preview.src = e.target.result; wrap.hidden = false; }};
-                            reader.readAsDataURL(file);
-                        }}
-                    }});
-                }})();
-            </script>
         </section>
         <style>
-            .student-edit-page {{ max-width:1180px; }}
-            .student-edit-breadcrumb {{ display:flex; align-items:center; gap:8px; margin-bottom:12px; color:#8a9caf; font-size:12px; }}
-            .student-edit-breadcrumb a {{ color:#2b78c5; font-weight:800; text-decoration:none; }}
-            .student-edit-breadcrumb a:hover {{ text-decoration:underline; }}
-            .student-edit-header {{ display:flex; justify-content:space-between; align-items:center; gap:20px; margin-bottom:22px; padding:20px 24px; border:1px solid #dce9f5; border-radius:22px; background:linear-gradient(135deg,#ffffff 0%,#f4f9ff 100%); box-shadow:0 12px 30px rgba(43,95,142,.06); }}
-            .student-edit-heading {{ display:flex; align-items:center; gap:15px; }}
-            .student-edit-icon {{ width:54px; height:54px; border-radius:16px; background:#eaf4ff; color:#2b78c5; display:flex; align-items:center; justify-content:center; border:1px solid #d5e8f8; box-shadow:0 8px 20px rgba(43,120,197,.08); }}
-            .student-edit-icon svg {{ width:27px; height:27px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }}
-            .student-edit-kicker, .student-card-kicker {{ color:#2b78c5; font-size:10px; font-weight:900; letter-spacing:1.15px; }}
-            .student-edit-header h2 {{ margin:4px 0 0; font-size:28px; font-weight:850; letter-spacing:-.5px; }}
-            .student-edit-header p {{ margin:6px 0 0; color:#6f8295; font-size:13px; }}
-            .teacher-back-button {{ min-height:40px; padding:0 15px; border:1px solid #d8e5f0; border-radius:12px; background:#fff; color:#486278; display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; text-decoration:none; }}
-            .teacher-back-button:hover {{ background:#f6faff; border-color:#bdd8ef; }}
-            .student-edit-layout {{ display:grid; grid-template-columns:340px minmax(0,1fr); gap:20px; align-items:stretch; }}
-            .student-photo-card, .student-edit-form-card {{ background:#fff; border:1px solid #dce8f3; border-radius:24px; box-shadow:0 14px 34px rgba(43,95,142,.07); }}
-            .student-photo-card {{ padding:22px; display:flex; flex-direction:column; }}
-            .student-photo-frame {{ position:relative; min-height:335px; display:flex; align-items:center; justify-content:center; border-radius:20px; margin:10px 0 18px; padding:12px; overflow:hidden; background:linear-gradient(145deg,#eef7ff,#f8fbff); border:1px solid #d8eafa; }}
-            .student-photo-frame:before {{ content:""; position:absolute; inset:12px; border:1px dashed #bdd9ee; border-radius:16px; pointer-events:none; }}
-            .student-photo-frame .student-avatar {{ width:230px !important; height:230px !important; margin:0 auto !important; border-radius:22px !important; position:relative; z-index:1; box-shadow:0 14px 30px rgba(43,95,142,.10); overflow:hidden; }}
-            .student-photo-frame .student-avatar img {{ width:100%; height:100%; object-fit:cover; border-radius:22px; display:block; }}
-            .student-avatar-empty {{ background:linear-gradient(145deg,#eaf4ff,#dceeff); color:#2b78c5; font-size:62px; font-weight:850; display:flex; align-items:center; justify-content:center; }}
-            .student-photo-sheen {{ position:absolute; width:180px; height:180px; right:-75px; top:-75px; border-radius:50%; background:radial-gradient(circle,rgba(105,184,255,.24),rgba(105,184,255,0) 68%); }}
-            .student-photo-caption {{ text-align:left; padding:0 4px; }}
-            .student-photo-label {{ color:#71869a; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; }}
-            .student-profile-name {{ margin-top:5px; color:#183452; font-size:21px; font-weight:850; }}
-            .student-profile-code {{ margin-top:3px; color:#8a9aac; font-size:12px; }}
-            .face-status {{ display:inline-flex; align-items:center; gap:7px; margin-top:11px; border-radius:999px; padding:7px 11px; font-size:11px; font-weight:800; }}
-            .status-dot {{ width:7px; height:7px; border-radius:50%; background:currentColor; }}
-            .face-status.neutral {{ background:#f2f5f8; color:#687583; }}
-            .face-status.pending {{ background:#fff7df; color:#966b16; }}
-            .face-status.ready {{ background:#edf8f0; color:#287a4a; }}
+            .student-edit-page {{ max-width:1000px; }}
+            .student-edit-header {{ display:flex; justify-content:space-between; align-items:center; gap:20px; margin-bottom:18px; }}
+            .student-edit-heading {{ display:flex; align-items:center; gap:14px; }}
+            .student-edit-icon {{ width:48px; height:48px; border-radius:14px; background:var(--blue-soft); color:var(--blue); display:flex; align-items:center; justify-content:center; border:1px solid #d8e9f7; }}
+            .student-edit-icon svg {{ width:25px; height:25px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }}
+            .student-edit-kicker {{ color:var(--blue); font-size:11px; font-weight:800; letter-spacing:1px; margin-bottom:4px; }}
+            .student-edit-header h2 {{ margin:0; font-size:25px; font-weight:820; }}
+            .student-edit-header p {{ margin:5px 0 0; color:var(--muted); font-size:13px; }}
+            .student-edit-layout {{ display:grid; grid-template-columns:260px 1fr; gap:18px; }}
+            .student-photo-card, .student-edit-form-card {{ background:#fff; border:1px solid var(--line); border-radius:17px; box-shadow:0 8px 24px rgba(43,95,142,.05); }}
+            .student-photo-card {{ padding:22px; text-align:center; }}
+            .student-photo-card .student-avatar {{ width:170px; height:170px; margin:4px auto 16px; border-radius:20px; }}
+            .student-photo-card .student-avatar img {{ width:100%; height:100%; object-fit:cover; border-radius:20px; }}
+            .student-avatar-empty {{ background:var(--blue-soft); color:var(--blue); font-size:54px; font-weight:800; display:flex; align-items:center; justify-content:center; }}
+            .student-photo-label {{ font-size:14px; font-weight:780; }}
+            .face-status {{ display:inline-flex; margin-top:8px; border-radius:999px; padding:6px 10px; font-size:11px; font-weight:750; }}
+            .face-status.neutral {{ background:#f3f5f7; color:#687583; }}
+            .face-status.pending {{ background:#fff8e8; color:#966b16; }}
+            .face-status.ready {{ background:#edf7f0; color:#287a4a; }}
             .face-status.review {{ background:#fff0f1; color:#b4232d; }}
-            .student-photo-tip {{ display:flex; gap:10px; align-items:flex-start; margin-top:auto; padding:13px 14px; border-radius:16px; background:#f7fbff; border:1px solid #e2eef8; }}
-            .student-tip-icon {{ flex:0 0 23px; width:23px; height:23px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:#eaf4ff; color:#2b78c5; font-size:12px; font-weight:900; }}
-            .student-photo-tip strong {{ display:block; color:#294965; font-size:11px; }}
-            .student-photo-tip p {{ margin:4px 0 0; color:#8294a6; font-size:10px; line-height:1.45; }}
-            .student-edit-form-card {{ padding:26px; }}
-            .student-form-card-head {{ display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding-bottom:18px; margin-bottom:20px; border-bottom:1px solid #edf2f6; }}
-            .student-form-card-head h3 {{ margin:4px 0 0; color:#183452; font-size:20px; font-weight:850; }}
-            .edit-id-pill {{ padding:7px 10px; border-radius:999px; background:#f3f7fb; border:1px solid #e2ebf2; color:#72869a; font-size:10px; font-weight:800; }}
-            .student-form-grid {{ display:grid; grid-template-columns:1.35fr .65fr; gap:16px; }}
-            .form-field + .form-field {{ margin-top:16px; }}
-            .student-form-grid .form-field + .form-field {{ margin-top:0; }}
-            .form-field label {{ display:block; margin-bottom:7px; color:#213e59; font-size:12px; font-weight:800; }}
-            .form-field label span {{ color:#8a9bab; font-weight:600; margin-left:4px; }}
-            .form-field input, .form-field select {{ width:100%; min-height:48px; border:1px solid #d6e3ee; border-radius:13px; padding:11px 13px; background:#fbfdff; color:#213e59; outline:none; font-size:14px; box-sizing:border-box; transition:border-color .18s, box-shadow .18s, background .18s; }}
-            .form-field input:hover, .form-field select:hover {{ border-color:#bfd6e9; background:#fff; }}
-            .form-field input:focus, .form-field select:focus {{ border-color:#7ab4e3; box-shadow:0 0 0 4px rgba(43,120,197,.10); background:#fff; }}
-            .photo-upload-field {{ margin-top:16px; padding:17px; border:1px solid #e1ebf3; border-radius:17px; background:#f9fcff; }}
-            .photo-upload-heading {{ display:flex; justify-content:space-between; gap:14px; align-items:flex-start; margin-bottom:10px; }}
-            .photo-upload-heading label {{ margin:0; }}
-            .photo-upload-heading small {{ color:#8a9bab; font-size:10px; }}
-            .photo-dropzone {{ min-height:84px; display:flex; align-items:center; gap:13px; padding:12px 14px; border:1.5px dashed #b9d5eb; border-radius:14px; background:#fff; cursor:pointer; transition:border-color .18s, background .18s, transform .18s; }}
-            .photo-dropzone:hover {{ border-color:#62a7dd; background:#f8fcff; transform:translateY(-1px); }}
-            .photo-upload-icon {{ width:38px; height:38px; flex:0 0 38px; display:flex; align-items:center; justify-content:center; border-radius:11px; background:#eaf4ff; color:#2b78c5; font-size:22px; font-weight:800; }}
-            .photo-upload-copy {{ min-width:0; display:flex; flex-direction:column; gap:3px; }}
-            .photo-upload-copy strong {{ color:#284761; font-size:12px; }}
-            .photo-upload-copy span {{ color:#8b9aab; font-size:10px; }}
-            .photo-upload-name {{ margin-left:auto; max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#7a8da0; font-size:10px; }}
-            .photo-file-input {{ position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }}
-            .photo-preview-inline {{ display:flex; align-items:center; gap:9px; margin-top:10px; color:#557087; font-size:10px; font-weight:700; }}
-            .photo-preview-inline img {{ width:42px; height:42px; object-fit:cover; border-radius:9px; border:1px solid #d7e6f0; }}
+            .student-edit-form-card {{ padding:24px; }}
+            .student-edit-form-card form {{ max-width:660px; }}
+            .form-field + .form-field {{ margin-top:15px; }}
+            .form-field label {{ display:block; margin-bottom:7px; font-size:13px; font-weight:750; }}
+            .form-field label span {{ color:var(--muted); font-weight:500; }}
+            .form-field input, .form-field select {{ width:100%; min-height:46px; border:1px solid #d5e2ec; border-radius:11px; padding:10px 12px; background:#fff; color:var(--text); outline:none; font-size:14px; }}
+            .form-field input:focus, .form-field select:focus {{ border-color:#8fb7d8; box-shadow:0 0 0 3px rgba(43,120,197,.10); }}
             .field-help {{ margin-top:6px; color:#8a99a8; font-size:11px; }}
-            .student-form-actions {{ display:flex; justify-content:flex-end; gap:10px; margin-top:24px; padding-top:18px; border-top:1px solid #edf2f6; }}
-            .secondary-button, .primary-button {{ min-height:44px; padding:0 17px; border-radius:12px; display:inline-flex; align-items:center; justify-content:center; gap:8px; font-size:12px; font-weight:850; text-decoration:none; cursor:pointer; box-sizing:border-box; }}
-            .secondary-button {{ border:1px solid #d6e2ec; background:#fff; color:#607488; }}
-            .secondary-button:hover {{ background:#f7fbff; border-color:#bdd4e7; }}
-            .primary-button {{ border:1px solid #2279cc; background:linear-gradient(135deg,#1f73d2,#2492ea); color:#fff; box-shadow:0 10px 22px rgba(35,125,213,.22); }}
-            .primary-button:hover {{ transform:translateY(-1px); box-shadow:0 13px 26px rgba(35,125,213,.28); }}
-            .primary-button span {{ font-size:15px; }}
-            @media (max-width:900px) {{ .student-edit-layout {{ grid-template-columns:1fr; }} .student-photo-card {{ min-height:0; }} .student-photo-frame {{ min-height:280px; }} }}
-            @media (max-width:680px) {{ .student-edit-header {{ align-items:flex-start; flex-direction:column; }} .student-form-grid {{ grid-template-columns:1fr; }} .student-form-grid .form-field + .form-field {{ margin-top:16px; }} .photo-upload-heading {{ flex-direction:column; }} .photo-upload-name {{ margin-left:0; }} .student-form-actions {{ justify-content:stretch; }} .student-form-actions > * {{ flex:1; }} }}
+            .student-form-actions {{ display:flex; justify-content:flex-end; gap:9px; margin-top:22px; }}
+            @media (max-width:760px) {{ .student-edit-header {{ align-items:flex-start; flex-direction:column; }} .student-edit-layout {{ grid-template-columns:1fr; }} .student-photo-card .student-avatar {{ width:140px; height:140px; }} .student-form-actions {{ justify-content:stretch; }} .student-form-actions > * {{ flex:1; }} }}
         </style>
     """
     return teacher_shell("Chỉnh sửa học sinh", content, "students", full_name, teacher_id=teacher_id)
