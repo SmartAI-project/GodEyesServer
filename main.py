@@ -1206,10 +1206,10 @@ LOGIN_PAGE = """
             min-height: 100vh;
             font-family: "Segoe UI", Arial, sans-serif;
             background:
-                radial-gradient(circle at 18% 18%, rgba(46,169,255,.13), transparent 28%),
-                radial-gradient(circle at 82% 24%, rgba(23,105,213,.10), transparent 30%),
-                radial-gradient(circle at 50% 88%, rgba(90,170,238,.10), transparent 34%),
-                linear-gradient(135deg, #eef5fb 0%, #f8fbfe 46%, #edf5fb 100%);
+                radial-gradient(circle at 16% 18%, rgba(64,175,255,.24), transparent 30%),
+                radial-gradient(circle at 84% 20%, rgba(39,114,231,.18), transparent 30%),
+                radial-gradient(circle at 50% 88%, rgba(73,165,240,.13), transparent 36%),
+                linear-gradient(135deg, #edf6ff 0%, #f9fcff 48%, #e9f3fc 100%);
             color: #20242a;
             display: flex;
             align-items: center;
@@ -1222,42 +1222,112 @@ LOGIN_PAGE = """
             position: fixed;
             inset: 0;
             pointer-events: none;
-            background-image: radial-gradient(rgba(65,119,169,.09) 1px, transparent 1px);
-            background-size: 26px 26px;
-            mask-image: linear-gradient(to bottom, rgba(0,0,0,.34), transparent 74%);
+            background-image: radial-gradient(rgba(54,119,184,.13) 1px, transparent 1px);
+            background-size: 28px 28px;
+            mask-image: linear-gradient(to bottom, rgba(0,0,0,.48), transparent 86%);
+            animation: gridDrift 24s linear infinite;
         }
         body::after {
             content: "";
             position: fixed;
-            width: 420px;
-            height: 420px;
+            width: 760px;
+            height: 760px;
             border-radius: 50%;
-            right: -160px;
-            bottom: -190px;
-            background: radial-gradient(circle, rgba(33,139,234,.12), rgba(33,139,234,0) 68%);
+            right: -260px;
+            bottom: -330px;
+            background: radial-gradient(circle, rgba(33,139,234,.15), rgba(33,139,234,0) 68%);
             pointer-events: none;
+            animation: ambientFloat 9s ease-in-out infinite alternate;
+        }
+        @keyframes gridDrift {
+            from { transform: translate3d(0, 0, 0); }
+            to { transform: translate3d(28px, 28px, 0); }
+        }
+        @keyframes ambientFloat {
+            from { transform: translate3d(-10px, 8px, 0) scale(1); }
+            to { transform: translate3d(10px, -12px, 0) scale(1.06); }
+        }
+        .login-background-copy {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+        }
+        .info-card {
+            position: absolute;
+            padding: 16px 18px;
+            min-width: 230px;
+            max-width: 280px;
+            border: 1px solid rgba(128, 176, 220, .28);
+            border-radius: 18px;
+            background: rgba(255,255,255,.48);
+            box-shadow: 0 18px 45px rgba(30,93,145,.08);
+            backdrop-filter: blur(10px);
+        }
+        .info-card.left { left: 6vw; top: 18%; }
+        .info-card.right { right: 6vw; bottom: 17%; }
+        .info-kicker {
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: .14em;
+            text-transform: uppercase;
+            color: #1770c7;
+            margin-bottom: 6px;
+        }
+        .info-title {
+            font-size: 18px;
+            font-weight: 800;
+            color: #173752;
+            margin-bottom: 5px;
+        }
+        .info-text {
+            font-size: 12px;
+            line-height: 1.55;
+            color: #668096;
+        }
+        .particle {
+            position: absolute;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: rgba(44,145,235,.48);
+            box-shadow: 0 0 18px rgba(44,145,235,.22);
+            animation: particleFloat 7s ease-in-out infinite;
+        }
+        .particle.p1 { left: 10%; top: 31%; animation-delay: -1.2s; }
+        .particle.p2 { left: 20%; top: 68%; width: 5px; height: 5px; animation-delay: -4.2s; }
+        .particle.p3 { left: 86%; top: 30%; width: 5px; height: 5px; animation-delay: -2.1s; }
+        .particle.p4 { left: 78%; top: 66%; width: 8px; height: 8px; animation-delay: -5.2s; }
+        .particle.p5 { left: 16%; top: 48%; width: 4px; height: 4px; animation-delay: -3.5s; }
+        .particle.p6 { left: 90%; top: 55%; width: 4px; height: 4px; animation-delay: -6s; }
+        @keyframes particleFloat {
+            0%, 100% { transform: translate3d(0,0,0); opacity: .35; }
+            50% { transform: translate3d(18px,-24px,0); opacity: .9; }
         }
         .login-page {
             width: 100%;
             max-width: 520px;
             padding: 34px 24px;
+            position: relative;
+            z-index: 2;
         }
         .login-card {
             position: relative;
-            background: rgba(255,255,255,.96);
-            border: 1px solid #dce7f2;
+            background: linear-gradient(#ffffff, #fbfdff) padding-box,
+                        linear-gradient(135deg, #0d73d5 0%, #2ea9ff 46%, #79c7ff 100%) border-box;
+            border: 2px solid transparent;
             border-radius: 26px;
             padding: 42px 42px 30px;
-            box-shadow: 0 28px 70px rgba(27, 74, 116, .14), 0 8px 24px rgba(27, 74, 116, .06);
-            backdrop-filter: blur(10px);
+            box-shadow: 0 30px 80px rgba(27, 74, 116, .16), 0 10px 28px rgba(27, 74, 116, .07);
+            backdrop-filter: blur(12px);
         }
         .login-card::before {
             content: "";
             position: absolute;
-            inset: 0 0 auto 0;
-            height: 5px;
-            border-radius: 26px 26px 0 0;
-            background: linear-gradient(90deg,#0d73d5,#2ea9ff);
+            inset: 8px;
+            border: 1px solid rgba(65,157,235,.10);
+            border-radius: 19px;
+            pointer-events: none;
         }
         .brand {
             text-align: center;
@@ -1351,13 +1421,33 @@ LOGIN_PAGE = """
         @media (max-width: 600px) {
             .login-page { padding: 20px 14px; }
             .login-card { padding: 34px 22px 24px; border-radius: 22px; }
-            .login-card::before { border-radius: 22px 22px 0 0; }
+            .login-card::before { inset: 7px; border-radius: 16px; }
+            .info-card { display: none; }
             .brand-mark { width: 200px; height: 152px; }
             .brand-logo img { width: 190px; height: 142px; }
         }
     </style>
 </head>
 <body>
+    <div class="login-background-copy" aria-hidden="true">
+        <div class="info-card left">
+            <div class="info-kicker">CLASSROOM INTELLIGENCE</div>
+            <div class="info-title">Quan sát thông minh</div>
+            <div class="info-text">Hỗ trợ giáo viên theo dõi buổi học, ghi nhận tín hiệu đáng chú ý và xem lại dữ liệu sau giờ học.</div>
+        </div>
+        <div class="info-card right">
+            <div class="info-kicker">GOD EYES</div>
+            <div class="info-title">Theo dõi · Phân tích · Xem lại</div>
+            <div class="info-text">Một không gian quản lý tập trung cho lớp học, học sinh và lịch sử quan sát.</div>
+        </div>
+        <span class="particle p1"></span>
+        <span class="particle p2"></span>
+        <span class="particle p3"></span>
+        <span class="particle p4"></span>
+        <span class="particle p5"></span>
+        <span class="particle p6"></span>
+    </div>
+
     <main class="login-page">
         <section class="login-card">
             <div class="brand">
