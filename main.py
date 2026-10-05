@@ -2457,6 +2457,14 @@ def create_teacher_page(
     username: str = Form(...),
     password: str = Form(...)
 ):
+    """
+    Create a Teacher Account against the real teacher_accounts table.
+
+    The surrounding Server is preserved unchanged. This route avoids the ORM
+    type-mapping problem seen on older Render PostgreSQL schemas by inspecting
+    the actual column types and using compatible values for is_active and
+    created_at.
+    """
     payload = get_admin_payload(request)
 
     if payload is None:
@@ -2467,41 +2475,198 @@ def create_teacher_page(
 
     if not username or not full_name or len(password) < 8:
         return RedirectResponse(
-            url="/admin/accounts/new",
+            url="/admin/accounts/new?error=invalid",
+            status_code=303
+        )
+
+    try:
+        admin_id = int(payload["sub"])
+    except (TypeError, ValueError):
+        print(
+            f"[CREATE_TEACHER_ERROR] invalid admin id: {payload.get('sub')!r}",
+            flush=True,
+        )
+        return RedirectResponse(
+            url="/admin/accounts/new?error=create_failed",
             status_code=303
         )
 
     with SessionLocal() as db:
-        existing = db.scalar(
-            select(TeacherAccount).where(
-                TeacherAccount.username == username
-            )
-        )
-
-        if existing:
-            return RedirectResponse(
-                url="/admin?section=accounts&error=exists",
-                status_code=303
-            )
-
-        teacher = TeacherAccount(
-            main_account_id=int(payload["sub"]),
-            username=username,
-            password_hash=hash_password(password),
-            full_name=full_name,
-            is_active=True,
-            created_at=datetime.now()
-        )
-
-        db.add(teacher)
         try:
+            dialect = getattr(getattr(db, "bind", None), "dialect", None)
+            dialect_name = getattr(dialect, "name", "") or ""
+
+            # Confirm the current Main Account exists before inserting the teacher.
+            admin_row = db.execute(
+                text("""
+                    SELECT id
+                    FROM main_accounts
+                    WHERE id = :admin_id
+                    LIMIT 1
+                """),
+                {"admin_id": admin_id},
+            ).first()
+
+            if admin_row is None:
+                raise RuntimeError(
+                    f"Main Account {admin_id} does not exist."
+                )
+
+            # Check the real table. This avoids an ORM query against a possibly
+            # mismatched legacy model.
+            existing = db.execute(
+                text("""
+                    SELECT id
+                    FROM teacher_accounts
+                    WHERE username = :username
+                    LIMIT 1
+                """),
+                {"username": username},
+            ).first()
+
+            if existing is not None:
+                return RedirectResponse(
+                    url="/admin?section=accounts&error=exists",
+                    status_code=303
+                )
+
+            active_type = ""
+            created_type = ""
+
+            if dialect_name == "postgresql":
+                rows = db.execute(
+                    text("""
+                        SELECT column_name, data_type
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'teacher_accounts'
+                          AND column_name IN ('is_active', 'created_at')
+                    """)
+                ).all()
+
+                type_map = {
+                    str(row[0]): str(row[1]).lower()
+                    for row in rows
+                }
+                active_type = type_map.get("is_active", "")
+                created_type = type_map.get("created_at", "")
+
+            # Legacy databases may use INTEGER for is_active; newer PostgreSQL
+            # installations use BOOLEAN.
+            if dialect_name == "postgresql" and active_type in {
+                "smallint",
+                "integer",
+                "bigint",
+                "numeric",
+                "decimal",
+                "real",
+                "double precision",
+            }:
+                active_value = 1
+            else:
+                active_value = True
+
+            # Legacy databases may store created_at as TEXT/VARCHAR, while newer
+            # PostgreSQL databases store it as a timestamp.
+            now = datetime.now(timezone.utc)
+
+            if dialect_name == "postgresql" and created_type in {
+                "timestamp without time zone",
+                "timestamp with time zone",
+            }:
+                created_value = now
+            else:
+                created_value = now.isoformat(timespec="seconds")
+
+            db.execute(
+                text("""
+                    INSERT INTO teacher_accounts
+                        (
+                            main_account_id,
+                            username,
+                            password_hash,
+                            full_name,
+                            is_active,
+                            created_at
+                        )
+                    VALUES
+                        (
+                            :main_account_id,
+                            :username,
+                            :password_hash,
+                            :full_name,
+                            :is_active,
+                            :created_at
+                        )
+                """),
+                {
+                    "main_account_id": admin_id,
+                    "username": username,
+                    "password_hash": hash_password(password),
+                    "full_name": full_name,
+                    "is_active": active_value,
+                    "created_at": created_value,
+                },
+            )
+
             db.commit()
-        except Exception:
+
+        except Exception as exc:
             db.rollback()
+
+            print(
+                "[CREATE_TEACHER_ERROR] "
+                f"admin_id={admin_id} "
+                f"username={username!r} "
+                f"dialect={dialect_name!r} "
+                f"error={exc!r}",
+                flush=True,
+            )
+
+            error_lower = str(exc).lower()
+
+            # Handles races where another request creates the same username
+            # between our SELECT and INSERT.
+            duplicate_markers = (
+                "duplicate key",
+                "unique violation",
+                "unique constraint",
+                "already exists",
+            )
+
+            if any(marker in error_lower for marker in duplicate_markers):
+                return RedirectResponse(
+                    url="/admin?section=accounts&error=exists",
+                    status_code=303
+                )
+
             return RedirectResponse(
                 url="/admin/accounts/new?error=create_failed",
                 status_code=303
             )
+
+    # Verify with a fresh session after commit.
+    with SessionLocal() as verify_db:
+        verified = verify_db.execute(
+            text("""
+                SELECT id, username, full_name, is_active
+                FROM teacher_accounts
+                WHERE username = :username
+                LIMIT 1
+            """),
+            {"username": username},
+        ).mappings().first()
+
+    if verified is None:
+        print(
+            "[CREATE_TEACHER_VERIFY_ERROR] "
+            f"username={username!r} row not found after commit.",
+            flush=True,
+        )
+        return RedirectResponse(
+            url="/admin/accounts/new?error=create_failed",
+            status_code=303
+        )
 
     return RedirectResponse(
         url="/admin?section=accounts&created=1",
