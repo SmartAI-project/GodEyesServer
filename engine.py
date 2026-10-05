@@ -1,3 +1,4 @@
+# GodEyes Engine v37 — real-time latest-frame / CUDA acceleration patch
 # GodEyes Engine v34 • 40-track session lock • 5s head-turn • 70% Face ID gate • 30 FPS preview
 from pathlib import Path
 import math
@@ -5,6 +6,11 @@ import os
 import threading
 import time
 import traceback
+
+try:
+    import torch as _torch
+except Exception:
+    _torch = None
 import re
 import socket
 import uuid
@@ -263,6 +269,7 @@ class CameraWorker(QThread):
         self.actual_fps = 0.0
         self._latest_frame = None
         self._latest_frame_time = 0.0
+        self._frame_sequence = 0
         self._last_ui_emit = 0.0
 
     def get_latest_frame(self, copy=True):
@@ -283,6 +290,7 @@ class CameraWorker(QThread):
             self.cap = None
             self._latest_frame = None
             self._latest_frame_time = 0.0
+            self._frame_sequence = 0
         if cap is not None:
             try:
                 cap.release()
@@ -429,6 +437,7 @@ class CameraWorker(QThread):
         with self._lock:
             self._latest_frame = frame.copy()
             self._latest_frame_time = time.time()
+            self._frame_sequence += 1
 
     def _open(self):
         if self.source_type in {'RTSP', 'WIFI_CAMERA', 'TAPO', 'TAPO_C230', 'TAPO_C230_RTSP'}:
@@ -1612,6 +1621,15 @@ class SmartVision:
         self.inference_count = 0
         self.last_inference_ms = 0.0
         self.last_model_error = ''
+        self.yolo_device = 'cpu'
+        self.yolo_half = False
+        if _torch is not None:
+            try:
+                if bool(_torch.cuda.is_available()):
+                    self.yolo_device = 0
+                    self.yolo_half = True
+            except Exception:
+                pass
         self._load_yolo()
 
     def _load_face_models(self):
@@ -1773,6 +1791,12 @@ class SmartVision:
         try:
             self.model = YOLO(str(self.model_path))
             self.model_source = str(self.model_path)
+            try:
+                if self.yolo_device != 'cpu':
+                    self.model.to(self.yolo_device)
+            except Exception:
+                self.yolo_device = 'cpu'
+                self.yolo_half = False
             try:
                 self.model.fuse()
             except Exception:
@@ -2116,7 +2140,8 @@ class SmartVision:
                     iou=0.48,
                     imgsz=640,
                     max_det=40,
-                    device='cpu',
+                    device=self.yolo_device,
+                    half=bool(self.yolo_half),
                     verbose=False,
                 )
             except Exception as exc:
@@ -2322,6 +2347,9 @@ class BehaviorEngine:
 
     def _cooldown_ok(self, state, key, now, seconds=None):
         seconds = self.EVENT_COOLDOWN if seconds is None else float(seconds)
+        # No previous event for this key means it is immediately eligible.
+        if key not in state.get('last_event', {}):
+            return True
         last = float(state['last_event'].get(key, 0.0))
         return (now - last) >= seconds
 
@@ -2527,8 +2555,12 @@ class AIWorker(QThread):
         self.total_frames_received = 0
         self.total_inferences = 0
         self.last_frame_time = 0.0
-        self.camera.frame_ready.connect(self._receive_frame)
+        # Do NOT subscribe AI to camera.frame_ready. That signal is a UI-preview
+        # stream. Queued Qt deliveries can accumulate while inference is busy and
+        # make the AI process stale frames. AIWorker pulls the shared latest frame
+        # directly from CameraWorker instead.
 
+    # Legacy compatibility hook; intentionally unused for AI input.
     def _receive_frame(self, frame):
         if frame is None:
             return
@@ -2551,7 +2583,7 @@ class AIWorker(QThread):
         with self._config_lock:
             self.session_id = session_id
             self.mode = str(mode)
-            self.target_fps = max(6.0, min(12.0, float(fps)))
+            self.target_fps = max(6.0, min(15.0, float(fps)))
             self.board_side = board_side
             self.behavior.set_board_side(board_side)
             self.active = True
@@ -2714,7 +2746,8 @@ class AIWorker(QThread):
                 self.tracks_ready.emit([])
                 return
             face_mode = 'SFACE READY' if self.vision.face_recognizer is not None else 'SFACE MODEL MISSING'
-            self._emit_status(f'AI READY • {Path(self.vision.model_source).name} • {face_mode} • LOCKED TRACK • SMOOTH FOLLOW • HEAD TURN >50°/5s • NO-FACE+STILL 5s • SESSION-LONG ID LOCK • EMBEDDING GUARD', 0.5)
+            accel = 'CUDA' if self.vision.yolo_device != 'cpu' else 'CPU'
+            self._emit_status(f'AI READY • {Path(self.vision.model_source).name} • YOLO {accel} • {face_mode} • LOCKED TRACK • SMOOTH FOLLOW • HEAD TURN >50°/5s • NO-FACE+STILL 5s • SESSION-LONG ID LOCK • EMBEDDING GUARD', 0.5)
 
         if self.mode == 'scan':
             detections = self._scan_face_detections(frame)
@@ -2734,27 +2767,9 @@ class AIWorker(QThread):
             # identities, so a lost old track can be handed off safely to a
             # newly created track of the same student.
             self.identity.begin_frame(track_objects)
-            # Once a student is locked, make a final face-anchor correction on
-            # that track. This keeps the visible box attached to the actual
-            # person even when the detector's body box jitters.
-            if self.mode == 'monitor' and getattr(self.vision, 'face_detector', None) is not None:
-                face_anchors = self.vision._yunet_faces(frame)
-                if face_anchors:
-                    for track in track_objects:
-                        if track.track_id not in self.identity.mapping():
-                            continue
-                        anchor = self.vision._nearest_face_anchor(
-                            face_anchors, track.box, frame.shape[1], frame.shape[0]
-                        )
-                        if anchor is None:
-                            continue
-                        corrected = self.vision._recenter_person_box_on_face(
-                            track.box, anchor, frame.shape[1], frame.shape[0], strength=0.22
-                        )
-                        track.box = tuple(
-                            float(a) * 0.58 + float(b) * 0.42
-                            for a, b in zip(track.box, corrected)
-                        )
+            # SmartVision.detect() already performs YuNet face anchoring before
+            # tracker update; avoid a second full-frame YuNet pass here because it
+            # can create an intermittent inference spike on CPU-only OpenCV builds.
         frame_size = (frame.shape[1], frame.shape[0])
         payload = []
         active_student_ids = set()
@@ -2812,15 +2827,17 @@ class AIWorker(QThread):
                     time.sleep(min(0.03, max(0.0, self.next_run - now)))
                     continue
                 self.next_run = now + interval
-                with self._frame_lock:
-                    frame = None if self.latest_frame is None else self.latest_frame.copy()
-                    last_frame_time = self.last_frame_time
+                # Pull the newest frame directly from the camera buffer. This
+                # deliberately bypasses Qt queued frame signals, so inference never
+                # works through a backlog of old frames after a temporary slow pass.
+                frame = self.camera.get_latest_frame(copy=True)
+                camera_age = self.camera.latest_age()
                 if frame is None:
                     self._emit_status('AI WAITING • no camera frame received', 1.5)
-                    time.sleep(0.05)
+                    time.sleep(0.02)
                     continue
-                if last_frame_time and time.time() - last_frame_time > 2.5:
-                    self._emit_status('AI WAITING • camera frame is stale', 1.0)
+                if camera_age is not None and camera_age > 0.75:
+                    self._emit_status('AI WARNING • newest camera frame age {:.2f}s'.format(camera_age), 0.8)
                 try:
                     self._process_once(frame)
                 except Exception as exc:
