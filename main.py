@@ -1,3 +1,4 @@
+# GODEYES UI PATCH v8 — severity cards + dots refined
 from html import escape
 import json
 import math
@@ -6982,11 +6983,11 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
     for index, student in enumerate(page_students, start=page_start + 1):
         focus = max(0, min(100, round(student["focus"])))
         severity, sev_class, _ = _focus_severity(focus)
-        row_cls = " student-focus-list-row-danger" if sev_class == "danger" else ""
+        row_cls = f" student-focus-list-row-{sev_class}"
         href = f"/teacher/history/session/{int(session_id)}/student/{student['student_id']}"
         list_rows_html += f"""
-            <a class="student-focus-list-row{row_cls}" href="{href}">
-                <div class="student-list-index">{index:02d}</div>
+            <a class="student-focus-list-row{row_cls}" href="{href}" title="{escape(severity)}">
+                <div class="student-list-index">{index}</div>
                 <div class="student-list-identity">
                     <div class="student-list-avatar">{escape(str(student['full_name'])[:1].upper())}</div>
                     <div class="student-list-name-wrap">
@@ -7018,7 +7019,7 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
                     <strong>{_format_clock_seconds(student['ob_time_seconds'])}</strong>
                 </div>
                 <div class="student-list-status">
-                    <span class="severity-badge {sev_class}">{escape(severity)}</span>
+                    <span class="student-severity-indicator {sev_class}" title="{escape(severity)}" aria-label="{escape(severity)}"></span>
                     <span class="student-list-arrow">→</span>
                 </div>
             </a>
@@ -7069,6 +7070,12 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
                 <div class="student-roster-page-info">{total_visible if student_search else len(student_cards)} học sinh · Trang {student_page}/{total_pages}</div>
             </form>
 
+            <div class="student-severity-legend">
+                <span><i class="student-severity-indicator safe"></i>Bình thường</span>
+                <span><i class="student-severity-indicator attention"></i>Hơi nghiêm trọng</span>
+                <span><i class="student-severity-indicator danger"></i>Nghiêm trọng</span>
+            </div>
+
             <div class="student-focus-list-wrap">
                 <div class="student-focus-list-header">
                     <div class="list-head student-head-student">HỌC SINH</div>
@@ -7077,7 +7084,7 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
                     <div class="list-head">DANGER</div>
                     <div class="list-head">ATTENTION</div>
                     <div class="list-head">OB TIME</div>
-                    <div class="list-head student-head-status">TRẠNG THÁI</div>
+                    <div class="list-head student-head-status" aria-label="Mức độ"></div>
                 </div>
                 {list_rows_html if list_rows_html else ('<div class="focus-empty">Không tìm thấy học sinh phù hợp.</div>' if student_search else '<div class="focus-empty">Chưa có học sinh trong roster của session.</div>')}
             </div>
@@ -7112,14 +7119,20 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
             .history-focus-section-head h3 {{ margin:4px 0 4px; color:#18344f; font-size:20px; }}
             .history-focus-section-head p {{ margin:0; color:#7a8d9f; font-size:12px; }}
             .session-meta-pill {{ border:1px solid #dce8f3; border-radius:999px; padding:9px 13px; color:#5f758b; background:#fff; font-size:11px; font-weight:800; white-space:nowrap; }}
-            .student-focus-list-wrap {{ border:1px solid #dfeaf5; border-radius:24px; background:#fff; box-shadow:0 11px 30px rgba(36,83,126,.055); overflow:hidden; }}
-            .student-focus-list-header {{ display:grid; grid-template-columns:minmax(250px,1.55fr) minmax(150px,1fr) 70px 90px 100px 105px 150px; align-items:center; gap:14px; padding:13px 18px; background:#f6faff; border-bottom:1px solid #e6eef6; }}
+            .student-focus-list-wrap {{ padding:8px; border:1px solid #dfeaf5; border-radius:24px; background:#f8fbfe; box-shadow:0 11px 30px rgba(36,83,126,.055); overflow:hidden; }}
+            .student-severity-legend {{ display:flex; align-items:center; gap:18px; flex-wrap:wrap; margin:0 2px 10px; color:#7b8fa3; font-size:11px; font-weight:750; }}
+            .student-severity-legend span {{ display:inline-flex; align-items:center; gap:7px; }}
+            .student-severity-legend .student-severity-indicator {{ width:10px; height:10px; min-width:10px; box-shadow:none; }}
+            .student-focus-list-header {{ display:grid; grid-template-columns:minmax(250px,1.55fr) minmax(150px,1fr) 70px 90px 100px 105px 52px; align-items:center; gap:14px; padding:13px 16px 11px; background:transparent; }}
             .list-head {{ color:#8294a5; font-size:9px; font-weight:900; letter-spacing:.75px; }}
-            .student-focus-list-row {{ display:grid; grid-template-columns:minmax(250px,1.55fr) minmax(150px,1fr) 70px 90px 100px 105px 150px; align-items:center; gap:14px; padding:15px 18px; border-bottom:1px solid #edf2f7; text-decoration:none; color:inherit; background:#fff; transition:background .15s ease, box-shadow .15s ease, transform .15s ease; }}
-            .student-focus-list-row:last-child {{ border-bottom:none; }}
-            .student-focus-list-row:hover {{ background:#f9fcff; box-shadow:inset 4px 0 0 #9cc7ec; }}
-            .student-focus-list-row.student-focus-list-row-danger {{ margin:4px 6px; padding-left:12px; padding-right:12px; border:2px solid #d64652; border-radius:17px; box-shadow:0 8px 22px rgba(214,70,82,.10); }}
-            .student-focus-list-row.student-focus-list-row-danger + .student-focus-list-row {{ border-top:1px solid #edf2f7; }}
+            .student-focus-list-row {{ display:grid; grid-template-columns:minmax(250px,1.55fr) minmax(150px,1fr) 70px 90px 100px 105px 52px; align-items:center; gap:14px; margin:9px 0; padding:16px 18px; border:1.8px solid #cfdeeb; border-radius:22px; text-decoration:none; color:inherit; background:#fff; box-shadow:0 6px 18px rgba(36,83,126,.045); transition:background .15s ease, box-shadow .15s ease, border-color .15s ease, transform .12s ease; }}
+            .student-focus-list-row:hover {{ background:#fbfdff; border-color:#a6c6e3; box-shadow:0 8px 22px rgba(36,83,126,.09); transform:translateY(-1px); }}
+            .student-focus-list-row-safe {{ border-color:#2f80ed; }}
+            .student-focus-list-row-attention {{ border-color:#f2c94c; background:#fffdfa; }}
+            .student-focus-list-row-danger {{ border:2px solid #eb5757; background:#fffafa; box-shadow:0 10px 26px rgba(235,87,87,.13); }}
+            .student-focus-list-row-safe:hover {{ border-color:#1f6fda; }}
+            .student-focus-list-row-attention:hover {{ border-color:#d7ad21; }}
+            .student-focus-list-row-danger:hover {{ border-color:#d63f3f; }}
             .student-list-index {{ color:#a3b0bd; font-size:11px; font-weight:900; text-align:center; }}
             .student-list-identity {{ display:flex; align-items:center; gap:11px; min-width:0; }}
             .student-list-avatar {{ width:42px; height:42px; border-radius:14px; display:flex; align-items:center; justify-content:center; flex:0 0 42px; background:#edf6ff; color:#2b78c5; font-size:16px; font-weight:900; }}
@@ -7129,15 +7142,22 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
             .student-list-focus {{ min-width:0; }}
             .student-list-focus-head {{ display:flex; align-items:baseline; gap:7px; margin-bottom:7px; }}
             .student-list-focus-head strong {{ color:#18344f; font-size:20px; font-weight:900; letter-spacing:-.4px; }}
+            .student-focus-list-row-attention .student-list-focus-head strong {{ color:#a27b10; }}
             .student-focus-list-row-danger .student-list-focus-head strong {{ color:#b4232d; }}
             .student-list-focus-head span {{ color:#96a4b1; font-size:9px; font-weight:800; text-transform:uppercase; }}
             .student-list-meter {{ height:8px; background:#edf2f7; border-radius:999px; overflow:hidden; }}
             .student-list-meter span {{ display:block; height:100%; min-width:2px; border-radius:999px; background:#5f9bd3; }}
+            .student-focus-list-row-safe .student-list-meter span {{ background:#5f9bd3; }}
+            .student-focus-list-row-attention .student-list-meter span {{ background:#d8b43b; }}
             .student-focus-list-row-danger .student-list-meter span {{ background:#d64652; }}
             .student-list-metric {{ min-width:0; }}
             .student-list-metric span {{ display:block; color:#91a0ae; font-size:8px; font-weight:900; letter-spacing:.45px; }}
             .student-list-metric strong {{ display:block; margin-top:4px; color:#365069; font-size:14px; font-weight:850; }}
-            .student-list-status {{ display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }}
+            .student-list-status {{ display:flex; align-items:center; justify-content:flex-end; gap:12px; min-width:0; }}
+            .student-severity-indicator {{ width:12px; height:12px; min-width:12px; border-radius:50%; display:inline-block; border:0; box-shadow:0 0 0 3px rgba(255,255,255,.92), 0 2px 7px rgba(35,55,75,.10); }}
+            .student-severity-indicator.safe {{ background:#2f80ed; }}
+            .student-severity-indicator.attention {{ background:#f2c94c; }}
+            .student-severity-indicator.danger {{ background:#eb5757; }}
             .student-list-arrow {{ color:#2b78c5; font-size:18px; font-weight:900; line-height:1; }}
             .focus-empty {{ padding:40px; text-align:center; color:#8191a2; border-radius:22px; }}
             .student-roster-toolbar {{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px; padding:10px 2px; }}
@@ -7159,7 +7179,7 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
             @media (max-width:1100px) {{
                 .session-overview-grid {{ grid-template-columns:repeat(2,1fr); }}
                 .student-focus-list-wrap {{ overflow:auto; }}
-                .student-focus-list-header, .student-focus-list-row {{ min-width:980px; }}
+                .student-focus-list-header, .student-focus-list-row {{ min-width:940px; }}
             }}
             @media (max-width:700px) {{
                 .history-focus-hero, .history-focus-section-head {{ flex-direction:column; align-items:flex-start; }}
@@ -8314,12 +8334,8 @@ def teacher_open_app_web(request: Request):
 <body style="font-family:Segoe UI,Arial,sans-serif;padding:40px;text-align:center;background:#f6f8fc;color:#203247">
 <h2>Đang mở God Eyes…</h2>
 <p>Windows sẽ mở ứng dụng God Eyes trên máy này.</p>
-<div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:20px;">
-<a href="/teacher" style="display:inline-flex;align-items:center;padding:12px 18px;border-radius:10px;background:#fff;color:#24415e;border:1px solid #d5e0ec;text-decoration:none;font-weight:700">QUAY LẠI TRANG CHỦ</a>
-<a href="{safe_launch_url}" style="display:inline-flex;align-items:center;padding:12px 18px;border-radius:10px;background:#2b78c5;color:#fff;text-decoration:none;font-weight:700">MỞ GOD EYES</a>
-</div>
+<p><a href="{safe_launch_url}" style="display:inline-block;padding:12px 18px;border-radius:10px;background:#2b78c5;color:#fff;text-decoration:none;font-weight:700">MỞ GOD EYES</a></p>
 <script>window.location.href = {json.dumps(launch_url)};</script>
-<div style="margin-top:18px;color:#8aa0b7;font-size:12px">God Eyes • Desktop AI Classroom</div>
 </body></html>
 """)
 
