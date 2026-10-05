@@ -647,16 +647,14 @@ class PersonTrack:
         fused_cx, fused_cy = self._raw_center(fused)
         center_shift = math.hypot(fused_cx - prev_cx, fused_cy - prev_cy)
         size_ref = max(24.0, float(previous_box[3]))
-        jump_threshold = size_ref * (0.10 if protected else 0.14)
+        jump_threshold = size_ref * (0.06 if protected else 0.14)
 
         if protected and center_shift >= jump_threshold:
             # Locked student moved enough to require an immediate box refresh.
-            # Keep the latest detector geometry instead of leaving a stale box
-            # behind for several inference cycles.
             smooth = tuple(float(v) for v in fused)
         else:
-            alpha_pos = 0.72 if not protected else 0.84
-            alpha_size = 0.44 if not protected else 0.58
+            alpha_pos = 0.72 if not protected else 0.92
+            alpha_size = 0.44 if not protected else 0.70
             smooth = self._blend_box(
                 previous_box,
                 fused,
@@ -2706,6 +2704,7 @@ class AIWorker(QThread):
             'track_id': track.track_id,
             'student': sid,
             'student_id': int(self.identity.student_id_for_label(sid)) if self.identity.server_roster else 0,
+            'overlay_ready': bool(track.visible and track.confirmed and sid != 'IDENTITY UNCERTAIN'),
             'identity_source': str(self.identity.student_profiles.get(sid, {}).get('identity_source', 'UNKNOWN')) if sid not in ('IDENTITY UNCERTAIN',) else 'UNKNOWN',
             'missed': track.missed,
             'score': float(max(0.0, min(1.0, score))),
