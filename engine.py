@@ -1,5 +1,3 @@
-# GodEyes Engine v39 — responsive real-time tracking box patch
-# GodEyes Engine v34 • 40-track session lock • 5s head-turn • 70% Face ID gate • 30 FPS preview
 from pathlib import Path
 import math
 import os
@@ -21,8 +19,6 @@ import cv2
 import numpy as np
 from PySide6.QtCore import QThread, Signal
 
-# Prevent large OpenCV worker pools from intermittently starving the Qt UI on
-# mid-range Windows PCs. CUDA inference remains handled by the GPU when available.
 try:
     cv2.setNumThreads(2)
 except Exception:
@@ -309,10 +305,6 @@ class CameraWorker(QThread):
                 pass
 
     def _open_webcam(self):
-        # For an explicitly selected external USB webcam, do not blindly reuse
-        # index 0 because Windows commonly assigns the built-in laptop camera
-        # to index 0. Prefer a configured non-zero index; otherwise probe 1..9
-        # first and only fall back to index 0 if no other camera opens.
         if self.source_type in {'USB', 'USB_WEBCAM'} and int(self.camera_index) == 0:
             indices = list(range(1, 10)) + [0]
         else:
@@ -338,8 +330,6 @@ class CameraWorker(QThread):
                         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     except Exception:
                         pass
-                    # MJPG first: this reduces USB bandwidth pressure on Windows
-                    # webcams before requesting the 1280x720 / 30 FPS mode.
                     try:
                         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                     except Exception:
@@ -378,8 +368,6 @@ class CameraWorker(QThread):
             self.state.emit('CAMERA ERROR • RTSP URL MISSING')
             return None
         cap = None
-        # FFmpeg low-latency hints. They are process-local environment settings
-        # used by OpenCV's FFmpeg backend when it is available.
         old_options = os.environ.get('OPENCV_FFMPEG_CAPTURE_OPTIONS')
         os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = (
             'rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|max_delay;500000'
@@ -506,8 +494,6 @@ class CameraWorker(QThread):
                 bad_reads = 0
                 self._set_latest(frame)
                 now = time.time()
-                # UI preview is capped; the capture loop still drains the RTSP
-                # stream as quickly as OpenCV delivers it, keeping only the newest frame.
                 if now - self._last_ui_emit >= (1.0 / 30.0):
                     self._last_ui_emit = now
                     self.frame_ready.emit(frame)
@@ -633,9 +619,6 @@ class PersonTrack:
         previous_time = self.last_update_time
         dt = max(1e-3, now - previous_time)
 
-        # Fuse the detector's current box with a short forward prediction.
-        # A protected/locked track gets a slightly stronger correction so it
-        # follows the student promptly while still avoiding box jitter.
         predicted = self._predicted_box(1.0)
         prediction_weight = 0.14 if not protected else 0.10
         fused = tuple(
@@ -643,10 +626,6 @@ class PersonTrack:
             for i in range(4)
         )
 
-        # Responsive follow for the live overlay. Small detector noise is smoothed,
-        # but a meaningful displacement is applied immediately so the visible box
-        # never trails behind a moving student. Internal tracking remains smooth
-        # enough for behavior calculations.
         prev_cx, prev_cy = self._raw_center(previous_box)
         fused_cx, fused_cy = self._raw_center(fused)
         center_shift = math.hypot(fused_cx - prev_cx, fused_cy - prev_cy)
@@ -654,7 +633,6 @@ class PersonTrack:
         jump_threshold = size_ref * (0.06 if protected else 0.14)
 
         if protected and center_shift >= jump_threshold:
-            # Locked student moved enough to require an immediate box refresh.
             smooth = tuple(float(v) for v in fused)
         else:
             alpha_pos = 0.72 if not protected else 0.92
@@ -682,15 +660,11 @@ class PersonTrack:
         raw_vw = (smooth[2] - previous_box[2]) / dt
         raw_vh = (smooth[3] - previous_box[3]) / dt
 
-        # UI follow velocity is based on the accepted track box itself.
-        # It is intentionally separate from the heavily damped prediction
-        # velocity used by association.
         self.follow_vx = raw_vx
         self.follow_vy = raw_vy
         self.follow_vw = raw_vw
         self.follow_vh = raw_vh
 
-        # Velocity is filtered separately so prediction remains stable.
         self.velocity[0] = 0.62 * self.velocity[0] + 0.38 * raw_vx * 0.12
         self.velocity[1] = 0.62 * self.velocity[1] + 0.38 * raw_vy * 0.12
         self.velocity[2] = 0.70 * self.velocity[2] + 0.30 * raw_vw * 0.08
@@ -746,8 +720,6 @@ class PersonTrack:
         self.last_seen = now
         self.last_update_time = now
 
-        # During a short detector gap, move the box with the person's latest
-        # velocity rather than freezing it.  The step is bounded by box height.
         x, y, w, h = self.box
         vx, vy, vw, vh = self.velocity
         max_step = max(18.0, h * (0.78 if protected else 0.60))
@@ -763,7 +735,6 @@ class PersonTrack:
         decay = 0.88 if protected else 0.82
         self.velocity = [v * decay for v in self.velocity]
 
-        # Keep the visual follow velocity coherent during a short detector gap.
         self.follow_vx *= 0.92 if protected else 0.86
         self.follow_vy *= 0.92 if protected else 0.86
         self.follow_vw *= 0.90 if protected else 0.84
@@ -903,8 +874,6 @@ class PersonTracker:
             if inside:
                 return detection
 
-            # Desired placement: face centered horizontally and in the upper
-            # quarter of the person box.  Move mostly, but not instantaneously.
             desired_x = fcx - 0.50 * bw
             desired_y = fcy - 0.20 * bh
             repaired_x = 0.20 * bx + 0.80 * desired_x
@@ -962,10 +931,6 @@ class PersonTracker:
                 + 0.20 * face_embedding_score
                 + 0.05 * velocity_bonus
             )
-            # A protected identity must not silently jump to a different
-            # visible face. Only the tracker association is allowed to fail;
-            # IdentityLock will then keep the student uncertain until a strong
-            # embedding match re-establishes the identity.
             if face_embedding_similarity >= 0.0 and face_embedding_similarity < 0.40:
                 return 0.0
         else:
@@ -986,8 +951,6 @@ class PersonTracker:
         if iou < 0.02 and min(distance, predicted_distance) > gate and appearance > 0.78:
             return 0.0
         if protected and getattr(track, 'face', None) is not None and getattr(detection, 'face', None) is not None:
-            # A locked student with a visible face should not jump to a far-away
-            # face simply because its person boxes overlap poorly.
             if face_distance > 1.75 and distance > 0.95 and appearance > 0.72:
                 return 0.0
         return score
@@ -1050,8 +1013,6 @@ class PersonTracker:
             if di in matched_detections:
                 continue
             if len(self.tracks) >= self.MAX_TRACKS:
-                # Never exceed the classroom track budget. Prefer preserving
-                # already protected identities and confirmed tracks.
                 removable = [
                     t for t in self.tracks.values()
                     if t.track_id not in self.protected_track_ids
@@ -1073,7 +1034,6 @@ class PersonTracker:
             self.next_id += 1
             self.tracks[tid] = PersonTrack(tid, detection, now)
 
-        # A defensive hard cap keeps both memory and rendering bounded.
         if len(self.tracks) > self.MAX_TRACKS:
             ranked = sorted(
                 self.tracks.values(),
@@ -1126,27 +1086,19 @@ class IdentityLock:
         self.student_to_track = {}
         self.next_student = 1
 
-        # Legacy/local track-reidentification settings.
         self.max_match_distance = 0.78
         self.min_reid_score = 0.49
 
-        # Server Face ID roster.
         self.server_roster = {}
         self.server_threshold = 0.70
         self.server_margin = 0.08
 
-        # Temporary identity continuity when face disappears.
-        # The lock is meant to follow a student for the whole monitoring
-        # session, not only for a few seconds after the last face frame.
         self.hold_identity_seconds = float('inf')
         self.reid_threshold = 0.84
         self.reid_margin = 0.10
         self.reid_appearance_max_distance = 0.36
         self.reid_position_max_distance = 1.00
 
-        # Snapshot of tracks visible in the current processed frame. It lets
-        # face matching distinguish a truly lost old track from an identity
-        # that is still actively visible and must not be stolen.
         self.active_track_status = {}
 
     @staticmethod
@@ -1367,8 +1319,6 @@ class IdentityLock:
             frame_size or profile.get('frame_size')
         )
 
-        # When a new person track is created, SFace is still the strongest
-        # identity cue. Appearance + position then stabilize the hand-off.
         fd = self._feature_distance(
             track.face_feature,
             profile.get('face_feature')
@@ -1396,7 +1346,6 @@ class IdentityLock:
                 if old is None:
                     profile['face_feature'] = track.face_feature.copy()
                 else:
-                    # Very slow update keeps the original enrollment anchor stable.
                     updated = 0.985 * old + 0.015 * track.face_feature
                     norm = float(np.linalg.norm(updated))
                     profile['face_feature'] = (
@@ -1452,8 +1401,6 @@ class IdentityLock:
             assigned_track = self.student_to_track.get(label)
             if assigned_track is not None and assigned_track != track.track_id:
                 assigned_status = self.active_track_status.get(assigned_track, {})
-                # Only block reassignment when that identity is still attached
-                # to a live confirmed track in the current frame.
                 if assigned_status.get('visible') and assigned_status.get('confirmed') and not assigned_status.get('missed', 0):
                     continue
 
@@ -1479,20 +1426,14 @@ class IdentityLock:
         candidates = []
 
         for sid, profile in self.student_profiles.items():
-            # Session-long lock: identity memory does not expire by time.
             previous_track = self.student_to_track.get(sid)
             if previous_track == track.track_id:
                 continue
 
-            # Do not steal an identity from a track that is still confirmed and
-            # visible. Re-acquisition is allowed once the old track is missing.
             previous_status = self.active_track_status.get(previous_track, {})
             if previous_status.get('visible') and previous_status.get('confirmed') and not previous_status.get('missed', 0):
                 continue
 
-            # Appearance-only recovery is permitted only when the face is
-            # genuinely unavailable. The face mismatch path is handled in
-            # resolve() and is intentionally blocked.
             if getattr(track, 'face_feature', None) is not None:
                 continue
 
@@ -1504,7 +1445,6 @@ class IdentityLock:
 
             if appearance_distance > self.reid_appearance_max_distance:
                 continue
-            # Position is a weak supporting signal, not a hard identity gate.
             if score < self.reid_threshold:
                 continue
 
@@ -1541,23 +1481,15 @@ class IdentityLock:
         return sid, best[0]
 
     def resolve(self, track, frame_size=None):
-        # 1. Existing LOCKED track.
-        #    When the face returns, always re-verify the embedding against the
-        #    enrolled roster. The old identity is NEVER allowed to silently
-        #    switch to another student because of a track/box association.
         if track.track_id in self.track_to_student:
             sid = self.track_to_student[track.track_id]
             profile = self.student_profiles.get(sid)
 
             if profile is not None:
                 if track.face_feature is not None:
-                    # Re-match the returning face against the complete enrolled
-                    # dataset first. Only the original locked label may resume.
                     best_label, best_score, second_score = self._match_face_to_server(track)
                     margin_ok = best_score - max(-1.0, second_score) >= self.server_margin
 
-                    # If the roster match is absent/weak/ambiguous, keep the
-                    # identity uncertain. Do not fall back to appearance.
                     if (
                         best_label is None
                         or best_score < self.server_threshold
@@ -1583,9 +1515,6 @@ class IdentityLock:
                 )
                 return sid, 0.90
 
-        # 2. Fresh face observation: lock only on a strong Face ID match.
-        # A visible face that does NOT reach the 70% threshold is never allowed
-        # to inherit somebody else's identity from appearance matching.
         if self.server_roster and track.face_feature is not None:
             best_label, best_score, second_score = self._match_face_to_server(track)
             margin_ok = best_score - max(-1.0, second_score) >= self.server_margin
@@ -1594,7 +1523,6 @@ class IdentityLock:
                 previous_track = self.student_to_track.get(best_label)
                 if previous_track is not None and previous_track != track.track_id:
                     previous_status = self.active_track_status.get(previous_track, {})
-                    # Never steal a live identity.
                     if previous_status.get('visible') and previous_status.get('confirmed') and not previous_status.get('missed', 0):
                         return 'IDENTITY UNCERTAIN', 0.0
                     self.track_to_student.pop(previous_track, None)
@@ -1611,18 +1539,12 @@ class IdentityLock:
 
                 return best_label, max(0.0, min(1.0, best_score))
 
-            # A visible but weak/mismatching embedding must stay uncertain.
             return 'IDENTITY UNCERTAIN', max(0.0, min(1.0, best_score))
 
-        # 3. Face temporarily unavailable: recover a previously LOCKED identity
-        # from the same person's appearance only. This path is intentionally
-        # unavailable while a face embedding is visible, preventing cross-person
-        # identity transfer when the current face contradicts the stored face.
         sid, reid_score = self._recover_from_profile(track, frame_size)
         if sid is not None:
             return sid, reid_score
 
-        # 4. No prior identity yet.
         if not self.student_profiles:
             if self.server_roster:
                 return 'IDENTITY UNCERTAIN', 0.0
@@ -1631,7 +1553,6 @@ class IdentityLock:
                 max(0.45, min(0.99, 0.55 + 0.40 * track.stability))
             )
 
-        # There are known identities, but this track cannot be linked safely.
         return 'IDENTITY UNCERTAIN', 0.0
 
     def mapping(self):
@@ -1678,8 +1599,6 @@ class SmartVision:
         self._load_yolo()
 
     def _load_face_models(self):
-        # Prefer models bundled with the app; fall back to the shared local
-        # GodEyesServer model directory used during development.
         candidates = [
             self.model_dir,
             Path(r'D:\GodEyesServer\data\face_models'),
@@ -1755,9 +1674,6 @@ class SmartVision:
         except Exception:
             pass
 
-        # Low-light / mildly blurred faces get a second embedding from a
-        # contrast-enhanced view. We combine the two only when both are valid;
-        # this improves robustness without changing the identity metric.
         try:
             lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
             l, a, b = cv2.split(lab)
@@ -1816,9 +1732,6 @@ class SmartVision:
         return None
 
     def _load_yolo(self):
-        # YOLO is preferred, but the app must remain usable when the model file
-        # is not installed yet. In that case SmartVision falls back to YuNet
-        # face detections to create person tracks.
         try:
             from ultralytics import YOLO
         except Exception as exc:
@@ -2125,11 +2038,9 @@ class SmartVision:
             fcx = fx + 0.5 * fw
             fcy = fy + 0.5 * fh
             d = math.hypot(fcx - pcx, fcy - pcy)
-            # Normalize by the larger expected person dimension.
             gate = max(90.0, 1.35 * max(pw, ph), 0.22 * max(frame_width, frame_height))
             if d > gate:
                 continue
-            # Prefer a face near the expected head position and with decent size.
             vertical_penalty = abs((fcy - py) / max(1.0, ph) - 0.22)
             score = d + 120.0 * vertical_penalty - 0.15 * math.sqrt(fw * fh)
             if score < best_score:
@@ -2146,7 +2057,6 @@ class SmartVision:
             x, y, w, h = [float(v) for v in person_box]
             fx, fy, fw, fh = [float(v) for v in face[:4]]
             fcx = fx + 0.5 * fw
-            # The face should sit roughly 20% from the top of the person box.
             desired_x = fcx - 0.50 * w
             desired_y = (fy + 0.5 * fh) - 0.20 * h
             new_x = x + float(strength) * (desired_x - x)
@@ -2219,8 +2129,6 @@ class SmartVision:
                             objects.append((box, cls_id, conf))
         yunet_faces = self._yunet_faces(frame)
 
-        # Hard geometric face anchor: this fixes badly shifted YOLO person
-        # boxes and prevents the lock box from sitting on a chair/background.
         if persons and yunet_faces:
             anchored_persons = []
             for person_box, person_conf in persons:
@@ -2232,16 +2140,12 @@ class SmartVision:
                 anchored_persons.append((person_box, person_conf))
             persons = anchored_persons
 
-        # No YOLO model (or YOLO failed): use YuNet face boxes as person tracks.
-        # This keeps Face ID + tracking functional without requiring a large
-        # YOLO weights file on the development machine.
         if not persons and yunet_faces:
             for face in yunet_faces[:40]:
                 try:
                     fx, fy, fw, fh = [float(v) for v in face[:4]]
                 except Exception:
                     continue
-                # Expand the face region into a stable upper-body tracking box.
                 x = int(fx - 0.65 * fw)
                 y = int(fy - 0.45 * fh)
                 w = int(fw * 2.30)
@@ -2356,34 +2260,17 @@ class BehaviorEngine:
     YAW_THRESHOLD_DEG = 40.0
     YAW_CONFIRM_SECONDS = 5.0
 
-    # A face may disappear during writing, looking down, or turning around.
-    # Sleep must therefore require sustained inactivity of the person/body,
-    # not merely loss of the face.
     NO_FACE_STILL_SLEEP_SECONDS = 5.0
     FACE_GAP_GRACE_SECONDS = 0.40
     SLEEP_ACTIVITY_MEMORY_SECONDS = 2.5
 
-    # Activity thresholds are intentionally lower than the talking threshold:
-    # small hand/arm/body movements (e.g. writing) should keep the student
-    # out of the sleep timer, while tiny detector noise should not.
     SLEEP_HAND_ACTIVITY_THRESHOLD = 0.055
     SLEEP_LOWER_ACTIVITY_THRESHOLD = 0.055
     SLEEP_TASK_ACTIVITY_THRESHOLD = 0.075
 
-    # Face-hidden talking heuristic:
-    # - the student's identity is already LOCKED;
-    # - the last reliable face observation showed a strong turn away from camera;
-    # - face then becomes unavailable;
-    # - the tracked person keeps moving for a short continuous period.
-    #
-    # This deliberately creates an OBSERVATION signal ("possible talking/turned
-    # around"), not a definitive claim that speech occurred.
     TALKING_TURN_THRESHOLD_DEG = 55.0
     TALKING_CONFIRM_SECONDS = 2.0
 
-    # A short-window box-center displacement, normalized by tracked box height.
-    # This is intentionally small: even light genuine movement should prevent
-    # the sleep timer from firing, while sub-pixel/box-jitter noise is ignored.
     BOX_MOVE_WINDOW_SECONDS = 0.80
     BOX_MOVE_THRESHOLD = 0.018
     BOX_SIZE_CHANGE_THRESHOLD = 0.025
@@ -2417,7 +2304,6 @@ class BehaviorEngine:
 
     def _cooldown_ok(self, state, key, now, seconds=None):
         seconds = self.EVENT_COOLDOWN if seconds is None else float(seconds)
-        # No previous event for this key means it is immediately eligible.
         if key not in state.get('last_event', {}):
             return True
         last = float(state['last_event'].get(key, 0.0))
@@ -2444,9 +2330,6 @@ class BehaviorEngine:
         current_center = history[-1]
         current_index = len(history) - 1
 
-        # center_history does not store timestamps, so use a conservative frame
-        # rate estimate from the AI loop.  At 6-12 FPS this window corresponds to
-        # roughly 5-10 recent samples.
         samples_back = max(2, int(round(float(window_seconds) * 10.0)))
         start_index = max(0, current_index - samples_back)
         reference = history[start_index]
@@ -2458,11 +2341,8 @@ class BehaviorEngine:
         except Exception:
             displacement = 0.0
 
-        # Also consider box size change. A student writing/adjusting posture can
-        # change the tracked box even when the center hardly moves.
         size_change = 0.0
         try:
-            # Height history is aligned with center history in PersonTrack.
             heights = list(getattr(track, 'height_history', []) or [])
             if heights:
                 ref_h_index = max(0, len(heights) - 1 - (current_index - start_index))
@@ -2493,9 +2373,6 @@ class BehaviorEngine:
             state['last_yaw'] = yaw
             state['last_face_time'] = now
 
-        # ---------------------------------------------------------
-        # 1) HEAD TURN > 50°, continuously for 5 seconds
-        # ---------------------------------------------------------
         turned = bool(face_valid and abs(yaw) > self.YAW_THRESHOLD_DEG)
         direction = -1 if yaw < 0 else 1 if yaw > 0 else 0
 
@@ -2539,13 +2416,6 @@ class BehaviorEngine:
             state['turn_start'] = None
             state['turn_latched'] = False
 
-        # ---------------------------------------------------------
-        # 2) LOCKED TRACK + FACE HIDDEN + TURNED AWAY
-        # ---------------------------------------------------------
-        # We cannot see the mouth once the student turns fully away, so this is
-        # an observation heuristic rather than a definitive speech detector.
-        # The strongest cue is a recent large yaw followed by a hidden face,
-        # while the same locked body track continues moving.
         if face_valid:
             state['talking_start'] = None
             state['talking_latched'] = False
@@ -2595,21 +2465,10 @@ class BehaviorEngine:
                     state['last_event']['OB_TALKING'] = now
                     state['talking_latched'] = True
             else:
-                # Do not accumulate a talking episode while the person is merely
-                # hidden/turning without continued movement.
                 state['talking_start'] = None
                 if not body_moving:
                     state['talking_latched'] = False
 
-        # ---------------------------------------------------------
-        # 3) LOCKED TRACK + FACE LOST -> ROBUST OB_SLEEP
-        # ---------------------------------------------------------
-        # IMPORTANT:
-        # - Face hidden != sleep.
-        # - Head-down writing may hide the face while the hands/arms/body move.
-        # - Turning around to talk may also hide the face while the body moves.
-        # - The sleep timer starts ONLY after sustained inactivity, and any
-        #   meaningful activity immediately resets it.
         if face_valid:
             state['face_missing_start'] = None
             state['sleep_latched'] = False
@@ -2639,15 +2498,10 @@ class BehaviorEngine:
             )
 
             if meaningful_activity:
-                # Any genuine hand/arm/body/box activity means the student is
-                # active. This is the key protection against false OB_SLEEP
-                # while writing with the head down.
                 state['last_activity_time'] = now
                 state['face_missing_start'] = None
                 state['sleep_latched'] = False
             else:
-                # Give short pauses a memory window so a student can stop writing
-                # for a moment without immediately entering the sleep timer.
                 last_activity = float(state.get('last_activity_time', 0.0) or 0.0)
                 recent_activity = (
                     last_activity > 0.0
@@ -2668,8 +2522,6 @@ class BehaviorEngine:
                         and not state['sleep_latched']
                         and self._cooldown_ok(state, 'OB_SLEEP', now)
                     ):
-                        # Confidence is based only on observable signal quality,
-                        # not on a claim about the student's mental state.
                         confidence = min(
                             0.92,
                             0.64
@@ -2731,12 +2583,7 @@ class AIWorker(QThread):
         self.total_inferences = 0
         self.last_frame_time = 0.0
         self._last_processed_camera_sequence = -1
-        # Do NOT subscribe AI to camera.frame_ready. That signal is a UI-preview
-        # stream. Queued Qt deliveries can accumulate while inference is busy and
-        # make the AI process stale frames. AIWorker pulls the shared latest frame
-        # directly from CameraWorker instead.
 
-    # Legacy compatibility hook; intentionally unused for AI input.
     def _receive_frame(self, frame):
         if frame is None:
             return
@@ -2857,16 +2704,9 @@ class AIWorker(QThread):
             'identity_source': str(self.identity.student_profiles.get(sid, {}).get('identity_source', 'UNKNOWN')) if sid not in ('IDENTITY UNCERTAIN',) else 'UNKNOWN',
             'missed': track.missed,
             'score': float(max(0.0, min(1.0, score))),
-            # For visible tracks, expose the current responsive box. When a
-            # detector frame is temporarily missed, keep the predicted track box
-            # so the renderer can follow motion briefly without freezing the old
-            # location.
             'box': tuple(int(max(0, v)) for v in track.box),
             'raw_box': tuple(int(max(0, v)) for v in track.raw_box),
             'box_updated_at': float(track.last_update_time),
-            # Actual accepted-box velocity used only by the UI to extrapolate
-            # between 6-FPS AI updates. This keeps the overlay visually attached
-            # to the latest camera frame without running heavier inference.
             'box_follow_velocity': (
                 float(getattr(track, 'follow_vx', 0.0)),
                 float(getattr(track, 'follow_vy', 0.0)),
@@ -2946,9 +2786,6 @@ class AIWorker(QThread):
             detections = self._scan_face_detections(frame)
         else:
             raw_detections, _ = self.vision.detect(frame)
-            # SmartVision returns serializable dicts; PersonTracker operates on
-            # Detection instances.  Converting here prevents the recurring
-            # 'dict has no attribute box' AI PROCESS ERROR loop.
             detections = [
                 Detection(**item) if isinstance(item, dict) else item
                 for item in (raw_detections or [])
@@ -2956,13 +2793,7 @@ class AIWorker(QThread):
         with self._state_lock:
             self.tracker.set_protected_track_ids(self.identity.mapping().keys())
             track_objects = self.tracker.update(detections)
-            # IdentityLock needs the current tracker state before resolving
-            # identities, so a lost old track can be handed off safely to a
-            # newly created track of the same student.
             self.identity.begin_frame(track_objects)
-            # SmartVision.detect() already performs YuNet face anchoring before
-            # tracker update; avoid a second full-frame YuNet pass here because it
-            # can create an intermittent inference spike on CPU-only OpenCV builds.
         frame_size = (frame.shape[1], frame.shape[0])
         payload = []
         active_student_ids = set()
@@ -2983,11 +2814,6 @@ class AIWorker(QThread):
             is_server_identity = bool(self.identity.server_roster and self.identity.student_id_for_label(sid) > 0)
             is_local_identity = sid.startswith('HS ')
 
-            # IMPORTANT: behavior evaluation must continue while the person track
-            # is temporarily missed. IdentityLock intentionally keeps the student
-            # identity during short face-loss periods, which is required for the
-            # 5-second OB_SLEEP rule. Only the identity/track must be valid; the
-            # face itself does not need to remain visible.
             if self.mode == 'monitor' and track.confirmed and sid not in ('IDENTITY UNCERTAIN',) and (is_server_identity or is_local_identity):
                 with self._state_lock:
                     behavior_events = self.behavior.evaluate(sid, track, now)
@@ -3020,16 +2846,12 @@ class AIWorker(QThread):
                     time.sleep(min(0.03, max(0.0, self.next_run - now)))
                     continue
                 self.next_run = now + interval
-                # Pull the newest frame directly from the camera buffer. This
-                # deliberately bypasses Qt queued frame signals, so inference never
-                # works through a backlog of old frames after a temporary slow pass.
                 frame_sequence = self.camera.latest_sequence()
                 if frame_sequence <= 0:
                     self._emit_status('AI WAITING • no camera frame received', 1.5)
                     time.sleep(0.02)
                     continue
                 if frame_sequence == self._last_processed_camera_sequence:
-                    # Never run inference twice on exactly the same camera frame.
                     time.sleep(0.004)
                     continue
                 frame = self.camera.get_latest_frame(copy=False)
@@ -3046,7 +2868,6 @@ class AIWorker(QThread):
                     self._status_error('AI PROCESS ERROR', exc)
                     traceback.print_exc()
                     time.sleep(0.05)
-                # Pace from completion time to avoid catch-up bursts after a slow inference.
                 self.next_run = time.time() + interval
         finally:
             self._emit_status('AI STOPPED', 0.0)
