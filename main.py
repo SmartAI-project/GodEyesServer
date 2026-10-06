@@ -4839,6 +4839,8 @@ def create_student(request: Request, class_id: int = Form(...), full_name: str =
     if payload is None: return RedirectResponse(url="/", status_code=303)
     teacher_id=int(payload["sub"]); full_name=full_name.strip(); student_code=student_code.strip().upper(); guardian_phone=_normalise_phone_number(guardian_phone)
     if not full_name: return RedirectResponse(url="/teacher?section=students", status_code=303)
+    if photo is None or not photo.filename:
+        return RedirectResponse(url=f"/teacher?section=students&class_id={class_id}&error=photo_required", status_code=303)
     new_photo_path=""
     try:
         with SessionLocal() as db:
@@ -5641,12 +5643,7 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                         </div>
 
                         <div class="modern-form-field">
-                            <label for="modern-student-phone">Số điện thoại nhận thông báo <span>Không bắt buộc</span></label>
-                            <input id="modern-student-phone" name="guardian_phone" type="tel" maxlength="20" placeholder="Ví dụ: 0901234567" {form_disabled}>
-                        </div>
-
-                        <div class="modern-form-field">
-                            <label>Ảnh tham chiếu <span>Không bắt buộc</span></label>
+                            <label>Ảnh tham chiếu <span>Bắt buộc</span></label>
 
                             <label class="modern-upload" for="modern-student-photo">
                                 <div class="modern-upload-icon">
@@ -5668,6 +5665,7 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                                    type="file"
                                    accept="image/jpeg,image/png,image/webp"
                                    {form_disabled}
+                                   required
                                    hidden>
                         </div>
 
