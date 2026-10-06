@@ -5580,7 +5580,7 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                     <div class="students-pagination">
                         {('<a class="students-page-button disabled" href="#">‹ Trước</a>' if page <= 1 else '<a class="students-page-button" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+('&q='+url_quote(search_query) if search_query else '')+'&page='+str(page-1)+'">‹ Trước</a>')}
                         <div class="students-page-numbers">
-                            {''.join(f'<a class="students-page-number {"active" if n == page else ""}" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+('&q='+url_quote(search_query) if search_query else '')+'&page='+str(n)+'">{n}</a>' for n in range(1, total_pages+1))}
+                            {''.join(f'<a class="students-page-number {"active" if page_number == page else ""}" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+('&q='+url_quote(search_query) if search_query else '')+'&page='+str(page_number)+'">{page_number}</a>' for page_number in range(1, total_pages+1))}
                         </div>
                         {('<a class="students-page-button disabled" href="#">Sau ›</a>' if page >= total_pages else '<a class="students-page-button" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+('&q='+url_quote(search_query) if search_query else '')+'&page='+str(page+1)+'">Sau ›</a>')}
                     </div>
