@@ -1797,18 +1797,73 @@ def admin_shell(title: str, content: str, section: str) -> str:
             margin: 0;
             min-height: 100vh;
             font-family: "Segoe UI", Arial, sans-serif;
-            background: #f6f7f9;
+            background: linear-gradient(180deg, #f8fcff 0%, #f3f7fb 100%);
             color: #25292e;
+            overflow-x: hidden;
         }}
         a {{ text-decoration: none; }}
-        .app {{ min-height: 100vh; display: flex; }}
+        .app {{ min-height: 100vh; display: flex; position: relative; z-index: 1; }}
+        .particles {{
+            position: fixed;
+            inset: 0;
+            overflow: hidden;
+            pointer-events: none;
+            z-index: 0;
+        }}
+        .particle {{
+            position: absolute;
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: rgba(43, 120, 197, .17);
+            box-shadow: 0 0 0 3px rgba(43, 120, 197, .035);
+            animation: godeyesParticleFloat 13s ease-in-out infinite;
+            will-change: transform;
+        }}
+        .particle:nth-child(3n) {{ width: 7px; height: 7px; opacity: .72; }}
+        .particle:nth-child(4n) {{ width: 3px; height: 3px; opacity: .52; }}
+        .particle:nth-child(5n) {{ animation-duration: 17s; }}
+        .particle:nth-child(2n) {{ animation-duration: 11s; }}
+        @keyframes godeyesParticleFloat {{
+            0%, 100% {{ transform: translate3d(0, 0, 0); }}
+            25% {{ transform: translate3d(9px, -7px, 0); }}
+            50% {{ transform: translate3d(-6px, -16px, 0); }}
+            75% {{ transform: translate3d(7px, -9px, 0); }}
+        }}
         .sidebar {{
             width: 240px;
-            background: #fff;
-            border-right: 1px solid #e5e7eb;
-            padding: 24px 16px;
+            background: rgba(255,255,255,.94);
+            backdrop-filter: blur(10px);
+            border-right: 1px solid #dfe8f2;
+            box-shadow: 8px 0 28px rgba(47, 91, 130, .05);
+            padding: 28px 16px;
             display: flex;
             flex-direction: column;
+            position: relative;
+            z-index: 2;
+        }}
+        .sidebar-head {{
+            padding: 5px 10px 22px;
+            border-bottom: 1px solid #edf2f6;
+            margin-bottom: 16px;
+        }}
+        .sidebar-head .kicker {{
+            color: #5b7fa2;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 1.2px;
+            text-transform: uppercase;
+        }}
+        .sidebar-head .title {{
+            margin-top: 6px;
+            color: #17324d;
+            font-size: 18px;
+            font-weight: 800;
+        }}
+        .sidebar-head .sub {{
+            margin-top: 3px;
+            color: #8798a8;
+            font-size: 11px;
         }}
         .logo-row {{
             display: flex;
@@ -1828,18 +1883,28 @@ def admin_shell(title: str, content: str, section: str) -> str:
         }}
         .logo-title {{ font-size: 18px; font-weight: 760; }}
         .logo-sub {{ margin-top: 2px; font-size: 11px; color: #7b828b; }}
-        .nav {{ display: flex; flex-direction: column; gap: 5px; }}
+        .nav {{ display: flex; flex-direction: column; gap: 6px; }}
         .nav-button {{
             display: block;
-            color: #626a73;
-            border-radius: 10px;
+            color: #5b6d7f;
+            border-radius: 11px;
             padding: 12px 13px;
             font-size: 14px;
-            font-weight: 650;
+            font-weight: 680;
+            border: 1px solid transparent;
+            transition: background .16s ease, color .16s ease, border-color .16s ease, transform .16s ease;
         }}
-        .nav-button:hover, .nav-button.active {{
-            background: #f0f2f4;
-            color: #25292e;
+        .nav-button:hover {{
+            background: #f2f7fc;
+            color: #235e90;
+            border-color: #e1ecf5;
+            transform: translateX(2px);
+        }}
+        .nav-button.active {{
+            background: #eaf4ff;
+            color: #21639b;
+            border-color: #d6e9f8;
+            box-shadow: 0 7px 18px rgba(47, 120, 188, .08);
         }}
         .sidebar-bottom {{ margin-top: auto; padding-top: 22px; }}
         .server-status {{
@@ -1867,13 +1932,13 @@ def admin_shell(title: str, content: str, section: str) -> str:
             font-weight: 650;
         }}
         .logout:hover {{ background: #f8f9fa; }}
-        .main {{ flex: 1; min-width: 0; padding: 34px 38px 42px; }}
+        .main {{ flex: 1; min-width: 0; padding: 34px 38px 42px; position: relative; z-index: 2; }}
         .topbar {{
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 20px;
-            margin-bottom: 28px;
+            margin-bottom: 24px;
         }}
         .eyebrow {{
             font-size: 11px;
@@ -1885,12 +1950,14 @@ def admin_shell(title: str, content: str, section: str) -> str:
         }}
         h1 {{ margin: 0; font-size: 31px; font-weight: 760; letter-spacing: -.7px; }}
         .admin-chip {{
-            border: 1px solid #e0e3e6;
-            background: #fff;
+            border: 1px solid #d7e6f2;
+            background: #f7fbff;
+            color: #23608f;
             border-radius: 999px;
             padding: 9px 13px;
-            font-size: 13px;
-            font-weight: 700;
+            font-size: 12px;
+            font-weight: 800;
+            box-shadow: 0 6px 16px rgba(42, 105, 153, .06);
         }}
         .grid {{
             display: grid;
@@ -1898,11 +1965,14 @@ def admin_shell(title: str, content: str, section: str) -> str:
             gap: 16px;
         }}
         .card {{
-            background: #fff;
-            border: 1px solid #e5e7eb;
+            background: rgba(255,255,255,.96);
+            border: 1px solid #e3ebf2;
             border-radius: 16px;
-            box-shadow: 0 10px 30px rgba(24, 28, 32, .05);
+            box-shadow: 0 12px 32px rgba(36, 76, 109, .06);
         }}
+        .metric {{ position: relative; overflow: hidden; transition: transform .18s ease, box-shadow .18s ease; }}
+        .metric:hover {{ transform: translateY(-2px); box-shadow: 0 15px 34px rgba(36, 76, 109, .09); }}
+        .metric::after {{ content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: linear-gradient(90deg, #4f9bdd, #8ec8f1); opacity: .75; }}
         .metric {{ padding: 20px; min-height: 125px; }}
         .metric-label {{ color: #7b828b; font-size: 13px; font-weight: 620; }}
         .metric-value {{ margin-top: 16px; font-size: 31px; font-weight: 780; }}
@@ -1929,14 +1999,15 @@ def admin_shell(title: str, content: str, section: str) -> str:
         }}
         .action {{
             display: block;
-            border: 1px solid #e1e4e7;
-            background: #fff;
+            border: 1px solid #e0e8ef;
+            background: #ffffff;
             border-radius: 13px;
             padding: 16px;
             min-height: 92px;
             color: #25292e;
+            transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
         }}
-        .action:hover {{ background: #fafbfc; border-color: #d7dbe0; }}
+        .action:hover {{ background: #fbfdff; border-color: #c8deef; transform: translateY(-2px); box-shadow: 0 10px 22px rgba(43, 101, 145, .07); }}
         .action-title {{ font-size: 14px; font-weight: 720; }}
         .action-text {{ margin-top: 7px; font-size: 12px; color: #7b828b; line-height: 1.45; }}
         .primary {{
@@ -2040,14 +2111,38 @@ def admin_shell(title: str, content: str, section: str) -> str:
     </style>
 </head>
 <body>
+    <div class="particles">
+        <span class="particle" style="left:7%; top:14%; animation-delay:-1s;"></span>
+        <span class="particle" style="left:14%; top:33%; animation-delay:-5s;"></span>
+        <span class="particle" style="left:21%; top:72%; animation-delay:-9s;"></span>
+        <span class="particle" style="left:29%; top:22%; animation-delay:-2s;"></span>
+        <span class="particle" style="left:36%; top:54%; animation-delay:-7s;"></span>
+        <span class="particle" style="left:43%; top:84%; animation-delay:-11s;"></span>
+        <span class="particle" style="left:50%; top:17%; animation-delay:-4s;"></span>
+        <span class="particle" style="left:57%; top:66%; animation-delay:-8s;"></span>
+        <span class="particle" style="left:64%; top:31%; animation-delay:-12s;"></span>
+        <span class="particle" style="left:71%; top:78%; animation-delay:-6s;"></span>
+        <span class="particle" style="left:79%; top:18%; animation-delay:-9s;"></span>
+        <span class="particle" style="left:86%; top:51%; animation-delay:-3s;"></span>
+        <span class="particle" style="left:92%; top:73%; animation-delay:-10s;"></span>
+        <span class="particle" style="left:12%; top:88%; animation-delay:-13s;"></span>
+        <span class="particle" style="left:25%; top:47%; animation-delay:-6s;"></span>
+        <span class="particle" style="left:34%; top:91%; animation-delay:-2s;"></span>
+        <span class="particle" style="left:47%; top:38%; animation-delay:-9s;"></span>
+        <span class="particle" style="left:61%; top:90%; animation-delay:-5s;"></span>
+        <span class="particle" style="left:69%; top:11%; animation-delay:-12s;"></span>
+        <span class="particle" style="left:74%; top:58%; animation-delay:-7s;"></span>
+        <span class="particle" style="left:83%; top:87%; animation-delay:-4s;"></span>
+        <span class="particle" style="left:96%; top:27%; animation-delay:-11s;"></span>
+        <span class="particle" style="left:55%; top:47%; animation-delay:-8s;"></span>
+        <span class="particle" style="left:18%; top:10%; animation-delay:-2s;"></span>
+    </div>
     <div class="app">
         <aside class="sidebar">
-            <div class="logo-row">
-                <div class="logo-mark brand-logo"><img src="/brand/god-eyes-logo.png" alt="God Eyes"></div>
-                <div>
-                    <div class="logo-title">God Eyes</div>
-                    <div class="logo-sub">Quản trị hệ thống</div>
-                </div>
+            <div class="sidebar-head">
+                <div class="kicker">Main Account</div>
+                <div class="title">Bảng điều khiển</div>
+                <div class="sub">Quản trị hệ thống God Eyes</div>
             </div>
 
             <nav class="nav">
