@@ -8271,7 +8271,7 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
     ])
     for label, cls, help_text in section_meta:
         group_key = {'NGHIÊM TRỌNG':'DANGER','HƠI NGHIÊM TRỌNG':'NOT REALLY DANGER','BÌNH THƯỜNG':'SAFE'}.get(label, label)
-        items = groups[group_key]
+        items = groups.setdefault(group_key, [])
         if not items:
             continue
         cards = ""
