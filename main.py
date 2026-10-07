@@ -7341,6 +7341,31 @@ def teacher_classes_content(teacher_id: int) -> str:
 
 
 def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
+    """Render a live Teacher Dashboard using the real Server history."""
+    from datetime import timedelta
+
+    vn_tz = ZoneInfo("Asia/Ho_Chi_Minh")
+    now_vn = datetime.now(vn_tz)
+    today_vn = now_vn.date()
+    week_start = today_vn - timedelta(days=today_vn.weekday())
+    next_week_start = week_start + timedelta(days=7)
+    week_end = next_week_start - timedelta(days=1)
+
+    day_labels = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]
+    week_counts = [0] * 7
+    week_class_counts = {}
+    all_class_counts = {}
+    top_students = []
+    top_events = []
+    class_count = 0
+    student_count = 0
+    total_sessions = 0
+    total_observations = 0
+    total_evidence = 0
+    unique_measured_students = 0
+    today_sessions = 0
+    today_observations = 0
+
     with SessionLocal() as db:
         class_count = int(db.scalar(
             text("""
@@ -7350,6 +7375,7 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
             """),
             {"teacher_id": teacher_id}
         ) or 0)
+
         student_count = int(db.scalar(
             text("""
                 SELECT COUNT(DISTINCT cs.student_id)
@@ -7361,88 +7387,452 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
             {"teacher_id": teacher_id}
         ) or 0)
 
+        total_sessions = int(db.scalar(
+            text("""
+                SELECT COUNT(*) FROM sessions
+                WHERE teacher_id = :teacher_id
+                  AND COALESCE(deleted_at, '') = ''
+            """),
+            {"teacher_id": teacher_id}
+        ) or 0)
+
+        total_observations = int(db.scalar(
+            text("""
+                SELECT COUNT(*)
+                FROM observations o
+                JOIN sessions s ON s.id = o.session_id
+                WHERE s.teacher_id = :teacher_id
+                  AND COALESCE(s.deleted_at, '') = ''
+            """),
+            {"teacher_id": teacher_id}
+        ) or 0)
+
+        total_evidence = int(db.scalar(
+            text("""
+                SELECT COUNT(*)
+                FROM evidence e
+                JOIN sessions s ON s.id = e.session_id
+                WHERE s.teacher_id = :teacher_id
+                  AND COALESCE(s.deleted_at, '') = ''
+            """),
+            {"teacher_id": teacher_id}
+        ) or 0)
+
+        unique_measured_students = int(db.scalar(
+            text("""
+                SELECT COUNT(DISTINCT ss.student_id)
+                FROM session_students ss
+                JOIN sessions s ON s.id = ss.session_id
+                WHERE s.teacher_id = :teacher_id
+                  AND COALESCE(s.deleted_at, '') = ''
+                  AND ss.student_id > 0
+            """),
+            {"teacher_id": teacher_id}
+        ) or 0)
+
+        session_rows = db.execute(
+            text("""
+                SELECT s.id, s.started_at,
+                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name
+                FROM sessions s
+                LEFT JOIN classes c ON c.id = s.class_id
+                WHERE s.teacher_id = :teacher_id
+                  AND COALESCE(s.deleted_at, '') = ''
+                ORDER BY s.started_at ASC, s.id ASC
+            """),
+            {"teacher_id": teacher_id}
+        ).mappings().all()
+
+        top_students = db.execute(
+            text("""
+                SELECT o.student_id,
+                       MAX(o.student_code) AS student_code,
+                       MAX(o.full_name) AS full_name,
+                       COUNT(*) AS observation_count
+                FROM observations o
+                JOIN sessions s ON s.id = o.session_id
+                WHERE s.teacher_id = :teacher_id
+                  AND COALESCE(s.deleted_at, '') = ''
+                  AND o.student_id > 0
+                GROUP BY o.student_id
+                ORDER BY COUNT(*) DESC, LOWER(MAX(o.full_name)), o.student_id
+                LIMIT 5
+            """),
+            {"teacher_id": teacher_id}
+        ).mappings().all()
+
+        top_events = db.execute(
+            text("""
+                SELECT UPPER(COALESCE(NULLIF(o.event_type, ''), 'OBSERVATION')) AS event_type,
+                       COUNT(*) AS event_count
+                FROM observations o
+                JOIN sessions s ON s.id = o.session_id
+                WHERE s.teacher_id = :teacher_id
+                  AND COALESCE(s.deleted_at, '') = ''
+                GROUP BY UPPER(COALESCE(NULLIF(o.event_type, ''), 'OBSERVATION'))
+                ORDER BY COUNT(*) DESC, event_type ASC
+                LIMIT 5
+            """),
+            {"teacher_id": teacher_id}
+        ).mappings().all()
+
+        today_start = datetime.combine(today_vn, datetime.min.time(), tzinfo=vn_tz).astimezone(timezone.utc)
+        tomorrow_start = datetime.combine(today_vn + timedelta(days=1), datetime.min.time(), tzinfo=vn_tz).astimezone(timezone.utc)
+        today_start_iso = today_start.isoformat(timespec="seconds")
+        tomorrow_start_iso = tomorrow_start.isoformat(timespec="seconds")
+
+        today_observations = db.scalar(
+            text("""
+                SELECT COUNT(*)
+                FROM observations o
+                JOIN sessions s ON s.id = o.session_id
+                WHERE s.teacher_id = :teacher_id
+                  AND COALESCE(s.deleted_at, '') = ''
+                  AND o.observed_at >= :today_start
+                  AND o.observed_at < :tomorrow_start
+            """),
+            {
+                "teacher_id": teacher_id,
+                "today_start": today_start_iso,
+                "tomorrow_start": tomorrow_start_iso,
+            }
+        )
+        today_observations = int(today_observations or 0)
+
+    for row in session_rows:
+        local_date = _local_date_from_timestamp(row["started_at"])
+        if not local_date:
+            continue
+        try:
+            session_date = datetime.strptime(local_date, "%Y-%m-%d").date()
+        except Exception:
+            continue
+
+        class_name = str(row["class_name"] or "Lớp đã xóa")
+        all_class_counts[class_name] = all_class_counts.get(class_name, 0) + 1
+
+        if session_date == today_vn:
+            today_sessions += 1
+
+        if week_start <= session_date < next_week_start:
+            day_index = (session_date - week_start).days
+            if 0 <= day_index < 7:
+                week_counts[day_index] += 1
+                week_class_counts[class_name] = week_class_counts.get(class_name, 0) + 1
+
+    week_session_total = sum(week_counts)
+    busiest_index = max(range(7), key=lambda i: week_counts[i]) if week_session_total else None
+    least_index = min(range(7), key=lambda i: week_counts[i]) if week_session_total else None
+    busiest_day = day_labels[busiest_index] if busiest_index is not None else "-"
+    least_day = day_labels[least_index] if least_index is not None else "-"
+    busiest_day_count = week_counts[busiest_index] if busiest_index is not None else 0
+    least_day_count = week_counts[least_index] if least_index is not None else 0
+
+    week_top_class = max(week_class_counts.items(), key=lambda item: item[1]) if week_class_counts else ("Chưa có dữ liệu", 0)
+    all_top_class = max(all_class_counts.items(), key=lambda item: item[1]) if all_class_counts else ("Chưa có dữ liệu", 0)
+
+    chart_max = max(week_counts) if week_counts else 0
+    chart_max_scale = max(1, chart_max)
+    chart_points = []
+    for index, count in enumerate(week_counts):
+        x = 50 + index * 100
+        y = 210 - (count / chart_max_scale) * 155
+        chart_points.append(f"{x:.1f},{y:.1f}")
+    chart_points_text = " ".join(chart_points)
+    chart_data = [
+        {
+            "label": day_labels[i],
+            "count": int(week_counts[i]),
+            "date": (week_start + timedelta(days=i)).strftime("%d/%m/%Y"),
+        }
+        for i in range(7)
+    ]
+
+    stat_data = [
+        ("Lớp học", class_count, "đang quản lý"),
+        ("Học sinh", student_count, "trong hồ sơ"),
+        ("Session", total_sessions, "đã ghi nhận"),
+        ("Observation", total_observations, "tổng OB"),
+    ]
+
+    top_students_html = ""
+    for index, row in enumerate(top_students, start=1):
+        name = str(row["full_name"] or "Học sinh #" + str(row["student_id"]))
+        code = str(row["student_code"] or "—")
+        ob_count = int(row["observation_count"] or 0)
+        history_href = f"/teacher?section=history&q={url_quote(name)}"
+        top_students_html += f"""
+            <a class="gdb-student-row" href="{history_href}">
+                <div class="gdb-rank">{index:02d}</div>
+                <div class="gdb-student-avatar">{escape(name[:1].upper())}</div>
+                <div class="gdb-student-info">
+                    <strong>{escape(name)}</strong>
+                    <span>{escape(code)}</span>
+                </div>
+                <div class="gdb-ob-badge"><b>{ob_count}</b><span>OB</span></div>
+            </a>
+        """
+    if not top_students_html:
+        top_students_html = '<div class="gdb-empty">Chưa có observation có thể xếp hạng học sinh.</div>'
+
+    top_events_html = ""
+    for row in top_events:
+        event_name = str(row["event_type"] or "OBSERVATION").replace("_", " ").strip()
+        event_count = int(row["event_count"] or 0)
+        width = (event_count / max(1, int(top_events[0]["event_count"] or 1))) * 100 if top_events else 0
+        top_events_html += f"""
+            <div class="gdb-event-row">
+                <div class="gdb-event-head"><span>{escape(event_name)}</span><b>{event_count}</b></div>
+                <div class="gdb-event-track"><i style="width:{max(4, min(100, width)):.1f}%"></i></div>
+            </div>
+        """
+    if not top_events_html:
+        top_events_html = '<div class="gdb-empty">Chưa có loại observation nào được ghi nhận.</div>'
+
+    bars_html = ""
+    for index, item in enumerate(chart_data):
+        count = int(item["count"])
+        height = (count / chart_max_scale) * 100 if chart_max_scale else 0
+        bars_html += f"""
+            <div class="gdb-bar-column" style="--i:{index};">
+                <div class="gdb-tooltip">
+                    <strong>{count}</strong>
+                    <span>session · {escape(item['date'])}</span>
+                </div>
+                <div class="gdb-bar-track">
+                    <div class="gdb-bar-fill" style="--bar-height:{height:.2f}%"></div>
+                </div>
+                <div class="gdb-day-label">{item['label']}</div>
+            </div>
+        """
+
+    clock_seed_time = now_vn.strftime("%H:%M:%S")
+    clock_seed_date = now_vn.strftime("%d/%m/%Y")
+    week_range = f"{week_start.strftime('%d/%m')} → {week_end.strftime('%d/%m/%Y')}"
+    identity_name = escape(full_name or "Giáo viên")
+
     return f"""
-        <section class="cards">
-            <div class="stat-card">
-                <div class="stat-label">Lớp học của tôi</div>
-                <div class="stat-value">{class_count}</div>
-                <div class="stat-note">Lớp đang quản lý</div>
+        <section class="gdb-topline">
+            <div>
+                <div class="gdb-eyebrow">GOD EYES · TEACHER ANALYTICS</div>
+                <h2 class="gdb-title">Tổng quan dữ liệu</h2>
+                <p class="gdb-subtitle">Theo dõi hoạt động đo, observation và những điểm cần giáo viên xem lại từ dữ liệu đã lưu trên Server.</p>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">Tổng số học sinh</div>
-                <div class="stat-value">{student_count}</div>
-                <div class="stat-note">Học sinh đang quản lý</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Buổi học đã ghi nhận</div>
-                <div class="stat-value">0</div>
-                <div class="stat-note">Chưa có buổi học</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Hoạt động hôm nay</div>
-                <div class="stat-value">0</div>
-                <div class="stat-note">Chưa có hoạt động</div>
+            <div class="gdb-clock-card">
+                <div class="gdb-live-dot"></div>
+                <div>
+                    <div id="gdb-clock-time" class="gdb-clock-time">{clock_seed_time}</div>
+                    <div id="gdb-clock-date" class="gdb-clock-date">{clock_seed_date}</div>
+                </div>
             </div>
         </section>
 
-        <div class="quick-layout">
-            <section class="panel">
-                <div class="panel-head">
+        <section class="gdb-stat-grid">
+            {''.join(f'<div class="gdb-stat-card"><div class="gdb-stat-label">{label}</div><div class="gdb-stat-value">{value:,}</div><div class="gdb-stat-note">{note}</div></div>' for label, value, note in stat_data)}
+        </section>
+
+        <section class="gdb-main-grid">
+            <section class="panel gdb-panel gdb-chart-panel">
+                <div class="gdb-panel-head">
                     <div>
-                        <h2 class="panel-title">Thao tác nhanh</h2>
-                        <div class="panel-subtitle">Các chức năng giáo viên sử dụng thường xuyên.</div>
+                        <div class="gdb-section-kicker">WEEKLY ACTIVITY</div>
+                        <h2 class="gdb-panel-title">Tần suất đo trong tuần</h2>
+                        <p class="gdb-panel-subtitle">{escape(week_range)} · tự động bắt đầu lại chu kỳ vào thứ Hai, không xóa dữ liệu History.</p>
+                    </div>
+                    <div class="gdb-chart-summary">
+                        <strong>{week_session_total}</strong>
+                        <span>session tuần này</span>
                     </div>
                 </div>
 
-                <div class="quick-grid">
-                    <a class="quick-card" href="/teacher?section=classes">
-                        <div class="quick-icon">{ICON_CLASSES}</div>
-                        <div class="quick-title">Quản lý lớp học</div>
-                        <div class="quick-text">Tạo lớp và quản lý danh sách học sinh.</div>
-                    </a>
-                    <a class="quick-card" href="/teacher?section=students">
-                        <div class="quick-icon">{ICON_STUDENTS}</div>
-                        <div class="quick-title">Quản lý học sinh</div>
-                        <div class="quick-text">Thêm học sinh, ảnh và dữ liệu nhận diện.</div>
-                    </a>
-                    <a class="quick-card" href="/teacher?section=history">
-                        <div class="quick-icon">{ICON_HISTORY}</div>
-                        <div class="quick-title">Xem lịch sử</div>
-                        <div class="quick-text">Xem lại các buổi học và minh chứng.</div>
-                    </a>
-                    <a class="quick-card" href="/teacher?section=app">
-                        <div class="quick-icon">{ICON_APP}</div>
-                        <div class="quick-title">Mở ứng dụng God Eyes</div>
-                        <div class="quick-text">Tải và sử dụng ứng dụng theo lớp học.</div>
-                    </a>
+                <div class="gdb-chart-stage">
+                    <div class="gdb-chart-grid-lines">
+                        <span></span><span></span><span></span><span></span>
+                    </div>
+                    <div class="gdb-bars">{bars_html}</div>
+                    <svg class="gdb-trend" viewBox="0 0 700 240" preserveAspectRatio="none" aria-hidden="true">
+                        <polyline class="gdb-trend-line" points="{chart_points_text}" fill="none"></polyline>
+                        {''.join(f'<circle class="gdb-trend-point" cx="{50 + i * 100}" cy="{210 - (week_counts[i] / chart_max_scale) * 155:.1f}" r="4.8"></circle>' for i in range(7))}
+                    </svg>
+                </div>
+
+                <div class="gdb-chart-insights">
+                    <div class="gdb-insight"><span>Ngày nhiều nhất</span><strong>{busiest_day if busiest_index is not None else 'Chưa có dữ liệu'}</strong><small>{busiest_day_count} session</small></div>
+                    <div class="gdb-insight"><span>Ngày ít nhất</span><strong>{least_day if least_index is not None else 'Chưa có dữ liệu'}</strong><small>{least_day_count} session</small></div>
+                    <div class="gdb-insight"><span>Lớp đo nhiều nhất</span><strong>{escape(str(week_top_class[0]))}</strong><small>{int(week_top_class[1])} session tuần này</small></div>
                 </div>
             </section>
 
-            <section class="panel">
-                <div class="panel-head">
+            <section class="panel gdb-panel gdb-today-panel">
+                <div class="gdb-panel-head">
                     <div>
-                        <h2 class="panel-title">Hôm nay</h2>
-                        <div class="panel-subtitle">Thông tin hoạt động gần nhất của giáo viên.</div>
+                        <div class="gdb-section-kicker">LIVE SNAPSHOT</div>
+                        <h2 class="gdb-panel-title">Hôm nay</h2>
+                        <p class="gdb-panel-subtitle">Tài khoản đang xem: {identity_name}</p>
                     </div>
+                    <span class="gdb-status-pill">ACTIVE</span>
                 </div>
-                <div class="today-box">
-                    <div class="today-row">
-                        <div class="today-label">Tài khoản</div>
-                        <div class="today-value">{escape(full_name)}</div>
-                    </div>
-                    <div class="today-row">
-                        <div class="today-label">Trạng thái hệ thống</div>
-                        <div class="today-value">Đang hoạt động</div>
-                    </div>
-                    <div class="empty" style="margin-top:10px;">
-                        Chưa có hoạt động nào được ghi nhận hôm nay.
-                    </div>
+                <div class="gdb-today-grid">
+                    <div class="gdb-mini-metric"><span>Session</span><strong>{today_sessions}</strong><small>hôm nay</small></div>
+                    <div class="gdb-mini-metric"><span>Observation</span><strong>{today_observations}</strong><small>hôm nay</small></div>
+                    <div class="gdb-mini-metric"><span>Học sinh đã đo</span><strong>{unique_measured_students}</strong><small>toàn lịch sử</small></div>
+                    <div class="gdb-mini-metric"><span>Evidence</span><strong>{total_evidence:,}</strong><small>đã lưu</small></div>
+                </div>
+                <div class="gdb-today-note">
+                    <span class="gdb-note-dot"></span>
+                    <div><b>Hệ thống dữ liệu</b><p>Dashboard chỉ tổng hợp dữ liệu; session, observation và evidence gốc vẫn được giữ nguyên.</p></div>
                 </div>
             </section>
-        </div>
+        </section>
+
+        <section class="gdb-secondary-grid">
+            <section class="panel gdb-panel">
+                <div class="gdb-panel-head">
+                    <div>
+                        <div class="gdb-section-kicker">STUDENT RISK SIGNALS</div>
+                        <h2 class="gdb-panel-title">Học sinh có nhiều OB nhất</h2>
+                        <p class="gdb-panel-subtitle">Xếp theo tổng số observation trong toàn bộ lịch sử của giáo viên.</p>
+                    </div>
+                    <div class="gdb-top-class-mini"><span>Lớp đo nhiều nhất</span><b>{escape(str(all_top_class[0]))}</b><small>{int(all_top_class[1])} session</small></div>
+                </div>
+                <div class="gdb-student-list">{top_students_html}</div>
+            </section>
+
+            <section class="panel gdb-panel">
+                <div class="gdb-panel-head">
+                    <div>
+                        <div class="gdb-section-kicker">OBSERVATION BREAKDOWN</div>
+                        <h2 class="gdb-panel-title">Các loại OB thường gặp</h2>
+                        <p class="gdb-panel-subtitle">Tổng hợp nhanh những event_type được lưu nhiều nhất.</p>
+                    </div>
+                </div>
+                <div class="gdb-event-list">{top_events_html}</div>
+                <a class="gdb-history-link" href="/teacher?section=history">Mở History để xem session, observation và evidence →</a>
+            </section>
+        </section>
+
+        <style>
+            .gdb-topline {{ display:flex; align-items:flex-end; justify-content:space-between; gap:24px; margin-bottom:18px; }}
+            .gdb-eyebrow, .gdb-section-kicker {{ font-size:10px; font-weight:850; letter-spacing:1.45px; color:var(--blue); }}
+            .gdb-title {{ margin:7px 0 0; font-size:29px; line-height:1.08; font-weight:850; letter-spacing:-.7px; }}
+            .gdb-subtitle {{ margin:8px 0 0; max-width:760px; color:var(--muted); font-size:13px; line-height:1.55; }}
+            .gdb-clock-card {{ min-width:190px; display:flex; align-items:center; gap:11px; padding:12px 15px; border:1px solid #dbe7f0; border-radius:16px; background:linear-gradient(135deg,#ffffff,#f6fbff); box-shadow:0 8px 22px rgba(43,95,142,.06); }}
+            .gdb-live-dot {{ width:8px; height:8px; border-radius:50%; background:var(--blue); box-shadow:0 0 0 5px var(--blue-soft); animation:gdbPulse 1.8s ease-in-out infinite; }}
+            .gdb-clock-time {{ font-size:22px; font-weight:850; letter-spacing:1.1px; line-height:1.05; color:var(--text); font-variant-numeric:tabular-nums; }}
+            .gdb-clock-date {{ margin-top:5px; font-size:11px; color:var(--muted); }}
+            .gdb-stat-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:18px; }}
+            .gdb-stat-card {{ position:relative; overflow:hidden; min-height:120px; padding:18px; background:#fff; border:1px solid var(--line); border-radius:17px; box-shadow:0 8px 24px rgba(43,95,142,.05); }}
+            .gdb-stat-card::after {{ content:""; position:absolute; width:90px; height:90px; right:-34px; bottom:-45px; border-radius:50%; background:var(--blue-soft); opacity:.8; }}
+            .gdb-stat-label {{ color:var(--muted); font-size:12px; font-weight:760; }}
+            .gdb-stat-value {{ margin-top:9px; font-size:29px; font-weight:860; letter-spacing:-.5px; font-variant-numeric:tabular-nums; }}
+            .gdb-stat-note {{ margin-top:5px; color:#8a99a8; font-size:11px; }}
+            .gdb-main-grid {{ display:grid; grid-template-columns:minmax(0,1.55fr) minmax(300px,.75fr); gap:18px; margin-bottom:18px; }}
+            .gdb-secondary-grid {{ display:grid; grid-template-columns:minmax(0,1.25fr) minmax(320px,.85fr); gap:18px; }}
+            .gdb-panel {{ overflow:hidden; }}
+            .gdb-panel-head {{ display:flex; justify-content:space-between; align-items:flex-start; gap:15px; padding:20px 22px 0; }}
+            .gdb-panel-title {{ margin:6px 0 0; font-size:19px; font-weight:830; letter-spacing:-.2px; }}
+            .gdb-panel-subtitle {{ margin:6px 0 0; color:var(--muted); font-size:12px; line-height:1.5; }}
+            .gdb-chart-summary {{ display:flex; flex-direction:column; align-items:flex-end; min-width:96px; padding:9px 11px; border:1px solid #dce9f3; border-radius:12px; background:#f8fbfe; }}
+            .gdb-chart-summary strong {{ color:var(--blue-dark); font-size:18px; line-height:1; }}
+            .gdb-chart-summary span {{ margin-top:4px; color:#8392a1; font-size:10px; white-space:nowrap; }}
+            .gdb-chart-stage {{ position:relative; height:300px; margin:16px 18px 0; border-radius:14px; background:linear-gradient(180deg,#fbfdff,#f7fbfe); border:1px solid #edf3f7; overflow:hidden; }}
+            .gdb-chart-grid-lines {{ position:absolute; left:30px; right:15px; top:16px; bottom:52px; display:flex; flex-direction:column; justify-content:space-between; }}
+            .gdb-chart-grid-lines span {{ display:block; border-top:1px dashed #dfeaf2; }}
+            .gdb-bars {{ position:absolute; left:31px; right:12px; top:17px; bottom:48px; display:grid; grid-template-columns:repeat(7,1fr); gap:9px; align-items:end; }}
+            .gdb-bar-column {{ position:relative; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; min-width:0; }}
+            .gdb-bar-track {{ width:70%; min-width:26px; max-width:66px; height:100%; display:flex; align-items:flex-end; justify-content:center; }}
+            .gdb-bar-fill {{ width:100%; height:var(--bar-height); min-height:0; border-radius:11px 11px 4px 4px; background:linear-gradient(180deg,var(--blue),var(--blue-dark)); box-shadow:0 7px 17px rgba(43,120,197,.18); transform-origin:bottom; animation:gdbRise .72s cubic-bezier(.2,.78,.25,1) calc(var(--i) * 70ms) both; transition:filter .18s ease, transform .18s ease, box-shadow .18s ease; }}
+            .gdb-bar-column:hover .gdb-bar-fill {{ filter:brightness(1.06); transform:translateY(-2px); box-shadow:0 12px 23px rgba(43,120,197,.25); }}
+            .gdb-day-label {{ margin-top:10px; color:#6f8091; font-size:11px; font-weight:820; }}
+            .gdb-tooltip {{ position:absolute; left:50%; bottom:38%; z-index:4; width:max-content; max-width:150px; padding:8px 10px; border-radius:10px; background:#10253b; color:#fff; opacity:0; pointer-events:none; transform:translate(-50%,7px); transition:opacity .16s ease, transform .16s ease; box-shadow:0 12px 22px rgba(16,37,59,.18); text-align:center; }}
+            .gdb-tooltip strong {{ display:block; font-size:15px; line-height:1; }}
+            .gdb-tooltip span {{ display:block; margin-top:4px; color:#c8d6e3; font-size:9px; white-space:nowrap; }}
+            .gdb-bar-column:hover .gdb-tooltip {{ opacity:1; transform:translate(-50%,-2px); }}
+            .gdb-trend {{ position:absolute; inset:16px 12px 48px 31px; width:calc(100% - 43px); height:calc(100% - 64px); overflow:visible; pointer-events:none; z-index:3; }}
+            .gdb-trend-line {{ stroke:var(--blue-dark); stroke-width:4; stroke-linecap:round; stroke-linejoin:round; filter:drop-shadow(0 3px 5px rgba(43,120,197,.18)); stroke-dasharray:1000; stroke-dashoffset:1000; animation:gdbDraw 1.05s ease .22s forwards; }}
+            .gdb-trend-point {{ fill:#fff; stroke:var(--blue-dark); stroke-width:3; transform-box:fill-box; transform-origin:center; animation:gdbPoint .32s ease calc(.35s + var(--point-i, 0) * 70ms) both; }}
+            .gdb-trend-point:nth-child(2) {{ --point-i:0; }}
+            .gdb-trend-point:nth-child(3) {{ --point-i:1; }}
+            .gdb-trend-point:nth-child(4) {{ --point-i:2; }}
+            .gdb-trend-point:nth-child(5) {{ --point-i:3; }}
+            .gdb-trend-point:nth-child(6) {{ --point-i:4; }}
+            .gdb-trend-point:nth-child(7) {{ --point-i:5; }}
+            .gdb-trend-point:nth-child(8) {{ --point-i:6; }}
+            .gdb-chart-insights {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; padding:12px 22px 20px; }}
+            .gdb-insight {{ padding:11px 12px; border:1px solid #e4edf4; border-radius:12px; background:#fbfdff; }}
+            .gdb-insight span {{ display:block; color:#8696a5; font-size:10px; font-weight:700; }}
+            .gdb-insight strong {{ display:block; margin-top:5px; font-size:13px; font-weight:820; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+            .gdb-insight small {{ display:block; margin-top:3px; color:#7e8f9f; font-size:10px; }}
+            .gdb-status-pill {{ display:inline-flex; align-items:center; min-height:28px; padding:0 9px; border-radius:999px; background:var(--blue-soft); border:1px solid #d5e8f7; color:var(--blue-dark); font-size:9px; font-weight:850; letter-spacing:1px; }}
+            .gdb-today-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:19px 22px 12px; }}
+            .gdb-mini-metric {{ padding:13px; background:#fbfdff; border:1px solid #e5eef4; border-radius:13px; }}
+            .gdb-mini-metric span {{ display:block; color:#8595a5; font-size:10px; font-weight:760; }}
+            .gdb-mini-metric strong {{ display:block; margin-top:6px; font-size:22px; font-weight:850; font-variant-numeric:tabular-nums; }}
+            .gdb-mini-metric small {{ display:block; margin-top:3px; color:#96a3af; font-size:9px; }}
+            .gdb-today-note {{ display:flex; gap:10px; margin:2px 22px 20px; padding:12px; border-radius:12px; background:#f7fbfe; border:1px solid #e0edf5; }}
+            .gdb-note-dot {{ width:8px; height:8px; flex:0 0 8px; margin-top:4px; border-radius:50%; background:var(--blue); box-shadow:0 0 0 4px var(--blue-soft); }}
+            .gdb-today-note b {{ font-size:11px; }}
+            .gdb-today-note p {{ margin:4px 0 0; color:var(--muted); font-size:10px; line-height:1.5; }}
+            .gdb-student-list {{ padding:14px 22px 20px; }}
+            .gdb-student-row {{ display:flex; align-items:center; gap:11px; min-height:57px; padding:8px 9px; border:1px solid #e7eef4; border-radius:13px; text-decoration:none; color:var(--text); background:#fff; transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease; }}
+            .gdb-student-row + .gdb-student-row {{ margin-top:8px; }}
+            .gdb-student-row:hover {{ transform:translateY(-1px); border-color:#c8deee; background:#fbfdff; box-shadow:0 7px 18px rgba(43,95,142,.07); }}
+            .gdb-rank {{ width:27px; color:#95a4b2; font-size:10px; font-weight:850; text-align:center; }}
+            .gdb-student-avatar {{ width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; background:var(--blue-soft); color:var(--blue-dark); font-size:13px; font-weight:850; }}
+            .gdb-student-info {{ min-width:0; flex:1; }}
+            .gdb-student-info strong {{ display:block; font-size:12px; font-weight:820; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+            .gdb-student-info span {{ display:block; margin-top:3px; color:#94a2af; font-size:9px; }}
+            .gdb-ob-badge {{ min-width:47px; padding:6px 8px; border-radius:10px; background:#fff3f3; border:1px solid #f1dfe1; text-align:center; }}
+            .gdb-ob-badge b {{ display:block; color:#b4232d; font-size:15px; line-height:1; }}
+            .gdb-ob-badge span {{ display:block; margin-top:3px; color:#c06a70; font-size:8px; font-weight:820; }}
+            .gdb-top-class-mini {{ min-width:150px; padding:9px 10px; border-radius:12px; background:#f8fbfe; border:1px solid #e0ebf3; }}
+            .gdb-top-class-mini span {{ display:block; color:#8b9aa8; font-size:9px; }}
+            .gdb-top-class-mini b {{ display:block; margin-top:3px; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+            .gdb-top-class-mini small {{ display:block; margin-top:3px; color:#95a3af; font-size:9px; }}
+            .gdb-event-list {{ padding:14px 22px 10px; }}
+            .gdb-event-row + .gdb-event-row {{ margin-top:14px; }}
+            .gdb-event-head {{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px; }}
+            .gdb-event-head span {{ color:#566a7d; font-size:11px; font-weight:740; text-transform:capitalize; }}
+            .gdb-event-head b {{ font-size:11px; font-weight:850; }}
+            .gdb-event-track {{ height:6px; border-radius:999px; background:#edf3f7; overflow:hidden; }}
+            .gdb-event-track i {{ display:block; height:100%; border-radius:999px; background:linear-gradient(90deg,var(--blue),var(--blue-dark)); }}
+            .gdb-history-link {{ display:flex; align-items:center; justify-content:center; margin:4px 22px 20px; min-height:40px; border:1px solid #dce9f2; border-radius:11px; background:#fbfdff; color:var(--blue-dark); text-decoration:none; font-size:11px; font-weight:780; transition:background .16s ease, border-color .16s ease, transform .16s ease; }}
+            .gdb-history-link:hover {{ background:var(--blue-soft); border-color:#c8deed; transform:translateY(-1px); }}
+            .gdb-empty {{ padding:24px 10px; color:#8b99a7; text-align:center; font-size:11px; line-height:1.5; }}
+            @keyframes gdbRise {{ 0% {{ height:0; opacity:.2; transform:translateY(12px) scaleY(.55); }} 70% {{ opacity:1; }} 100% {{ height:var(--bar-height); opacity:1; transform:translateY(0) scaleY(1); }} }}
+            @keyframes gdbDraw {{ to {{ stroke-dashoffset:0; }} }}
+            @keyframes gdbPoint {{ from {{ opacity:0; transform:scale(.2); }} to {{ opacity:1; transform:scale(1); }} }}
+            @keyframes gdbPulse {{ 0%,100% {{ opacity:1; transform:scale(1); }} 50% {{ opacity:.65; transform:scale(.82); }} }}
+            @media (max-width:1100px) {{ .gdb-stat-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} .gdb-main-grid, .gdb-secondary-grid {{ grid-template-columns:1fr; }} }}
+            @media (max-width:760px) {{ .gdb-topline {{ align-items:flex-start; flex-direction:column; }} .gdb-clock-card {{ width:100%; }} .gdb-stat-grid {{ grid-template-columns:1fr 1fr; }} .gdb-chart-insights {{ grid-template-columns:1fr; }} .gdb-panel-head {{ flex-direction:column; }} .gdb-chart-summary, .gdb-top-class-mini {{ align-self:flex-start; }} }}
+            @media (max-width:520px) {{ .gdb-stat-grid {{ grid-template-columns:1fr; }} .gdb-chart-stage {{ margin-left:10px; margin-right:10px; }} .gdb-today-grid {{ grid-template-columns:1fr; }} }}
+        </style>
+
+        <script>
+        (() => {{
+            const data = {json.dumps(chart_data, ensure_ascii=False)};
+            const timeEl = document.getElementById('gdb-clock-time');
+            const dateEl = document.getElementById('gdb-clock-date');
+            const fmt = new Intl.DateTimeFormat('vi-VN', {{
+                timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+            }});
+            const fmtDate = new Intl.DateTimeFormat('vi-VN', {{
+                timeZone: 'Asia/Ho_Chi_Minh', weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric'
+            }});
+            function tick() {{
+                const now = new Date();
+                if (timeEl) timeEl.textContent = fmt.format(now);
+                if (dateEl) {{
+                    let value = fmtDate.format(now);
+                    value = value.charAt(0).toUpperCase() + value.slice(1);
+                    dateEl.textContent = value;
+                }}
+            }}
+            tick();
+            window.setInterval(tick, 1000);
+        }})();
+        </script>
     """
-
-
 
 def format_server_dt(value) -> str:
     """Format stored timestamps in Vietnam local time."""
