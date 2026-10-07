@@ -18,8 +18,6 @@ class ServerClient:
         self.timeout = float(timeout)
         self.access_token = ""
         self.profile = None
-        self.device_token = ""
-        self.launch_context = {}
 
     @property
     def connected(self) -> bool:
@@ -103,117 +101,13 @@ class ServerClient:
         self.profile = self.get_me()
         return self.profile
 
-    def exchange_launch_token(self, launch_token: str) -> dict:
-        token = str(launch_token or "").strip()
-        if not token:
-            raise ServerClientError("Launch token is empty.")
-        # Do not send an existing bearer token to this bootstrap endpoint.
-        old = self.access_token
-        self.access_token = ""
-        try:
-            data = self._request(
-                "POST",
-                "/api/v1/app/launch/exchange",
-                self._json_bytes({"token": token}),
-            )
-        finally:
-            self.access_token = old
-        if not isinstance(data, dict) or not data.get("access_token"):
-            raise ServerClientError("Server không trả về access token từ launch token.")
-        if str(data.get("role", "")).upper() != "TEACHER":
-            raise ServerClientError("God Eyes Client chỉ cho phép tài khoản giáo viên.")
-        self.access_token = str(data["access_token"])
-        self.device_token = str(data.get("device_token") or self.device_token or "")
-        self.launch_context = data.get("launch_context") or {}
-        self.profile = self.get_me()
-        return self.profile
-
-    def register_device(self, device_label: str = "God Eyes Desktop", app_version: str = "") -> str:
-        if not self.access_token:
-            raise ServerClientError("Chưa đăng nhập để đăng ký thiết bị.")
-        payload = {
-            "device_label": str(device_label)[:120],
-            "app_version": str(app_version)[:40],
-        }
-        data = self._request("POST", "/api/v1/app/device/register", self._json_bytes(payload))
-        token = str(data.get("device_token") or "") if isinstance(data, dict) else ""
-        if not token:
-            raise ServerClientError("Server không cấp được device token.")
-        self.device_token = token
-        return token
-
-    def login_with_device_token(self, device_token: str) -> dict:
-        token = str(device_token or "").strip()
-        if not token:
-            raise ServerClientError("Device token is empty.")
-        # This endpoint intentionally does not use the normal access token.
-        old = self.access_token
-        self.access_token = ""
-        try:
-            data = self._request(
-                "POST",
-                "/api/v1/app/device/exchange",
-                self._json_bytes({"device_token": token}),
-            )
-        finally:
-            self.access_token = old
-        if not isinstance(data, dict) or not data.get("access_token"):
-            raise ServerClientError("Server không trả về access token từ device login.")
-        if str(data.get("role", "")).upper() != "TEACHER":
-            raise ServerClientError("God Eyes Client chỉ cho phép tài khoản giáo viên.")
-        self.access_token = str(data["access_token"])
-        self.device_token = token
-        self.profile = self.get_me()
-        return self.profile
-
-    def revoke_device(self) -> bool:
-        token = str(self.device_token or "").strip()
-        if not token or not self.access_token:
-            return False
-        try:
-            data = self._request(
-                "POST",
-                "/api/v1/app/device/revoke",
-                self._json_bytes({"device_token": token}),
-            )
-            return bool(data.get("revoked")) if isinstance(data, dict) else False
-        except Exception:
-            return False
-
-    def logout(self, revoke_device: bool = False):
-        if revoke_device:
-            self.revoke_device()
+    def logout(self):
         try:
             self._request("POST", "/auth/logout")
         except Exception:
             pass
         self.access_token = ""
         self.profile = None
-        if revoke_device:
-            self.device_token = ""
-
-    def get_teacher_preferences(self) -> dict:
-        data = self._request("GET", "/api/v1/teacher/preferences")
-        if not isinstance(data, dict):
-            raise ServerClientError("Phản hồi cài đặt giáo viên không hợp lệ.")
-        return data
-
-    def save_teacher_preferences(self, language: str, theme: str, camera: dict | None = None) -> dict:
-        payload = {
-            "language": str(language or "vi").strip().lower(),
-            "theme": str(theme or "light").strip().lower(),
-        }
-        if isinstance(camera, dict):
-            for key in (
-                "camera_source", "camera_brand", "camera_device_index", "camera_host", "camera_port",
-                "camera_stream", "camera_username",
-            ):
-                if key in camera:
-                    payload[key] = camera[key]
-        data = self._request("POST", "/api/v1/teacher/preferences", self._json_bytes(payload))
-        if not isinstance(data, dict):
-            raise ServerClientError("Server không lưu được cài đặt giáo viên.")
-        return data
 
     def get_me(self) -> dict:
         data = self._request("GET", "/api/v1/me")
@@ -233,49 +127,12 @@ class ServerClient:
             raise ServerClientError("Danh sách học sinh không hợp lệ.")
         return data
 
-    def get_main_cameras(self) -> list[dict]:
-        data = self._request("GET", "/api/v1/cameras")
-        items = data.get("items") if isinstance(data, dict) else None
-        return list(items or [])
-
-    def add_main_camera(self, camera: dict) -> dict:
-        payload = {
-            "name": str(camera.get("name") or "Wi-Fi Camera")[:120],
-            "brand": str(camera.get("brand") or "")[:40],
-            "model": str(camera.get("model") or "")[:80],
-            "source_type": str(camera.get("source_type") or "wifi_camera"),
-            "device_id": str(camera.get("device_id") or "")[:180],
-            "host": str(camera.get("host") or "")[:120],
-            "port": int(camera.get("port") or 554),
-            "stream": str(camera.get("stream") or "stream1"),
-            "username": str(camera.get("username") or "")[:120],
-            "password": str(camera.get("password") or ""),
-        }
-        data = self._request("POST", "/api/v1/cameras", self._json_bytes(payload))
-        if not isinstance(data, dict) or not data.get("id"):
-            raise ServerClientError("Server không lưu được camera.")
-        return data
-
-    def touch_main_camera(self, camera_id: int) -> dict:
-        data = self._request("POST", f"/api/v1/cameras/{int(camera_id)}/touch")
-        return data if isinstance(data, dict) else {}
-
-    def create_session(
-        self,
-        class_id: int,
-        client_version: str,
-        camera_type: str = "WEBCAM",
-        scan_date: str = "",
-    ) -> dict:
+    def create_session(self, class_id: int, client_version: str, camera_type: str = "WEBCAM") -> dict:
         payload = {
             "class_id": int(class_id),
             "client_version": str(client_version)[:40],
             "camera_type": str(camera_type).upper()[:40],
         }
-        scan_date_value = str(scan_date or "").strip()[:10]
-        if scan_date_value:
-            payload["scan_date"] = scan_date_value
-
         data = self._request("POST", "/api/v1/sessions", self._json_bytes(payload))
         if not isinstance(data, dict) or not data.get("session_id"):
             raise ServerClientError("Server không tạo được session.")
