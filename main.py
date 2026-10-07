@@ -8307,7 +8307,7 @@ def teacher_history_day_student_content(teacher_id: int, date_str: str, student_
     if student is None:
         return None
     en = language == 'en'
-    back = 'Back to daily history' if en else 'Quay lại lịch sử trong ngày'
+    back = f'Back to {_display_date(str(date_str))}' if en else f'Quay lại ngày {_display_date(str(date_str))}'
     session_label = 'sessions' if en else 'buổi học'
     session_cards = ''
     for sess_id in student['session_ids']:
@@ -8349,8 +8349,48 @@ def teacher_history_day_student_content(teacher_id: int, date_str: str, student_
         <style>
 
             .daily-student-panel {{ padding:28px; }}
-            .daily-student-panel .v15-back {{ display:inline-flex; align-items:center; gap:6px; margin-bottom:13px; color:#3d607d; text-decoration:none; font-size:12px; font-weight:760; }}
-            .daily-student-panel .v15-back:hover {{ color:#1f5f9f; }}
+            .daily-student-panel .v15-back {{
+                display:inline-flex;
+                align-items:center;
+                gap:8px;
+                min-height:38px;
+                padding:0 13px;
+                margin-bottom:15px;
+                box-sizing:border-box;
+                border:1px solid #d7e5f1;
+                border-radius:11px;
+                background:linear-gradient(180deg,#ffffff 0%,#f6faff 100%);
+                color:#315774;
+                text-decoration:none;
+                font-size:11px;
+                font-weight:790;
+                box-shadow:0 5px 14px rgba(43,95,142,.055);
+                transition:transform .16s ease,border-color .16s ease,background .16s ease,box-shadow .16s ease,color .16s ease;
+            }}
+            .daily-student-panel .v15-back::before {{
+                content:'←';
+                width:22px;
+                height:22px;
+                border-radius:7px;
+                display:inline-flex;
+                align-items:center;
+                justify-content:center;
+                box-sizing:border-box;
+                background:#eaf4ff;
+                border:1px solid #d4e6f6;
+                color:#1f5f9f;
+                font-size:13px;
+                font-weight:850;
+                line-height:1;
+            }}
+            .daily-student-panel .v15-back:hover {{
+                transform:translateY(-1px);
+                border-color:#9fc2df;
+                background:linear-gradient(180deg,#ffffff 0%,#eef7ff 100%);
+                color:#1f5f9f;
+                box-shadow:0 8px 18px rgba(43,95,142,.09);
+            }}
+            .daily-student-panel .v15-back:hover::before {{ background:#dff0ff; border-color:#bddbf1; }}
             .daily-student-panel .eyebrow-small {{ color:#6f879d; font-size:9px; font-weight:850; letter-spacing:1px; text-transform:uppercase; }}
             .daily-student-hero {{ display:grid; grid-template-columns:58px minmax(0,1fr) auto; align-items:center; gap:15px; margin:7px 0 21px; padding-top:2px; }}
             .daily-student-hero .history-student-avatar {{ width:54px; height:54px; border-radius:16px; font-size:18px; }}
