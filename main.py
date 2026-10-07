@@ -8252,7 +8252,7 @@ def teacher_history_class_content(teacher_id: int, class_id: int) -> str | None:
         </style>
     '''
 
-def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | None = None) -> str | None:
+def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | None = None, request_page: int = 1) -> str | None:
     prefs = get_teacher_preferences(int(teacher_id))
     language = 'en' if str(prefs.get('language') or 'vi').lower() == 'en' else 'vi'
     rows = _history_daily_rows(teacher_id)
@@ -8272,8 +8272,21 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
     back_href = f'/teacher/history/class/{int(class_id)}' if class_id is not None else '/teacher?section=history'
     back = 'Back to Class' if en and class_id is not None else ('Quay lại lớp' if class_id is not None else ('Back to History' if en else 'Quay lại Lịch sử'))
 
+    # Paginate the daily student list exactly like the Students page: 10 students per page.
+    try:
+        page = max(1, int(request_page))
+    except (TypeError, ValueError):
+        page = 1
+    all_students = list(day_item['student_list'])
+    students_per_page = 10
+    total_students = len(all_students)
+    total_pages = max(1, (total_students + students_per_page - 1) // students_per_page)
+    page = min(page, total_pages)
+    page_start = (page - 1) * students_per_page
+    page_students = all_students[page_start:page_start + students_per_page]
+
     student_cards = ''
-    for index, student in enumerate(day_item['student_list'], start=1):
+    for index, student in enumerate(page_students, start=page_start + 1):
         status_label, status_class, status_note = _history_focus_meta(student['daily_focus'], language)
         student_cards += f'''
             <a class="history-daily-student-card {status_class}" href="/teacher/history/day/{url_quote(str(date_str))}/student/{int(student['student_id'])}{("?class_id=" + str(int(class_id))) if class_id is not None else ""}">
@@ -8289,6 +8302,24 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
                 <div class="history-student-status"><strong>{status_label}</strong><small>{status_note}</small></div>
                 <div class="history-day-arrow">›</div>
             </a>
+        '''
+
+    query_suffix = (f'&class_id={int(class_id)}' if class_id is not None else '')
+    pagination_html = ''
+    if total_pages > 1:
+        prev_href = f'/teacher/history/day/{url_quote(str(date_str))}?page={page-1}{query_suffix}'
+        next_href = f'/teacher/history/day/{url_quote(str(date_str))}?page={page+1}{query_suffix}'
+        prev_html = (f'<a class="history-page-button" href="{prev_href}">← Trước</a>' if page > 1 else '<span class="history-page-button disabled">← Trước</span>')
+        next_html = (f'<a class="history-page-button" href="{next_href}">Sau →</a>' if page < total_pages else '<span class="history-page-button disabled">Sau →</span>')
+        numbers_html = ''.join(
+            f'<a class="history-page-number {"active" if n == page else ""}" href="/teacher/history/day/{url_quote(str(date_str))}?page={n}{query_suffix}">{n}</a>'
+            for n in range(1, total_pages + 1)
+        )
+        pagination_html = f'''
+            <div class="history-daily-pagination">
+                <div class="history-daily-page-info">Trang {page} / {total_pages} · Hiển thị {page_start + 1}–{min(page_start + students_per_page, total_students)} / {total_students} học sinh</div>
+                <div class="history-daily-pagination-controls">{prev_html}<div class="history-page-numbers">{numbers_html}</div>{next_html}</div>
+            </div>
         '''
 
     return f'''
@@ -8310,6 +8341,7 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
             <div class="history-divider"></div>
             <div class="history-section-title"><div><strong>{'Students' if en else 'Học sinh'}</strong><span>{'Click a student to see every session from this day.' if en else 'Bấm vào học sinh để xem toàn bộ session của em trong ngày.'}</span></div></div>
             <div class="history-daily-student-list">{student_cards or '<div class="history-search-empty">'+('No measured students.' if en else 'Không có học sinh được đo.')+'</div>'}</div>
+            {pagination_html}
         </section>
         <style>
 
@@ -8354,6 +8386,16 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
             .history-daily-student-card.attention .history-student-avatar {{ background:#fff1b9; color:#896700; border-color:#efd676; }}
             .history-daily-student-card.safe .history-student-status strong {{ color:#287a4a; background:#e6f6ec; }}
             .history-daily-student-card .history-day-arrow {{ width:29px; height:29px; border-radius:50%; display:flex; align-items:center; justify-content:center; box-sizing:border-box; color:#6d8aa4; font-size:21px; background:#f2f7fb; border:1px solid #deebf4; }}
+            .history-daily-pagination {{ display:flex; align-items:center; justify-content:space-between; gap:14px; margin-top:14px; padding-top:13px; border-top:1px solid #eaf0f5; flex-wrap:wrap; }}
+            .history-daily-page-info {{ color:#8193a3; font-size:10px; font-weight:650; }}
+            .history-daily-pagination-controls {{ display:flex; align-items:center; gap:6px; }}
+            .history-page-numbers {{ display:flex; align-items:center; gap:5px; }}
+            .history-page-button, .history-page-number {{ min-width:34px; height:32px; padding:0 10px; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; border:1px solid #d7e5f0; border-radius:10px; background:#fff; color:#365b78; text-decoration:none; font-size:10px; font-weight:800; box-shadow:0 3px 10px rgba(43,95,142,.035); transition:.16s ease; }}
+            .history-page-number {{ min-width:32px; padding:0 8px; }}
+            .history-page-button:hover, .history-page-number:hover {{ background:#f5faff; border-color:#a8c6dd; transform:translateY(-1px); }}
+            .history-page-number.active {{ background:#2b78c5; border-color:#2b78c5; color:#fff; box-shadow:0 5px 12px rgba(43,95,142,.15); }}
+            .history-page-number.active:hover {{ background:#2b78c5; border-color:#2b78c5; }}
+            .history-page-button.disabled {{ color:#aab8c5; background:#f7fafc; pointer-events:none; cursor:default; box-shadow:none; }}
             @media (max-width:1100px) {{ .history-daily-student-card {{ grid-template-columns:32px 43px minmax(160px,1fr) 62px 68px 92px 120px 29px; }} }}
             @media (max-width:850px) {{ .daily-summary-grid {{ grid-template-columns:1fr 1fr; }} .history-daily-student-card {{ grid-template-columns:32px 43px 1fr 29px; }} .history-student-ob,.history-student-evidence,.history-student-focus,.history-student-status {{ text-align:left; border-left:0; padding-left:0; }} }}
 
@@ -8687,7 +8729,11 @@ def teacher_history_day(request: Request, date_str: str):
         class_id = int(request.query_params.get('class_id')) if request.query_params.get('class_id') else None
     except ValueError:
         class_id = None
-    content = teacher_history_day_content(teacher_id, date_str, class_id)
+    try:
+        request_page = max(1, int(request.query_params.get('page', '1') or '1'))
+    except ValueError:
+        request_page = 1
+    content = teacher_history_day_content(teacher_id, date_str, class_id, request_page)
     if content is None:
         return RedirectResponse(url="/teacher?section=history", status_code=303)
     return teacher_shell(
