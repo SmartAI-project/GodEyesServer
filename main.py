@@ -8054,13 +8054,12 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
 
     labels = {
         'title': 'History' if en else 'Lịch sử',
-        'subtitle': ('Choose a class first. Open a class to see Monday, Tuesday and every recorded day.'
-                     if en else 'Chọn lớp trước. Mở một lớp để xem Thứ Hai, Thứ Ba và toàn bộ các ngày đã ghi nhận.'),
+        'subtitle': ('Review recorded activity by class and day. Open a class to see the full timeline.'
+                     if en else 'Xem hoạt động đã ghi nhận theo lớp và theo ngày. Mở một lớp để xem toàn bộ lịch sử.'),
         'classes': 'classes' if en else 'lớp học',
         'sessions': 'sessions' if en else 'buổi học',
         'students': 'students' if en else 'học sinh',
-        'ob': 'OB',
-        'evidence': 'Evidence',
+        'ob': 'OB', 'evidence': 'Evidence',
         'search_placeholder': 'Search student name...' if en else 'Tìm tên học sinh...',
         'search': 'Search' if en else 'Tìm kiếm',
         'clear': 'Clear search' if en else 'Xóa tìm kiếm',
@@ -8077,20 +8076,21 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
 
     class_cards = ''
     for class_id, item in class_groups.items():
-        class_cards += f'''
-            <a class="history-class-card" href="/teacher/history/class/{class_id}">
-                <div class="history-class-icon"><span>CL</span></div>
-                <div class="history-class-main">
-                    <div class="history-class-code">{escape(item['class_code'] or 'NO CODE')}</div>
-                    <h3>{escape(item['class_name'])}</h3>
-                    <p>{len(item['days'])} {labels['days']} · {len(item['sessions'])} {labels['sessions']}</p>
+        class_cards += f'''            <a class="hx-class-card" href="/teacher/history/class/{class_id}">
+                <div class="hx-class-identity">
+                    <div class="hx-class-mark">CL</div>
+                    <div class="hx-class-copy">
+                        <div class="hx-class-code">{escape(item['class_code'] or 'NO CODE')}</div>
+                        <h3>{escape(item['class_name'])}</h3>
+                        <p>{len(item['days'])} {labels['days']} <span>•</span> {len(item['sessions'])} {labels['sessions']}</p>
+                    </div>
                 </div>
-                <div class="history-class-metrics">
-                    <div><strong>{len(item['students'])}</strong><span>{labels['students']}</span></div>
-                    <div><strong>{item['ob']}</strong><span>{labels['ob']}</span></div>
-                    <div><strong>{item['evidence']}</strong><span>{labels['evidence']}</span></div>
+                <div class="hx-class-stats">
+                    <div class="hx-stat"><b>{len(item['students'])}</b><span>{labels['students']}</span></div>
+                    <div class="hx-stat"><b>{item['ob']}</b><span>{labels['ob']}</span></div>
+                    <div class="hx-stat"><b>{item['evidence']}</b><span>{labels['evidence']}</span></div>
                 </div>
-                <div class="history-day-arrow">›</div>
+                <div class="hx-open"><span>→</span></div>
             </a>
         '''
 
@@ -8106,66 +8106,96 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
             if student_id <= 0 or not day or key in seen:
                 continue
             seen.add(key)
-            search_cards += f'''
-                <a class="student-result history-search-result" href="/teacher/history/day/{url_quote(day)}?class_id={class_id}">
-                    <div class="student-result-main">
-                        <div class="student-result-name">{escape(row.get('full_name') or '')}</div>
-                        <div class="student-result-meta">{escape(row.get('student_code') or '—')} · {escape(row.get('class_name') or '—')} · {escape(_display_date(day))}</div>
+            search_cards += f'''                <a class="hx-search-row" href="/teacher/history/day/{url_quote(day)}?class_id={class_id}">
+                    <div>
+                        <strong>{escape(row.get('full_name') or '')}</strong>
+                        <span>{escape(row.get('student_code') or '—')} · {escape(row.get('class_name') or '—')} · {escape(_display_date(day))}</span>
                     </div>
-                    <div class="history-search-focus"><b>{int(row.get('observation_count') or 0)}</b><span>OB</span></div>
-                    <div class="student-result-arrow">›</div>
+                    <div class="hx-search-ob"><b>{int(row.get('observation_count') or 0)}</b><span>OB</span></div>
+                    <div class="hx-open small"><span>→</span></div>
                 </a>
             '''
         search_html = (
-            f'<div class="history-search-results"><div class="history-search-results-head"><div><strong>{labels["search_results"]}</strong></div></div><div class="student-results">{search_cards}</div></div>'
-            if search_cards else f'<div class="history-search-empty">No matching student history was found.</div>'
+            f'''<div class="hx-search-box"><div class="hx-search-head"><div><b>{labels['search_results']}</b><span>Student history</span></div></div><div class="hx-search-list">{search_cards}</div></div>'''
+            if search_cards else f'<div class="hx-empty">No matching student history was found.</div>'
         )
 
-    empty = f'<div class="history-search-empty">{labels["no_history"]}</div>' if not class_cards else class_cards
-    return f'''
-        <section class="panel history-panel history-daily-panel">
-            <div class="history-head">
+    empty = f'<div class="hx-empty">{labels["no_history"]}</div>' if not class_cards else class_cards
+    return f'''        <section class="panel history-panel hx-history-page">
+            <div class="hx-history-top">
                 <div>
                     <div class="eyebrow-small">SERVER HISTORY</div>
                     <h2 class="history-title">{labels['title']}</h2>
                     <p class="history-subtitle">{labels['subtitle']}</p>
                 </div>
-                <div class="history-count">{len(class_groups)} {labels['classes']}</div>
+                <div class="hx-count"><b>{len(class_groups)}</b><span>{labels['classes']}</span></div>
             </div>
             {notice}
-            <form class="student-search" method="get" action="/teacher">
+            <form class="hx-search-form" method="get" action="/teacher">
                 <input type="hidden" name="section" value="history">
-                <div class="student-search-input-wrap">
-                    <span class="student-search-icon">⌕</span>
-                    <input name="q" value="{escape(query)}" placeholder="{escape(labels['search_placeholder'])}" autocomplete="off">
-                </div>
-                <button class="student-search-button" type="submit">{escape(labels['search'])}</button>
-                {('<a class="student-search-clear" href="/teacher?section=history">'+labels['clear']+'</a>') if query else ''}
+                <div class="hx-search-input"><span>⌕</span><input name="q" value="{escape(query)}" placeholder="{escape(labels['search_placeholder'])}" autocomplete="off"></div>
+                <button type="submit">{escape(labels['search'])}</button>
+                {('<a href="/teacher?section=history">'+labels['clear']+'</a>') if query else ''}
             </form>
             {search_html}
-            <div class="history-divider"></div>
-            <div class="history-section-title"><div><strong>{'Classes' if en else 'Các lớp học'}</strong><span>{'Open a class to view recorded days.' if en else 'Mở một lớp để xem các ngày đã ghi nhận.'}</span></div></div>
-            <div class="history-class-list">{empty}</div>
+            <div class="hx-section-head">
+                <div><span class="eyebrow-small">{('CLASSES' if en else 'CÁC LỚP HỌC')}</span><h3>{('Choose a class' if en else 'Chọn một lớp')}</h3><p>{('Open a class to review its recorded days.' if en else 'Mở một lớp để xem các ngày đã ghi nhận.')}</p></div>
+                <div class="hx-rule"></div>
+            </div>
+            <div class="hx-class-list">{empty}</div>
         </section>
         <style>
-            .history-class-list {{ display:flex; flex-direction:column; gap:11px; }}
-            .history-class-card {{ display:grid; grid-template-columns:50px minmax(220px,1.2fr) minmax(300px,2fr) 34px; align-items:center; gap:15px; padding:15px 16px; border:1px solid #d9e6f1; border-radius:18px; background:linear-gradient(180deg,#fff 0%,#fbfdff 100%); color:#203247; text-decoration:none; box-shadow:0 7px 20px rgba(46,88,123,.04); transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease,background .18s ease; }}
-            .history-class-card:hover {{ transform:translateY(-2px); border-color:#8db9d8; box-shadow:0 12px 28px rgba(43,95,142,.09); background:#fcfeff; }}
-            .history-class-icon {{ width:44px; height:44px; border-radius:14px; display:flex; align-items:center; justify-content:center; background:#eaf4ff; border:1px solid #d5e7f5; color:#1f5f9f; font-size:11px; font-weight:900; letter-spacing:.6px; }}
-            .history-class-code {{ display:inline-flex; padding:4px 7px; margin-bottom:5px; border-radius:999px; background:#eef6ff; color:#286da8; border:1px solid #d6e9f7; font-size:8px; font-weight:850; letter-spacing:.5px; }}
-            .history-class-main h3 {{ margin:0; color:#18334e; font-size:16px; font-weight:860; }}
-            .history-class-main p {{ margin:4px 0 0; color:#8a9aaa; font-size:9px; }}
-            .history-class-metrics {{ display:grid; grid-template-columns:repeat(3,minmax(80px,1fr)); border-left:1px solid #e8eef4; }}
-            .history-class-metrics > div {{ padding:0 14px; text-align:center; border-right:1px solid #edf1f5; }}
-            .history-class-metrics > div:last-child {{ border-right:0; }}
-            .history-class-metrics strong {{ display:block; color:#1d609d; font-size:18px; line-height:1; font-weight:860; }}
-            .history-class-metrics span {{ display:block; margin-top:4px; color:#8b9aa8; font-size:8px; font-weight:720; }}
-            .history-class-card .history-day-arrow {{ width:30px; height:30px; border-radius:10px; display:flex; align-items:center; justify-content:center; color:#6d8aa4; font-size:20px; background:#f2f7fb; border:1px solid #deebf4; }}
-            .history-class-card:hover .history-day-arrow {{ color:#2369a8; background:#eaf5ff; border-color:#c8e0f2; transform:translateX(2px); }}
-            @media (max-width:900px) {{ .history-class-card {{ grid-template-columns:48px 1fr 32px; }} .history-class-metrics {{ grid-column:2/3; border-left:0; border-top:1px solid #edf1f5; padding-top:10px; }} }}
-            @media (max-width:620px) {{ .history-class-card {{ grid-template-columns:44px 1fr 30px; padding:13px; border-radius:15px; }} .history-class-metrics {{ grid-template-columns:1fr 1fr 1fr; }} .history-class-metrics > div {{ padding:0 7px; }} }}
+            .hx-history-page {{ padding:30px; border-radius:24px; overflow:hidden; background:linear-gradient(180deg,#ffffff 0%,#fbfdff 100%); }}
+            .hx-history-top {{ display:flex; align-items:flex-start; justify-content:space-between; gap:20px; }}
+            .hx-count {{ min-width:82px; padding:10px 13px; border-radius:14px; background:#f2f8ff; border:1px solid #d7e9f8; text-align:center; color:#276a9f; box-shadow:0 6px 16px rgba(51,111,156,.06); }}
+            .hx-count b {{ display:block; font-size:20px; font-weight:900; line-height:1; }}
+            .hx-count span {{ display:block; margin-top:4px; font-size:9px; font-weight:800; color:#7a94aa; text-transform:uppercase; letter-spacing:.35px; }}
+            .hx-search-form {{ display:flex; align-items:center; gap:10px; margin-top:22px; }}
+            .hx-search-input {{ flex:1; height:48px; display:flex; align-items:center; gap:10px; padding:0 14px; border:1px solid #dbe7f1; border-radius:14px; background:#fff; }}
+            .hx-search-input span {{ color:#6d8ca7; font-size:18px; }}
+            .hx-search-input input {{ width:100%; border:0; outline:0; background:transparent; color:#29435d; font-size:13px; }}
+            .hx-search-form button {{ height:48px; padding:0 18px; border:0; border-radius:13px; background:#2b7ac1; color:#fff; font-weight:820; cursor:pointer; box-shadow:0 8px 18px rgba(43,122,193,.14); }}
+            .hx-search-form button:hover {{ background:#236da9; transform:translateY(-1px); }}
+            .hx-search-form > a {{ color:#6a849b; font-size:11px; text-decoration:none; }}
+            .hx-section-head {{ display:flex; align-items:flex-end; gap:14px; margin:28px 0 13px; }}
+            .hx-section-head h3 {{ margin:2px 0 2px; font-size:18px; color:#173450; font-weight:900; }}
+            .hx-section-head p {{ margin:0; color:#8398aa; font-size:10px; }}
+            .hx-rule {{ height:1px; flex:1; background:linear-gradient(90deg,#deebf3,rgba(222,235,243,0)); margin-bottom:4px; }}
+            .hx-class-list {{ display:flex; flex-direction:column; gap:12px; }}
+            .hx-class-card {{ display:grid; grid-template-columns:minmax(280px,1.2fr) minmax(280px,1fr) 44px; align-items:center; gap:14px; min-height:96px; padding:14px 16px; border:1px solid #d8e6f0; border-radius:20px; background:#fff; color:#203247; text-decoration:none; box-shadow:0 10px 26px rgba(39,86,121,.045); transition:.18s ease; }}
+            .hx-class-card:hover {{ transform:translateY(-2px); border-color:#a9cde5; box-shadow:0 15px 32px rgba(40,97,145,.10); }}
+            .hx-class-identity {{ display:flex; align-items:center; gap:14px; min-width:0; }}
+            .hx-class-mark {{ width:52px; height:52px; border-radius:16px; display:grid; place-items:center; background:linear-gradient(180deg,#eff8ff,#e2f1fc); border:1px solid #cfe6f6; color:#26699e; font-size:11px; font-weight:900; flex:none; }}
+            .hx-class-code {{ display:inline-flex; padding:4px 8px; border-radius:999px; background:#f0f7fd; border:1px solid #d9eaf6; color:#3974a5; font-size:8px; font-weight:850; letter-spacing:.55px; margin-bottom:5px; }}
+            .hx-class-copy h3 {{ margin:0; font-size:18px; font-weight:900; color:#183650; }}
+            .hx-class-copy p {{ margin:5px 0 0; color:#8296a8; font-size:9px; }}
+            .hx-class-copy p span {{ color:#bfd0dc; padding:0 3px; }}
+            .hx-class-stats {{ display:grid; grid-template-columns:repeat(3,1fr); border-left:1px solid #e5eef5; border-right:1px solid #e5eef5; }}
+            .hx-stat {{ min-height:50px; padding:0 15px; text-align:center; display:flex; flex-direction:column; justify-content:center; }}
+            .hx-stat + .hx-stat {{ border-left:1px solid #edf2f6; }}
+            .hx-stat b {{ font-size:20px; line-height:1; color:#1d619c; font-weight:900; }}
+            .hx-stat span {{ margin-top:5px; font-size:8px; color:#8a9cae; font-weight:750; }}
+            .hx-open {{ width:38px; height:38px; border-radius:13px; display:grid; place-items:center; background:#f4f8fb; border:1px solid #dfebf3; color:#6283a0; transition:.18s ease; }}
+            .hx-open span {{ font-size:17px; }}
+            .hx-class-card:hover .hx-open {{ background:#eaf5ff; border-color:#bfdcef; color:#236aab; }}
+            .hx-search-box {{ margin-top:18px; padding:14px; border:1px solid #dce8f1; border-radius:18px; background:#fbfdff; }}
+            .hx-search-head {{ margin-bottom:8px; }}
+            .hx-search-head b {{ color:#1a3852; font-size:11px; }}
+            .hx-search-head span {{ margin-left:7px; color:#8ba0b0; font-size:9px; }}
+            .hx-search-list {{ display:flex; flex-direction:column; gap:8px; }}
+            .hx-search-row {{ display:grid; grid-template-columns:1fr 68px 34px; gap:10px; align-items:center; padding:11px 12px; border:1px solid #e0ebf3; border-radius:14px; background:#fff; text-decoration:none; color:#21384e; }}
+            .hx-search-row strong {{ display:block; font-size:12px; }}
+            .hx-search-row > div:first-child span {{ display:block; margin-top:3px; color:#8b9eae; font-size:9px; }}
+            .hx-search-ob {{ text-align:center; border-left:1px solid #edf2f6; }}
+            .hx-search-ob b {{ display:block; color:#1f6099; font-size:16px; }}
+            .hx-search-ob span {{ color:#8d9ead; font-size:8px; }}
+            .hx-open.small {{ width:30px; height:30px; border-radius:10px; }}
+            .hx-empty {{ padding:30px; border:1px dashed #cfdfeb; border-radius:18px; text-align:center; color:#8094a7; background:#fbfdff; font-size:12px; }}
+            @media (max-width:900px) {{ .hx-class-card {{ grid-template-columns:1fr 42px; }} .hx-class-stats {{ grid-column:1/2; border:0; border-top:1px solid #edf2f6; padding-top:10px; }} }}
+            @media (max-width:620px) {{ .hx-history-page {{ padding:20px; }} .hx-history-top {{ flex-direction:column; }} .hx-search-form {{ flex-wrap:wrap; }} .hx-search-input {{ min-width:100%; }} .hx-search-form button {{ flex:1; }} .hx-class-card {{ grid-template-columns:1fr 36px; padding:12px; border-radius:17px; }} .hx-class-identity {{ gap:10px; }} .hx-class-mark {{ width:44px; height:44px; border-radius:14px; }} .hx-class-copy h3 {{ font-size:15px; }} .hx-stat {{ padding:0 6px; }} .hx-stat b {{ font-size:16px; }} }}
         </style>
     '''
+
 def teacher_history_class_content(teacher_id: int, class_id: int) -> str | None:
     prefs = get_teacher_preferences(int(teacher_id))
     language = 'en' if str(prefs.get('language') or 'vi').lower() == 'en' else 'vi'
@@ -8177,51 +8207,50 @@ def teacher_history_class_content(teacher_id: int, class_id: int) -> str | None:
     class_name = str(rows[0].get('class_name') or 'Lớp đã xóa')
     class_code = str(rows[0].get('class_code') or '')
     day_cards = ''
-    for day, item in days.items():
-        day_cards += f'''
-            <a class="history-day-card" href="/teacher/history/day/{url_quote(day)}?class_id={int(class_id)}">
-                <div class="history-day-date">
-                    <div class="history-day-week">{escape(_history_weekday_label(day, language))}</div>
-                    <div class="history-day-number">{escape(_display_date(day))}</div>
-                </div>
-                <div class="history-day-metrics">
-                    <div><strong>{item['session_count']}</strong><span>{'sessions' if en else 'buổi học'}</span></div>
-                    <div><strong>{item['student_count']}</strong><span>{'students' if en else 'học sinh'}</span></div>
-                    <div><strong>{item['total_ob']}</strong><span>OB</span></div>
-                    <div><strong>{item['avg_focus']:.1f}%</strong><span>{'Average focus' if en else 'Tập trung TB'}</span></div>
-                </div>
-                <div class="history-day-arrow">›</div>
+    for index, (day, item) in enumerate(days.items(), start=1):
+        day_cards += f'''            <a class="hc-day-card" href="/teacher/history/day/{url_quote(day)}?class_id={int(class_id)}">
+                <div class="hc-day-index">{index:02d}</div>
+                <div class="hc-day-date"><div class="hc-day-week">{escape(_history_weekday_label(day, language))}</div><div class="hc-day-number">{escape(_display_date(day))}</div></div>
+                <div class="hc-day-metric"><b>{item['session_count']}</b><span>{'sessions' if en else 'buổi học'}</span></div>
+                <div class="hc-day-metric"><b>{item['student_count']}</b><span>{'students' if en else 'học sinh'}</span></div>
+                <div class="hc-day-metric"><b>{item['total_ob']}</b><span>OB</span></div>
+                <div class="hc-day-metric focus"><b>{item['avg_focus']:.1f}%</b><span>{'Average focus' if en else 'Tập trung TB'}</span></div>
+                <div class="hc-arrow">→</div>
             </a>
         '''
-    return f'''
-        <section class="panel history-panel history-class-detail-panel">
-            <a class="history-back-button" href="/teacher?section=history"><span>←</span><b>{'Back to History' if en else 'Quay lại Lịch sử'}</b></a>
-            <div class="history-class-detail-head">
-                <div>
-                    <div class="eyebrow-small">{'CLASS HISTORY' if en else 'LỊCH SỬ LỚP'}</div>
-                    <h2 class="history-title">{escape(class_name)}</h2>
-                    <p class="history-subtitle">{escape(class_code or '—')} · {'Open a day to review students and sessions.' if en else 'Mở một ngày để xem học sinh và các session.'}</p>
-                </div>
-                <div class="history-class-detail-count">{len(days)} {'days' if en else 'ngày'}</div>
+    return f'''        <section class="panel history-panel hc-page">
+            <a class="hc-back" href="/teacher?section=history"><span>←</span><div><b>{'Back to History' if en else 'Quay lại Lịch sử'}</b><small>{'All classes' if en else 'Tất cả lớp học'}</small></div></a>
+            <div class="hc-hero">
+                <div><div class="eyebrow-small">{'CLASS HISTORY' if en else 'LỊCH SỬ LỚP'}</div><h2>{escape(class_name)}</h2><p>{escape(class_code or '—')} <span>•</span> {'Open a day to review students, sessions and focus.' if en else 'Mở một ngày để xem học sinh, session và mức tập trung.'}</p></div>
+                <div class="hc-day-count"><b>{len(days)}</b><span>{'recorded days' if en else 'ngày ghi nhận'}</span></div>
             </div>
-            <div class="history-divider"></div>
-            <div class="history-section-title"><div><strong>{'Recorded days' if en else 'Các ngày đã ghi nhận'}</strong><span>{'Monday → Sunday' if en else 'Thứ Hai → Chủ Nhật'}</span></div></div>
-            <div class="history-day-list">{day_cards}</div>
+            <div class="hc-section-head"><div><span class="eyebrow-small">{'TIMELINE' if en else 'DÒNG THỜI GIAN'}</span><h3>{'Recorded days' if en else 'Các ngày đã ghi nhận'}</h3><p>{'Open a day to continue into students and sessions.' if en else 'Chọn một ngày để xem tiếp học sinh và các session.'}</p></div><div class="hc-line"></div><div class="hc-week-pill">{'MON → SUN' if en else 'THỨ HAI → CN'}</div></div>
+            <div class="hc-days">{day_cards}</div>
         </section>
         <style>
-            .history-class-detail-panel {{ padding:28px; border-radius:22px; overflow:hidden; }}
-            .history-back-button {{ display:inline-flex; align-items:center; gap:9px; padding:0 13px 0 7px; min-height:40px; border:1px solid #d7e6f3; border-radius:13px; background:linear-gradient(180deg,#fff,#f5f9fd); color:#315774; text-decoration:none; box-shadow:0 5px 16px rgba(43,95,142,.055); transition:.18s ease; }}
-            .history-back-button:hover {{ transform:translateY(-1px); border-color:#a8c7df; box-shadow:0 9px 20px rgba(43,95,142,.08); }}
-            .history-back-button span {{ width:28px; height:28px; border-radius:9px; display:grid; place-items:center; background:#eaf4fc; color:#1973ba; font-weight:900; }}
-            .history-back-button b {{ font-size:11px; font-weight:820; }}
-            .history-class-detail-head {{ display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-top:18px; }}
-            .history-class-detail-count {{ flex:none; min-width:74px; min-height:34px; display:inline-flex; align-items:center; justify-content:center; padding:0 12px; border-radius:999px; background:#eef6ff; border:1px solid #d6e8f8; color:#2367a7; font-size:10px; font-weight:820; }}
-            .history-class-detail-panel .history-day-list {{ display:flex; flex-direction:column; gap:10px; }}
-            .history-class-detail-panel .history-day-card {{ border-radius:17px; }}
-            @media (max-width:700px) {{ .history-class-detail-panel {{ padding:20px; }} .history-class-detail-head {{ flex-direction:column; }} }}
+            .hc-page {{ padding:30px; border-radius:24px; overflow:hidden; background:linear-gradient(180deg,#ffffff 0%,#fbfdff 100%); }}
+            .hc-back {{ display:inline-flex; align-items:center; gap:9px; padding:6px 12px 6px 7px; border:1px solid #d8e7f1; border-radius:14px; background:#fbfdff; color:#365a76; text-decoration:none; box-shadow:0 6px 16px rgba(39,88,124,.045); transition:.18s ease; }}
+            .hc-back:hover {{ transform:translateY(-1px); border-color:#afd0e5; box-shadow:0 10px 20px rgba(39,88,124,.08); }}
+            .hc-back span {{ width:29px; height:29px; display:grid; place-items:center; border-radius:10px; background:#eaf4fc; color:#2d77b2; font-weight:900; }}
+            .hc-back b {{ display:block; font-size:11px; font-weight:850; }} .hc-back small {{ display:block; margin-top:2px; color:#91a2b1; font-size:8px; }}
+            .hc-hero {{ display:flex; justify-content:space-between; gap:18px; align-items:flex-start; margin-top:24px; }}
+            .hc-hero h2 {{ margin:3px 0 0; color:#173652; font-size:30px; font-weight:900; letter-spacing:-.4px; }} .hc-hero p {{ margin:7px 0 0; color:#7f94a6; font-size:11px; }} .hc-hero p span {{ color:#bdd0dd; padding:0 4px; }}
+            .hc-day-count {{ min-width:112px; padding:12px 13px; border-radius:16px; background:linear-gradient(180deg,#f3f9ff,#edf6fd); border:1px solid #d7e9f6; text-align:center; box-shadow:0 7px 16px rgba(41,98,145,.05); }}
+            .hc-day-count b {{ display:block; color:#246aa2; font-size:24px; font-weight:900; line-height:1; }} .hc-day-count span {{ display:block; margin-top:5px; color:#7894a9; font-size:8px; font-weight:800; text-transform:uppercase; letter-spacing:.35px; }}
+            .hc-section-head {{ display:flex; align-items:flex-end; gap:14px; margin:28px 0 14px; }} .hc-section-head h3 {{ margin:2px 0; color:#173752; font-size:18px; font-weight:900; }} .hc-section-head p {{ margin:0; color:#889bab; font-size:9px; }}
+            .hc-line {{ flex:1; height:1px; background:linear-gradient(90deg,#dceaf3,rgba(220,234,243,0)); margin-bottom:5px; }} .hc-week-pill {{ padding:7px 10px; border-radius:999px; border:1px solid #dbe9f2; background:#f7fbfe; color:#66849c; font-size:8px; font-weight:850; letter-spacing:.45px; }}
+            .hc-days {{ display:flex; flex-direction:column; gap:10px; }}
+            .hc-day-card {{ display:grid; grid-template-columns:42px minmax(240px,1.6fr) repeat(4,minmax(85px,1fr)) 38px; align-items:center; gap:10px; min-height:88px; padding:12px 13px; border:1px solid #dbe8f1; border-radius:19px; background:#fff; color:#21384f; text-decoration:none; box-shadow:0 8px 18px rgba(43,89,123,.035); transition:.18s ease; }}
+            .hc-day-card:hover {{ transform:translateY(-2px); border-color:#acd0e7; box-shadow:0 14px 28px rgba(40,93,139,.085); }}
+            .hc-day-index {{ width:34px; height:34px; display:grid; place-items:center; border-radius:11px; background:#f0f7fd; border:1px solid #d9eaf6; color:#4c7d9f; font-size:9px; font-weight:900; }}
+            .hc-day-week {{ color:#7791a5; font-size:8px; font-weight:850; text-transform:uppercase; letter-spacing:.55px; }} .hc-day-number {{ margin-top:3px; color:#183754; font-size:17px; font-weight:900; }}
+            .hc-day-metric {{ min-height:48px; display:flex; flex-direction:column; align-items:center; justify-content:center; border-left:1px solid #edf2f6; }} .hc-day-metric b {{ color:#205f97; font-size:18px; line-height:1; font-weight:900; }} .hc-day-metric span {{ margin-top:5px; color:#8b9dab; font-size:8px; font-weight:760; }} .hc-day-metric.focus b {{ color:#2374b5; }}
+            .hc-arrow {{ width:34px; height:34px; display:grid; place-items:center; border-radius:11px; border:1px solid #dfebf3; background:#f5f9fc; color:#6887a0; font-size:17px; }} .hc-day-card:hover .hc-arrow {{ background:#eaf5ff; border-color:#c4e0f2; color:#266da8; }}
+            @media (max-width:1000px) {{ .hc-day-card {{ grid-template-columns:40px minmax(200px,1.4fr) repeat(4,minmax(72px,1fr)) 36px; }} }}
+            @media (max-width:800px) {{ .hc-hero {{ flex-direction:column; }} .hc-day-count {{ align-self:flex-start; }} .hc-day-card {{ grid-template-columns:40px 1fr 36px; }} .hc-day-metric {{ border-left:0; border-top:1px solid #edf2f6; padding-top:9px; }} }}
+            @media (max-width:620px) {{ .hc-page {{ padding:20px; }} .hc-section-head {{ flex-wrap:wrap; }} .hc-line {{ display:none; }} .hc-day-card {{ padding:11px; border-radius:16px; }} .hc-day-number {{ font-size:15px; }} }}
         </style>
     '''
-
 
 def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | None = None) -> str | None:
     prefs = get_teacher_preferences(int(teacher_id))
