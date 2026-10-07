@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import uuid
-
-import numpy as np
 from pathlib import Path
 from urllib import error, parse, request
 
@@ -58,7 +56,7 @@ class ServerClient:
         return json.dumps(data, ensure_ascii=False).encode("utf-8")
 
     def _request(self, method: str, path: str, body: bytes | None = None, content_type: str = "application/json"):
-        headers = {"Accept": "application/json", "User-Agent": "GodEyesClient/0.14"}
+        headers = {"Accept": "application/json", "User-Agent": "GodEyesClient/0.13"}
         if body is not None:
             headers["Content-Type"] = content_type
         if self.access_token:
@@ -126,8 +124,7 @@ class ServerClient:
             raise ServerClientError("God Eyes Client chỉ cho phép tài khoản giáo viên.")
         self.access_token = str(data["access_token"])
         self.device_token = str(data.get("device_token") or self.device_token or "")
-        context = data.get("launch_context") if isinstance(data.get("launch_context"), dict) else {}
-        self.launch_context = dict(context)
+        self.launch_context = data.get("launch_context") or {}
         self.profile = self.get_me()
         return self.profile
 
@@ -236,30 +233,6 @@ class ServerClient:
             raise ServerClientError("Danh sách học sinh không hợp lệ.")
         return data
 
-    def enroll_face_embedding(self, student_id: int, enrollment_token: str, embedding) -> dict:
-        """Save a locally generated SFace embedding using a one-time enrollment token."""
-        try:
-            vector = np.asarray(embedding, dtype=np.float32).ravel()
-        except Exception as exc:
-            raise ServerClientError(f"Embedding không hợp lệ: {exc}") from exc
-        if vector.size < 32 or not np.all(np.isfinite(vector)):
-            raise ServerClientError("Embedding không hợp lệ hoặc không đủ dữ liệu.")
-        norm = float(np.linalg.norm(vector))
-        if norm <= 1e-8:
-            raise ServerClientError("Embedding norm không hợp lệ.")
-        vector = vector / norm
-        payload = {
-            "token": str(enrollment_token or "").strip(),
-            "student_id": int(student_id),
-            "embedding": [float(v) for v in vector],
-        }
-        if not payload["token"]:
-            raise ServerClientError("Enrollment token is empty.")
-        data = self._request("POST", "/api/v1/face-enrollment", self._json_bytes(payload))
-        if not isinstance(data, dict) or not data.get("success"):
-            raise ServerClientError(str(data.get("detail") if isinstance(data, dict) else "Server không lưu được Face ID."))
-        return data
-
     def get_main_cameras(self) -> list[dict]:
         data = self._request("GET", "/api/v1/cameras")
         items = data.get("items") if isinstance(data, dict) else None
@@ -287,13 +260,22 @@ class ServerClient:
         data = self._request("POST", f"/api/v1/cameras/{int(camera_id)}/touch")
         return data if isinstance(data, dict) else {}
 
-    def create_session(self, class_id: int, client_version: str, camera_type: str = "WEBCAM", scan_date: str = "") -> dict:
+    def create_session(
+        self,
+        class_id: int,
+        client_version: str,
+        camera_type: str = "WEBCAM",
+        scan_date: str = "",
+    ) -> dict:
         payload = {
             "class_id": int(class_id),
             "client_version": str(client_version)[:40],
             "camera_type": str(camera_type).upper()[:40],
-            "scan_date": str(scan_date or "")[:10],
         }
+        scan_date_value = str(scan_date or "").strip()[:10]
+        if scan_date_value:
+            payload["scan_date"] = scan_date_value
+
         data = self._request("POST", "/api/v1/sessions", self._json_bytes(payload))
         if not isinstance(data, dict) or not data.get("session_id"):
             raise ServerClientError("Server không tạo được session.")
