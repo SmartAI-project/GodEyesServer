@@ -4518,19 +4518,111 @@ def edit_class(request: Request, class_id: int = Form(...), name: str = Form(...
     return RedirectResponse(url="/teacher?section=classes&updated=1", status_code=303)
 
 
+def _hard_delete_teacher_class(class_id: int, teacher_id: int) -> str:
+    """Permanently delete a teacher-owned class and all recorded history."""
+    with SessionLocal() as db:
+        class_row = db.execute(
+            text("""
+                SELECT id, name, code
+                FROM classes
+                WHERE id = :class_id
+                  AND teacher_id = :teacher_id
+                LIMIT 1
+            """),
+            {"class_id": int(class_id), "teacher_id": int(teacher_id)}
+        ).mappings().first()
+
+        if class_row is None:
+            return "not_found"
+
+        running = db.execute(
+            text("""
+                SELECT id
+                FROM sessions
+                WHERE class_id = :class_id
+                  AND teacher_id = :teacher_id
+                  AND status = 'RUNNING'
+                  AND COALESCE(deleted_at, '') = ''
+                LIMIT 1
+            """),
+            {"class_id": int(class_id), "teacher_id": int(teacher_id)}
+        ).mappings().first()
+
+        if running is not None:
+            return "running"
+
+        session_rows = db.execute(
+            text("""
+                SELECT id
+                FROM sessions
+                WHERE class_id = :class_id
+                  AND teacher_id = :teacher_id
+            """),
+            {"class_id": int(class_id), "teacher_id": int(teacher_id)}
+        ).mappings().all()
+
+        session_ids = [int(row["id"]) for row in session_rows]
+
+    for session_id in session_ids:
+        _hard_delete_session(session_id)
+
+    with SessionLocal() as db:
+        db.execute(
+            text("DELETE FROM class_students WHERE class_id = :class_id"),
+            {"class_id": int(class_id)}
+        )
+        db.execute(
+            text("""
+                DELETE FROM classes
+                WHERE id = :class_id
+                  AND teacher_id = :teacher_id
+            """),
+            {"class_id": int(class_id), "teacher_id": int(teacher_id)}
+        )
+        db.commit()
+
+    return "deleted"
+
+
 @app.post("/teacher/classes/delete")
-def delete_class(request: Request, class_id: int = Form(...)):
+def delete_class(
+    request: Request,
+    class_id: int = Form(...),
+    return_section: str = Form("classes"),
+):
     payload = get_teacher_payload(request)
     if payload is None:
         return RedirectResponse(url="/", status_code=303)
 
     teacher_id = int(payload["sub"])
-    with SessionLocal() as db:
-        db.execute(
-            text("DELETE FROM classes WHERE id = :class_id AND teacher_id = :teacher_id"),
-            {"class_id": class_id, "teacher_id": teacher_id}
+    result = _hard_delete_teacher_class(int(class_id), teacher_id)
+
+    if return_section == "history":
+        if result == "running":
+            return RedirectResponse(
+                url="/teacher?section=history&status=class_running",
+                status_code=303,
+            )
+        if result == "not_found":
+            return RedirectResponse(
+                url="/teacher?section=history&status=class_not_found",
+                status_code=303,
+            )
+        return RedirectResponse(
+            url="/teacher?section=history&status=class_deleted",
+            status_code=303,
         )
-        db.commit()
+
+    if result == "running":
+        return RedirectResponse(
+            url="/teacher?section=classes&status=class_running",
+            status_code=303,
+        )
+    if result == "not_found":
+        return RedirectResponse(
+            url="/teacher?section=classes&status=class_not_found",
+            status_code=303,
+        )
 
     return RedirectResponse(url="/teacher?section=classes&deleted=1", status_code=303)
 
@@ -8073,25 +8165,38 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
         notice = '<div class="history-notice success">'+('The session was moved to Main Admin trash. Server data is still retained.' if en else 'Buổi học đã được đưa vào thùng rác của Main Admin. Dữ liệu trên Server vẫn được giữ lại.')+'</div>'
     elif status_message == 'cannot_delete_running':
         notice = '<div class="history-notice error">'+('A running session cannot be deleted. End the session first.' if en else 'Không thể xóa session đang chạy. Hãy kết thúc session trước.')+'</div>'
+    elif status_message == 'class_deleted':
+        notice = '<div class="history-notice success">'+('The class and all recorded history were permanently deleted.' if en else 'Lớp học và toàn bộ lịch sử đã ghi nhận đã được xóa vĩnh viễn.')+'</div>'
+    elif status_message == 'class_running':
+        notice = '<div class="history-notice error">'+('Cannot delete a class while a session is running. End the session first.' if en else 'Không thể xóa lớp khi đang có buổi học đang chạy. Hãy kết thúc buổi học trước.')+'</div>'
 
     class_cards = ''
     for class_id, item in class_groups.items():
-        class_cards += f'''            <a class="hx-class-card" href="/teacher/history/class/{class_id}">
-                <div class="hx-class-identity">
-                    <div class="hx-class-mark">CL</div>
-                    <div class="hx-class-copy">
-                        <div class="hx-class-code">{escape(item['class_code'] or 'NO CODE')}</div>
-                        <h3>{escape(item['class_name'])}</h3>
-                        <p>{len(item['days'])} {labels['days']} <span>•</span> {len(item['sessions'])} {labels['sessions']}</p>
+        delete_confirm = ('Permanently delete this class and all recorded sessions, observations and evidence?' if en else 'Xóa vĩnh viễn lớp này cùng toàn bộ buổi học, Observation và Evidence đã ghi nhận?')
+        delete_label = 'Delete class' if en else 'Xóa lớp'
+        class_cards += f'''            <div class="hx-class-card">
+                <a class="hx-class-main" href="/teacher/history/class/{class_id}">
+                    <div class="hx-class-identity">
+                        <div class="hx-class-mark">CL</div>
+                        <div class="hx-class-copy">
+                            <div class="hx-class-code">{escape(item['class_code'] or 'NO CODE')}</div>
+                            <h3>{escape(item['class_name'])}</h3>
+                            <p>{len(item['days'])} {labels['days']} <span>•</span> {len(item['sessions'])} {labels['sessions']}</p>
+                        </div>
                     </div>
-                </div>
-                <div class="hx-class-stats">
-                    <div class="hx-stat"><b>{len(item['students'])}</b><span>{labels['students']}</span></div>
-                    <div class="hx-stat"><b>{item['ob']}</b><span>{labels['ob']}</span></div>
-                    <div class="hx-stat"><b>{item['evidence']}</b><span>{labels['evidence']}</span></div>
-                </div>
-                <div class="hx-open"><span>→</span></div>
-            </a>
+                    <div class="hx-class-stats">
+                        <div class="hx-stat"><b>{len(item['students'])}</b><span>{labels['students']}</span></div>
+                        <div class="hx-stat"><b>{item['ob']}</b><span>{labels['ob']}</span></div>
+                        <div class="hx-stat"><b>{item['evidence']}</b><span>{labels['evidence']}</span></div>
+                    </div>
+                </a>
+                <form method="post" action="/teacher/classes/delete" class="hx-class-delete-form" onsubmit="return confirm('{escape(delete_confirm)}');">
+                    <input type="hidden" name="class_id" value="{int(class_id)}">
+                    <input type="hidden" name="return_section" value="history">
+                    <button type="submit" class="hx-class-delete">{escape(delete_label)}</button>
+                </form>
+                <a class="hx-open" href="/teacher/history/class/{class_id}" aria-label="Open class history"><span>→</span></a>
+            </div>
         '''
 
     search_html = ''
@@ -8162,8 +8267,9 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
             .hx-section-head p {{ margin:0; color:#8398aa; font-size:10px; }}
             .hx-rule {{ height:1px; flex:1; background:linear-gradient(90deg,#deebf3,rgba(222,235,243,0)); margin-bottom:4px; }}
             .hx-class-list {{ display:flex; flex-direction:column; gap:12px; }}
-            .hx-class-card {{ display:grid; grid-template-columns:minmax(280px,1.2fr) minmax(280px,1fr) 44px; align-items:center; gap:14px; min-height:96px; padding:14px 16px; border:1px solid #d8e6f0; border-radius:20px; background:#fff; color:#203247; text-decoration:none; box-shadow:0 10px 26px rgba(39,86,121,.045); transition:.18s ease; }}
+            .hx-class-card {{ display:grid; grid-template-columns:minmax(280px,1.2fr) minmax(280px,1fr) auto 44px; align-items:center; gap:14px; min-height:96px; padding:14px 16px; border:1px solid #d8e6f0; border-radius:20px; background:#fff; color:#203247; box-shadow:0 10px 26px rgba(39,86,121,.045); transition:.18s ease; }}
             .hx-class-card:hover {{ transform:translateY(-2px); border-color:#a9cde5; box-shadow:0 15px 32px rgba(40,97,145,.10); }}
+            .hx-class-main {{ display:contents; color:inherit; text-decoration:none; }}
             .hx-class-identity {{ display:flex; align-items:center; gap:14px; min-width:0; }}
             .hx-class-mark {{ width:52px; height:52px; border-radius:16px; display:grid; place-items:center; background:linear-gradient(180deg,#eff8ff,#e2f1fc); border:1px solid #cfe6f6; color:#26699e; font-size:11px; font-weight:900; flex:none; }}
             .hx-class-code {{ display:inline-flex; padding:4px 8px; border-radius:999px; background:#f0f7fd; border:1px solid #d9eaf6; color:#3974a5; font-size:8px; font-weight:850; letter-spacing:.55px; margin-bottom:5px; }}
@@ -8175,9 +8281,12 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
             .hx-stat + .hx-stat {{ border-left:1px solid #edf2f6; }}
             .hx-stat b {{ font-size:20px; line-height:1; color:#1d619c; font-weight:900; }}
             .hx-stat span {{ margin-top:5px; font-size:8px; color:#8a9cae; font-weight:750; }}
-            .hx-open {{ width:38px; height:38px; border-radius:13px; display:grid; place-items:center; background:#f4f8fb; border:1px solid #dfebf3; color:#6283a0; transition:.18s ease; }}
+            .hx-open {{ width:38px; height:38px; border-radius:13px; display:grid; place-items:center; background:#f4f8fb; border:1px solid #dfebf3; color:#6283a0; transition:.18s ease; text-decoration:none; }}
             .hx-open span {{ font-size:17px; }}
             .hx-class-card:hover .hx-open {{ background:#eaf5ff; border-color:#bfdcef; color:#236aab; }}
+            .hx-class-delete-form {{ margin:0; }}
+            .hx-class-delete {{ min-height:36px; padding:0 12px; border-radius:11px; border:1px solid #efcdd1; background:#fff7f8; color:#b4232d; font:inherit; font-size:10px; font-weight:850; cursor:pointer; white-space:nowrap; transition:.18s ease; }}
+            .hx-class-delete:hover {{ background:#ffecef; border-color:#e5aeb5; transform:translateY(-1px); }}
             .hx-search-box {{ margin-top:18px; padding:14px; border:1px solid #dce8f1; border-radius:18px; background:#fbfdff; }}
             .hx-search-head {{ margin-bottom:8px; }}
             .hx-search-head b {{ color:#1a3852; font-size:11px; }}
@@ -8191,8 +8300,8 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
             .hx-search-ob span {{ color:#8d9ead; font-size:8px; }}
             .hx-open.small {{ width:30px; height:30px; border-radius:10px; }}
             .hx-empty {{ padding:30px; border:1px dashed #cfdfeb; border-radius:18px; text-align:center; color:#8094a7; background:#fbfdff; font-size:12px; }}
-            @media (max-width:900px) {{ .hx-class-card {{ grid-template-columns:1fr 42px; }} .hx-class-stats {{ grid-column:1/2; border:0; border-top:1px solid #edf2f6; padding-top:10px; }} }}
-            @media (max-width:620px) {{ .hx-history-page {{ padding:20px; }} .hx-history-top {{ flex-direction:column; }} .hx-search-form {{ flex-wrap:wrap; }} .hx-search-input {{ min-width:100%; }} .hx-search-form button {{ flex:1; }} .hx-class-card {{ grid-template-columns:1fr 36px; padding:12px; border-radius:17px; }} .hx-class-identity {{ gap:10px; }} .hx-class-mark {{ width:44px; height:44px; border-radius:14px; }} .hx-class-copy h3 {{ font-size:15px; }} .hx-stat {{ padding:0 6px; }} .hx-stat b {{ font-size:16px; }} }}
+            @media (max-width:900px) {{ .hx-class-card {{ grid-template-columns:1fr auto; }} .hx-class-main {{ display:grid; grid-column:1/-1; grid-template-columns:1fr; gap:10px; }} .hx-class-stats {{ border:0; border-top:1px solid #edf2f6; padding-top:10px; }} .hx-class-delete-form {{ grid-column:1; }} }}
+            @media (max-width:620px) {{ .hx-history-page {{ padding:20px; }} .hx-history-top {{ flex-direction:column; }} .hx-search-form {{ flex-wrap:wrap; }} .hx-search-input {{ min-width:100%; }} .hx-search-form button {{ flex:1; }} .hx-class-card {{ grid-template-columns:1fr auto; padding:12px; border-radius:17px; }} .hx-class-main {{ grid-column:1/-1; }} .hx-class-identity {{ gap:10px; }} .hx-class-mark {{ width:44px; height:44px; border-radius:14px; }} .hx-class-copy h3 {{ font-size:15px; }} .hx-stat {{ padding:0 6px; }} .hx-stat b {{ font-size:16px; }} }}
         </style>
     '''
 
@@ -8252,7 +8361,7 @@ def teacher_history_class_content(teacher_id: int, class_id: int) -> str | None:
         </style>
     '''
 
-def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | None = None, request_page: int = 1) -> str | None:
+def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | None = None) -> str | None:
     prefs = get_teacher_preferences(int(teacher_id))
     language = 'en' if str(prefs.get('language') or 'vi').lower() == 'en' else 'vi'
     rows = _history_daily_rows(teacher_id)
@@ -8272,21 +8381,8 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
     back_href = f'/teacher/history/class/{int(class_id)}' if class_id is not None else '/teacher?section=history'
     back = 'Back to Class' if en and class_id is not None else ('Quay lại lớp' if class_id is not None else ('Back to History' if en else 'Quay lại Lịch sử'))
 
-    # Paginate the daily student list exactly like the Students page: 10 students per page.
-    try:
-        page = max(1, int(request_page))
-    except (TypeError, ValueError):
-        page = 1
-    all_students = list(day_item['student_list'])
-    students_per_page = 10
-    total_students = len(all_students)
-    total_pages = max(1, (total_students + students_per_page - 1) // students_per_page)
-    page = min(page, total_pages)
-    page_start = (page - 1) * students_per_page
-    page_students = all_students[page_start:page_start + students_per_page]
-
     student_cards = ''
-    for index, student in enumerate(page_students, start=page_start + 1):
+    for index, student in enumerate(day_item['student_list'], start=1):
         status_label, status_class, status_note = _history_focus_meta(student['daily_focus'], language)
         student_cards += f'''
             <a class="history-daily-student-card {status_class}" href="/teacher/history/day/{url_quote(str(date_str))}/student/{int(student['student_id'])}{("?class_id=" + str(int(class_id))) if class_id is not None else ""}">
@@ -8302,24 +8398,6 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
                 <div class="history-student-status"><strong>{status_label}</strong><small>{status_note}</small></div>
                 <div class="history-day-arrow">›</div>
             </a>
-        '''
-
-    query_suffix = (f'&class_id={int(class_id)}' if class_id is not None else '')
-    pagination_html = ''
-    if total_pages > 1:
-        prev_href = f'/teacher/history/day/{url_quote(str(date_str))}?page={page-1}{query_suffix}'
-        next_href = f'/teacher/history/day/{url_quote(str(date_str))}?page={page+1}{query_suffix}'
-        prev_html = (f'<a class="history-page-button" href="{prev_href}">← Trước</a>' if page > 1 else '<span class="history-page-button disabled">← Trước</span>')
-        next_html = (f'<a class="history-page-button" href="{next_href}">Sau →</a>' if page < total_pages else '<span class="history-page-button disabled">Sau →</span>')
-        numbers_html = ''.join(
-            f'<a class="history-page-number {"active" if n == page else ""}" href="/teacher/history/day/{url_quote(str(date_str))}?page={n}{query_suffix}">{n}</a>'
-            for n in range(1, total_pages + 1)
-        )
-        pagination_html = f'''
-            <div class="history-daily-pagination">
-                <div class="history-daily-page-info">Trang {page} / {total_pages} · Hiển thị {page_start + 1}–{min(page_start + students_per_page, total_students)} / {total_students} học sinh</div>
-                <div class="history-daily-pagination-controls">{prev_html}<div class="history-page-numbers">{numbers_html}</div>{next_html}</div>
-            </div>
         '''
 
     return f'''
@@ -8341,7 +8419,6 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
             <div class="history-divider"></div>
             <div class="history-section-title"><div><strong>{'Students' if en else 'Học sinh'}</strong><span>{'Click a student to see every session from this day.' if en else 'Bấm vào học sinh để xem toàn bộ session của em trong ngày.'}</span></div></div>
             <div class="history-daily-student-list">{student_cards or '<div class="history-search-empty">'+('No measured students.' if en else 'Không có học sinh được đo.')+'</div>'}</div>
-            {pagination_html}
         </section>
         <style>
 
@@ -8386,16 +8463,6 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
             .history-daily-student-card.attention .history-student-avatar {{ background:#fff1b9; color:#896700; border-color:#efd676; }}
             .history-daily-student-card.safe .history-student-status strong {{ color:#287a4a; background:#e6f6ec; }}
             .history-daily-student-card .history-day-arrow {{ width:29px; height:29px; border-radius:50%; display:flex; align-items:center; justify-content:center; box-sizing:border-box; color:#6d8aa4; font-size:21px; background:#f2f7fb; border:1px solid #deebf4; }}
-            .history-daily-pagination {{ display:flex; align-items:center; justify-content:space-between; gap:14px; margin-top:14px; padding-top:13px; border-top:1px solid #eaf0f5; flex-wrap:wrap; }}
-            .history-daily-page-info {{ color:#8193a3; font-size:10px; font-weight:650; }}
-            .history-daily-pagination-controls {{ display:flex; align-items:center; gap:6px; }}
-            .history-page-numbers {{ display:flex; align-items:center; gap:5px; }}
-            .history-page-button, .history-page-number {{ min-width:34px; height:32px; padding:0 10px; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; border:1px solid #d7e5f0; border-radius:10px; background:#fff; color:#365b78; text-decoration:none; font-size:10px; font-weight:800; box-shadow:0 3px 10px rgba(43,95,142,.035); transition:.16s ease; }}
-            .history-page-number {{ min-width:32px; padding:0 8px; }}
-            .history-page-button:hover, .history-page-number:hover {{ background:#f5faff; border-color:#a8c6dd; transform:translateY(-1px); }}
-            .history-page-number.active {{ background:#2b78c5; border-color:#2b78c5; color:#fff; box-shadow:0 5px 12px rgba(43,95,142,.15); }}
-            .history-page-number.active:hover {{ background:#2b78c5; border-color:#2b78c5; }}
-            .history-page-button.disabled {{ color:#aab8c5; background:#f7fafc; pointer-events:none; cursor:default; box-shadow:none; }}
             @media (max-width:1100px) {{ .history-daily-student-card {{ grid-template-columns:32px 43px minmax(160px,1fr) 62px 68px 92px 120px 29px; }} }}
             @media (max-width:850px) {{ .daily-summary-grid {{ grid-template-columns:1fr 1fr; }} .history-daily-student-card {{ grid-template-columns:32px 43px 1fr 29px; }} .history-student-ob,.history-student-evidence,.history-student-focus,.history-student-status {{ text-align:left; border-left:0; padding-left:0; }} }}
 
@@ -8729,11 +8796,7 @@ def teacher_history_day(request: Request, date_str: str):
         class_id = int(request.query_params.get('class_id')) if request.query_params.get('class_id') else None
     except ValueError:
         class_id = None
-    try:
-        request_page = max(1, int(request.query_params.get('page', '1') or '1'))
-    except ValueError:
-        request_page = 1
-    content = teacher_history_day_content(teacher_id, date_str, class_id, request_page)
+    content = teacher_history_day_content(teacher_id, date_str, class_id)
     if content is None:
         return RedirectResponse(url="/teacher?section=history", status_code=303)
     return teacher_shell(
