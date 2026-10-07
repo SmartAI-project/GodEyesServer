@@ -4519,7 +4519,14 @@ def edit_class(request: Request, class_id: int = Form(...), name: str = Form(...
 
 
 def _hard_delete_teacher_class(class_id: int, teacher_id: int) -> str:
-    """Permanently delete a teacher-owned class and all recorded history."""
+    """Permanently delete a teacher class and all history for that class.
+
+    Supports both normal classes and legacy/ghost History classes whose
+    `classes` row may already have been deleted while their sessions remain.
+    """
+    class_id = int(class_id)
+    teacher_id = int(teacher_id)
+
     with SessionLocal() as db:
         class_row = db.execute(
             text("""
@@ -4529,55 +4536,51 @@ def _hard_delete_teacher_class(class_id: int, teacher_id: int) -> str:
                   AND teacher_id = :teacher_id
                 LIMIT 1
             """),
-            {"class_id": int(class_id), "teacher_id": int(teacher_id)}
+            {"class_id": class_id, "teacher_id": teacher_id}
         ).mappings().first()
-
-        if class_row is None:
-            return "not_found"
-
-        running = db.execute(
-            text("""
-                SELECT id
-                FROM sessions
-                WHERE class_id = :class_id
-                  AND teacher_id = :teacher_id
-                  AND status = 'RUNNING'
-                  AND COALESCE(deleted_at, '') = ''
-                LIMIT 1
-            """),
-            {"class_id": int(class_id), "teacher_id": int(teacher_id)}
-        ).mappings().first()
-
-        if running is not None:
-            return "running"
 
         session_rows = db.execute(
             text("""
-                SELECT id
+                SELECT id, status
                 FROM sessions
                 WHERE class_id = :class_id
                   AND teacher_id = :teacher_id
+                  AND COALESCE(deleted_at, '') = ''
+                ORDER BY id ASC
             """),
-            {"class_id": int(class_id), "teacher_id": int(teacher_id)}
+            {"class_id": class_id, "teacher_id": teacher_id}
         ).mappings().all()
+
+        if class_row is None and not session_rows:
+            return "not_found"
+
+        running = next(
+            (row for row in session_rows if str(row["status"] or "").upper() == "RUNNING"),
+            None,
+        )
+        if running is not None:
+            return "running"
 
         session_ids = [int(row["id"]) for row in session_rows]
 
+    # Delete all recorded session data first. This also removes evidence files.
     for session_id in session_ids:
         _hard_delete_session(session_id)
 
     with SessionLocal() as db:
         db.execute(
             text("DELETE FROM class_students WHERE class_id = :class_id"),
-            {"class_id": int(class_id)}
+            {"class_id": class_id}
         )
+
+        # Delete the class itself when it still exists.
         db.execute(
             text("""
                 DELETE FROM classes
                 WHERE id = :class_id
                   AND teacher_id = :teacher_id
             """),
-            {"class_id": int(class_id), "teacher_id": int(teacher_id)}
+            {"class_id": class_id, "teacher_id": teacher_id}
         )
         db.commit()
 
