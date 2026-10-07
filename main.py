@@ -8128,24 +8128,63 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
             <div class="history-day-list">{empty}</div>
         </section>
         <style>
-            .history-daily-panel {{ padding:24px; }}
-            .history-day-list {{ display:flex; flex-direction:column; gap:10px; }}
-            .history-day-card {{ display:grid; grid-template-columns:minmax(220px,1.15fr) minmax(360px,2fr) 30px; align-items:center; gap:18px; padding:15px 16px; border:1px solid #dbe8f3; border-radius:14px; background:#fbfdff; color:#203247; text-decoration:none; transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease; }}
-            .history-day-card:hover {{ transform:translateY(-1px); border-color:#9fc5e5; background:#fff; box-shadow:0 8px 22px rgba(43,95,142,.08); }}
-            .history-day-card.is-today {{ border-color:#84b7de; box-shadow:0 0 0 3px rgba(43,120,197,.07); }}
-            .history-day-week {{ color:#6d7d90; font-size:10px; font-weight:850; letter-spacing:.8px; text-transform:uppercase; }}
-            .history-day-number {{ margin-top:4px; font-size:17px; font-weight:820; }}
-            .history-today-pill {{ display:inline-flex; margin-top:7px; padding:4px 8px; border-radius:999px; background:#eaf4ff; border:1px solid #cce3f7; color:#1f5f9f; font-size:9px; font-weight:850; }}
-            .history-day-metrics {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }}
-            .history-day-metrics > div {{ padding:9px 10px; border:1px solid #e4edf4; border-radius:11px; background:#fff; }}
-            .history-day-metrics strong {{ display:block; font-size:15px; font-weight:850; }}
-            .history-day-metrics span {{ display:block; margin-top:3px; color:#8291a0; font-size:9px; font-weight:700; }}
-            .history-day-arrow {{ color:#92a7ba; font-size:26px; text-align:center; }}
-            .history-search-focus {{ min-width:88px; text-align:center; border-left:1px solid #e8eef4; padding-left:12px; }}
-            .history-search-focus b {{ display:block; color:#1f5f9f; font-size:14px; }}
-            .history-search-focus span {{ display:block; margin-top:3px; color:#8291a0; font-size:9px; font-weight:700; }}
+
+            .history-daily-panel {{ padding:28px; }}
+            .history-daily-panel .history-head {{ display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:20px; }}
+            .history-daily-panel .history-title {{ margin:0; font-size:28px; line-height:1.1; font-weight:860; letter-spacing:-.4px; color:#142d49; }}
+            .history-daily-panel .history-subtitle {{ margin:8px 0 0; max-width:820px; color:#71869a; font-size:13px; line-height:1.6; }}
+            .history-daily-panel .history-count {{ flex:none; min-width:76px; min-height:34px; padding:0 12px; display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; border-radius:999px; background:#eef6ff; border:1px solid #d6e8f8; color:#2367a7; font-size:11px; font-weight:820; }}
+            .history-daily-panel .history-notice {{ margin-bottom:14px; }}
+            .history-daily-panel .student-search {{ display:flex; align-items:center; gap:10px; margin:0; padding:10px; border:1px solid #e1eaf3; border-radius:15px; background:#f8fbfe; box-shadow:0 4px 14px rgba(52,95,129,.035); }}
+            .history-daily-panel .student-search-input-wrap {{ position:relative; flex:1; min-width:0; }}
+            .history-daily-panel .student-search-icon {{ position:absolute; left:13px; top:50%; transform:translateY(-50%); color:#82a0ba; font-size:16px; pointer-events:none; line-height:1; }}
+            .history-daily-panel .student-search-input-wrap input {{ display:block; width:100%; height:44px; padding:0 13px 0 37px; box-sizing:border-box; border:1px solid #d8e4ee; border-radius:11px; background:#fff; color:#203247; outline:none; font:inherit; font-size:13px; }}
+            .history-daily-panel .student-search-input-wrap input::placeholder {{ color:#9aabba; }}
+            .history-daily-panel .student-search-input-wrap input:focus {{ border-color:#76a9d1; box-shadow:0 0 0 3px rgba(43,120,197,.09); }}
+            .history-daily-panel .student-search-button {{ min-height:44px; padding:0 16px; border:1px solid #2b78c5; border-radius:11px; background:#2b78c5; color:#fff; font:inherit; font-size:12px; font-weight:800; cursor:pointer; box-shadow:0 7px 15px rgba(43,120,197,.15); transition:.16s ease; }}
+            .history-daily-panel .student-search-button:hover {{ background:#2269ad; border-color:#2269ad; transform:translateY(-1px); }}
+            .history-daily-panel .student-search-clear {{ min-height:44px; padding:0 12px; display:inline-flex; align-items:center; border:1px solid #d8e4ee; border-radius:11px; background:#fff; color:#587188; text-decoration:none; font-size:11px; font-weight:760; box-sizing:border-box; }}
+            .history-daily-panel .history-search-results {{ margin-top:14px; padding:13px; border:1px solid #e0e9f1; border-radius:15px; background:#fbfdff; }}
+            .history-daily-panel .history-search-results-head {{ margin-bottom:9px; display:flex; justify-content:space-between; align-items:center; }}
+            .history-daily-panel .history-search-results-head > div {{ display:flex; flex-direction:column; gap:2px; }}
+            .history-daily-panel .history-search-results-head strong {{ color:#17324e; font-size:12px; font-weight:850; }}
+            .history-daily-panel .history-search-results-head span {{ color:#8a9baa; font-size:9px; }}
+            .history-daily-panel .student-results {{ display:flex; flex-direction:column; gap:8px; }}
+            .history-daily-panel .history-search-result {{ min-height:58px; display:grid !important; grid-template-columns:minmax(180px,1fr) 92px 62px 25px !important; align-items:center; gap:10px !important; padding:10px 11px !important; border:1px solid #dfe8f1 !important; border-radius:12px !important; background:#fff !important; box-shadow:none !important; color:#203247 !important; text-decoration:none !important; }}
+            .history-daily-panel .history-search-result:hover {{ border-color:#9fc3df !important; box-shadow:0 6px 16px rgba(43,95,142,.06) !important; transform:translateY(-1px); }}
+            .history-daily-panel .student-result-main {{ min-width:0; }}
+            .history-daily-panel .student-result-name {{ font-size:12px; font-weight:820; color:#1a3551; }}
+            .history-daily-panel .student-result-meta {{ margin-top:3px; color:#8798a8; font-size:9px; }}
+            .history-daily-panel .student-result-count {{ text-align:center; border-left:1px solid #e8eef4; padding-left:10px; }}
+            .history-daily-panel .student-result-count strong {{ display:block; font-size:14px; color:#17324e; }}
+            .history-daily-panel .student-result-count span {{ display:block; margin-top:2px; color:#8998a7; font-size:8px; }}
+            .history-daily-panel .history-search-focus {{ min-width:0; text-align:center; border-left:1px solid #e8eef4; padding-left:10px; }}
+            .history-daily-panel .history-search-focus b {{ display:block; color:#1f5f9f; font-size:14px; line-height:1; }}
+            .history-daily-panel .history-search-focus span {{ display:block; margin-top:3px; color:#8291a0; font-size:8px; }}
+            .history-daily-panel .history-divider {{ height:1px; margin:22px 0 17px; background:linear-gradient(90deg,transparent,#e3ebf3 10%,#e3ebf3 90%,transparent); }}
+            .history-daily-panel .history-section-title {{ display:flex; justify-content:space-between; align-items:end; margin-bottom:11px; }}
+            .history-daily-panel .history-section-title > div {{ display:flex; flex-direction:column; gap:3px; }}
+            .history-daily-panel .history-section-title strong {{ color:#17324e; font-size:13px; font-weight:850; }}
+            .history-daily-panel .history-section-title span {{ color:#8b9baa; font-size:10px; }}
+            .history-day-list {{ display:flex; flex-direction:column; gap:11px; }}
+            .history-day-card {{ display:grid; grid-template-columns:minmax(250px,1.05fr) minmax(420px,2fr) 30px; align-items:center; gap:17px; padding:16px 17px; border:1px solid #dce8f2; border-radius:16px; background:linear-gradient(180deg,#fff 0%,#fbfdff 100%); color:#203247; text-decoration:none; box-shadow:0 7px 20px rgba(46,88,123,.04); transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease; }}
+            .history-day-card:hover {{ transform:translateY(-2px); border-color:#97beda; box-shadow:0 12px 26px rgba(43,95,142,.08); }}
+            .history-day-card.is-today {{ border-color:#78add6; box-shadow:0 0 0 3px rgba(43,120,197,.07),0 10px 24px rgba(43,95,142,.06); }}
+            .history-day-date {{ min-height:70px; display:flex; flex-direction:column; justify-content:center; padding-left:14px; border-left:3px solid #d4e9fa; }}
+            .history-day-card.is-today .history-day-date {{ border-left-color:#2d7fc4; }}
+            .history-day-week {{ color:#6e8499; font-size:9px; font-weight:860; letter-spacing:1.1px; text-transform:uppercase; }}
+            .history-day-number {{ margin-top:5px; color:#15314d; font-size:20px; font-weight:860; letter-spacing:-.25px; }}
+            .history-today-pill {{ width:max-content; margin-top:8px; padding:4px 8px; border-radius:999px; background:#edf7ff; border:1px solid #cce5f9; color:#2569a7; font-size:8px; font-weight:850; }}
+            .history-day-metrics {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; }}
+            .history-day-metrics > div {{ min-height:66px; padding:10px 12px; display:flex; flex-direction:column; justify-content:center; box-sizing:border-box; border:1px solid #e1eaf2; border-radius:13px; background:#fff; }}
+            .history-day-metrics strong {{ display:block; color:#1d5f98; font-size:18px; line-height:1; font-weight:860; }}
+            .history-day-metrics span {{ display:block; margin-top:6px; color:#8799a8; font-size:9px; font-weight:750; }}
+            .history-day-arrow {{ width:29px; height:29px; border-radius:50%; display:flex; align-items:center; justify-content:center; box-sizing:border-box; color:#6d8aa4; font-size:22px; background:#f1f7fb; border:1px solid #dceaf4; transition:.16s ease; }}
+            .history-day-card:hover .history-day-arrow {{ transform:translateX(2px); color:#2369a9; background:#eaf5ff; }}
+            .history-search-empty {{ margin-top:12px; padding:18px; border:1px dashed #cfdeea; border-radius:13px; text-align:center; color:#7f91a1; background:#fbfdff; font-size:11px; }}
             @media (max-width:950px) {{ .history-day-card {{ grid-template-columns:1fr 30px; }} .history-day-metrics {{ grid-column:1/-1; }} }}
-            @media (max-width:620px) {{ .history-day-metrics {{ grid-template-columns:1fr 1fr; }} }}
+            @media (max-width:620px) {{ .history-daily-panel {{ padding:18px; }} .history-daily-panel .history-head {{ flex-direction:column; }} .history-daily-panel .student-search {{ flex-wrap:wrap; }} .history-daily-panel .student-search-input-wrap {{ flex-basis:100%; }} .history-day-metrics {{ grid-template-columns:1fr 1fr; }} .history-day-card {{ padding:14px; }} }}
+
         </style>
     '''
 
@@ -8207,40 +8246,51 @@ def teacher_history_day_content(teacher_id: int, date_str: str) -> str | None:
             <div class="history-daily-student-list">{student_cards or '<div class="history-search-empty">'+('No measured students.' if en else 'Không có học sinh được đo.')+'</div>'}</div>
         </section>
         <style>
-            .daily-detail-panel {{ padding:24px; }}
+
+            .daily-detail-panel {{ padding:28px; }}
             .daily-detail-head {{ margin-bottom:18px; }}
-            .daily-summary-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
-            .daily-summary-grid > div {{ padding:13px; border:1px solid #dfeaf5; border-radius:12px; background:#fbfdff; }}
-            .daily-summary-grid span {{ display:block; color:#7c8c9b; font-size:9px; font-weight:760; }}
-            .daily-summary-grid b {{ display:block; margin-top:5px; font-size:21px; font-weight:850; color:#1f5f9f; }}
-            .history-daily-student-list {{ display:flex; flex-direction:column; gap:8px; }}
-            .history-daily-student-card {{ display:grid; grid-template-columns:32px 40px minmax(180px,1fr) 65px 75px 100px 145px 25px; align-items:center; gap:10px; padding:11px 12px; border:1.5px solid #dce8f2; border-radius:13px; background:#fff; text-decoration:none; color:#203247; transition:transform .15s ease, border-color .15s ease, box-shadow .15s ease, background .15s ease; }}
-            .history-daily-student-card:hover {{ transform:translateY(-1px); border-color:#7eaed6; box-shadow:0 8px 20px rgba(43,95,142,.08); }}
-            .history-daily-student-card.attention {{ background:#fff9df; border-color:#d6aa22; }}
-            .history-daily-student-card.attention:hover {{ background:#fff6cf; border-color:#b98900; box-shadow:0 8px 20px rgba(177,137,0,.12); }}
-            .history-daily-student-card.danger {{ background:#fff0f0; border-color:#c73a3a; }}
-            .history-daily-student-card.danger:hover {{ background:#ffe7e7; border-color:#a92727; box-shadow:0 8px 20px rgba(185,40,40,.12); }}
-            .history-student-rank {{ color:#9aabb9; font-size:10px; font-weight:850; text-align:center; }}
-            .history-student-avatar {{ width:40px; height:40px; border-radius:11px; display:flex; align-items:center; justify-content:center; background:#eaf4ff; color:#1f5f9f; font-weight:850; }}
+            .daily-detail-head .v15-back {{ display:inline-flex; align-items:center; gap:6px; margin-bottom:13px; color:#3d607d; text-decoration:none; font-size:12px; font-weight:760; }}
+            .daily-detail-head .v15-back:hover {{ color:#1f5f9f; }}
+            .daily-detail-head .eyebrow-small {{ margin-bottom:5px; color:#6f879d; font-size:9px; font-weight:850; letter-spacing:1px; text-transform:uppercase; }}
+            .daily-detail-head .history-title {{ margin:0; color:#142d49; font-size:29px; line-height:1.1; font-weight:860; letter-spacing:-.45px; }}
+            .daily-detail-head .history-subtitle {{ margin:8px 0 0; max-width:820px; color:#72879b; font-size:13px; line-height:1.6; }}
+            .daily-summary-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:11px; margin:20px 0; }}
+            .daily-summary-grid > div {{ min-height:78px; padding:13px 15px; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; border:1px solid #dfe9f2; border-radius:14px; background:linear-gradient(180deg,#fff 0%,#fbfdff 100%); box-shadow:0 7px 18px rgba(46,88,123,.045); }}
+            .daily-summary-grid span {{ display:block; color:#8093a4; font-size:9px; font-weight:760; }}
+            .daily-summary-grid b {{ display:block; margin-top:7px; color:#1e609b; font-size:22px; line-height:1; font-weight:860; }}
+            .daily-detail-panel .history-divider {{ height:1px; margin:20px 0 16px; background:linear-gradient(90deg,transparent,#e2eaf2 10%,#e2eaf2 90%,transparent); }}
+            .daily-detail-panel .history-section-title {{ display:flex; justify-content:space-between; margin-bottom:11px; }}
+            .daily-detail-panel .history-section-title > div {{ display:flex; flex-direction:column; gap:3px; }}
+            .daily-detail-panel .history-section-title strong {{ color:#17324e; font-size:13px; font-weight:850; }}
+            .daily-detail-panel .history-section-title span {{ color:#8a9aaa; font-size:10px; }}
+            .history-daily-student-list {{ display:flex; flex-direction:column; gap:9px; }}
+            .history-daily-student-card {{ display:grid; grid-template-columns:34px 46px minmax(190px,1fr) 68px 78px 104px 150px 29px; align-items:center; gap:10px; padding:12px 13px; border:1.5px solid #dce8f2; border-radius:15px; background:#fff; color:#203247; text-decoration:none; box-shadow:0 7px 18px rgba(46,88,123,.04); transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease,background .18s ease; }}
+            .history-daily-student-card:hover {{ transform:translateY(-2px); border-color:#8bb8d8; box-shadow:0 11px 24px rgba(43,95,142,.09); }}
+            .history-daily-student-card.attention {{ background:linear-gradient(180deg,#fffdf3 0%,#fff8da 100%); border-color:#d0a728; box-shadow:0 7px 18px rgba(170,132,0,.05); }}
+            .history-daily-student-card.attention:hover {{ background:linear-gradient(180deg,#fffbea 0%,#fff4c5 100%); border-color:#b78300; box-shadow:0 11px 24px rgba(170,132,0,.11); }}
+            .history-daily-student-card.danger {{ background:linear-gradient(180deg,#fffafa 0%,#fff0f0 100%); border-color:#c63939; box-shadow:0 7px 18px rgba(174,43,43,.05); }}
+            .history-daily-student-card.danger:hover {{ background:linear-gradient(180deg,#fff7f7 0%,#ffe7e7 100%); border-color:#a52424; box-shadow:0 11px 24px rgba(174,43,43,.11); }}
+            .history-student-rank {{ color:#97aab8; font-size:9px; font-weight:850; text-align:center; }}
+            .history-student-avatar {{ width:43px; height:43px; border-radius:13px; display:flex; align-items:center; justify-content:center; box-sizing:border-box; background:#eaf4ff; color:#1f5f9f; border:1px solid #d5e7f5; font-size:14px; font-weight:850; }}
             .history-student-main {{ min-width:0; }}
-            .history-student-main strong {{ display:block; font-size:12px; font-weight:820; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-            .history-student-main span {{ display:block; margin-top:3px; color:#8a99a8; font-size:9px; }}
-            .history-student-ob, .history-student-evidence {{ text-align:center; border-left:1px solid #edf2f7; }}
-            .history-student-ob b, .history-student-evidence b {{ display:block; font-size:15px; }}
-            .history-student-ob span, .history-student-evidence span {{ display:block; color:#8998a7; font-size:8px; font-weight:750; margin-top:2px; }}
-            .history-student-focus {{ text-align:center; border-left:1px solid #edf2f7; }}
-            .history-student-focus b {{ display:block; color:#1f5f9f; font-size:15px; }}
-            .history-student-focus span {{ display:block; color:#8998a7; font-size:8px; margin-top:2px; }}
-            .history-student-status {{ border-left:1px solid #edf2f7; padding-left:12px; }}
-            .history-student-status strong {{ display:block; font-size:9px; letter-spacing:.5px; }}
-            .history-student-status small {{ display:block; margin-top:3px; color:#8998a7; font-size:8px; }}
-            .history-daily-student-card.danger .history-student-status strong {{ color:#b4232d; }}
-            .history-daily-student-card.danger .history-student-avatar {{ background:#ffdede; color:#a92727; }}
-            .history-daily-student-card.attention .history-student-status strong {{ color:#8a6800; }}
-            .history-daily-student-card.attention .history-student-avatar {{ background:#fff0b8; color:#8a6800; }}
-            .history-daily-student-card.safe .history-student-status strong {{ color:#287a4a; }}
-            @media (max-width:1100px) {{ .history-daily-student-card {{ grid-template-columns:32px 40px minmax(160px,1fr) 60px 65px 95px 125px 25px; }} }}
-            @media (max-width:850px) {{ .daily-summary-grid {{ grid-template-columns:1fr 1fr; }} .history-daily-student-card {{ grid-template-columns:32px 40px 1fr 25px; }} .history-student-ob,.history-student-evidence,.history-student-focus,.history-student-status {{ grid-column:auto; border-left:0; text-align:left; }} }}
+            .history-student-main strong {{ display:block; color:#1a3551; font-size:13px; font-weight:830; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+            .history-student-main span {{ display:block; margin-top:4px; color:#8798a8; font-size:9px; }}
+            .history-student-ob, .history-student-evidence, .history-student-focus {{ text-align:center; border-left:1px solid rgba(211,224,236,.76); }}
+            .history-student-ob b, .history-student-evidence b, .history-student-focus b {{ display:block; color:#17324e; font-size:16px; line-height:1; font-weight:860; }}
+            .history-student-ob span, .history-student-evidence span, .history-student-focus span {{ display:block; margin-top:4px; color:#8998a7; font-size:8px; font-weight:720; }}
+            .history-student-focus b {{ color:#1e609b; }}
+            .history-student-status {{ border-left:1px solid rgba(211,224,236,.76); padding-left:12px; }}
+            .history-student-status strong {{ display:inline-flex; align-items:center; width:max-content; padding:5px 8px; box-sizing:border-box; border-radius:999px; background:#edf3f7; color:#5f7485; font-size:8px; line-height:1; letter-spacing:.45px; font-weight:860; }}
+            .history-student-status small {{ display:block; margin-top:4px; color:#8998a7; font-size:8px; line-height:1.25; }}
+            .history-daily-student-card.danger .history-student-status strong {{ color:#a42626; background:#ffdfdf; }}
+            .history-daily-student-card.danger .history-student-avatar {{ background:#ffe4e4; color:#a72525; border-color:#efbaba; }}
+            .history-daily-student-card.attention .history-student-status strong {{ color:#876500; background:#ffefad; }}
+            .history-daily-student-card.attention .history-student-avatar {{ background:#fff1b9; color:#896700; border-color:#efd676; }}
+            .history-daily-student-card.safe .history-student-status strong {{ color:#287a4a; background:#e6f6ec; }}
+            .history-daily-student-card .history-day-arrow {{ width:29px; height:29px; border-radius:50%; display:flex; align-items:center; justify-content:center; box-sizing:border-box; color:#6d8aa4; font-size:21px; background:#f2f7fb; border:1px solid #deebf4; }}
+            @media (max-width:1100px) {{ .history-daily-student-card {{ grid-template-columns:32px 43px minmax(160px,1fr) 62px 68px 92px 120px 29px; }} }}
+            @media (max-width:850px) {{ .daily-summary-grid {{ grid-template-columns:1fr 1fr; }} .history-daily-student-card {{ grid-template-columns:32px 43px 1fr 29px; }} .history-student-ob,.history-student-evidence,.history-student-focus,.history-student-status {{ text-align:left; border-left:0; padding-left:0; }} }}
+
         </style>
     '''
 
@@ -8297,23 +8347,38 @@ def teacher_history_day_student_content(teacher_id: int, date_str: str, student_
             <div class="history-session-list">{session_cards or '<div class="history-search-empty">'+('No session data.' if en else 'Không có dữ liệu session.')+'</div>'}</div>
         </section>
         <style>
-            .daily-student-panel {{ padding:24px; }}
-            .daily-student-hero {{ display:grid; grid-template-columns:48px 1fr auto; align-items:center; gap:13px; margin:12px 0 18px; }}
-            .daily-student-hero h2 {{ margin:0; }}
-            .daily-student-focus {{ text-align:right; }}
-            .daily-student-focus b {{ display:block; color:#1f5f9f; font-size:25px; font-weight:850; }}
-            .daily-student-focus span {{ display:block; margin-top:3px; color:#8a99a8; font-size:9px; }}
-            .history-session-list {{ display:flex; flex-direction:column; gap:8px; }}
-            .history-session-card {{ display:grid; grid-template-columns:65px minmax(220px,1fr) 65px 80px 80px 25px; align-items:center; gap:11px; padding:12px 13px; border:1px solid #dce8f2; border-radius:12px; background:#fbfdff; text-decoration:none; color:#203247; }}
-            .history-session-card:hover {{ border-color:#9fc5e5; background:#fff; }}
-            .history-session-id {{ color:#1f5f9f; font-size:11px; font-weight:850; }}
-            .history-session-info strong {{ display:block; font-size:12px; }}
-            .history-session-info span {{ display:block; margin-top:3px; color:#8a99a8; font-size:9px; }}
-            .history-session-stat, .history-session-focus {{ text-align:center; border-left:1px solid #edf2f7; }}
-            .history-session-stat b, .history-session-focus b {{ display:block; font-size:14px; }}
-            .history-session-stat span, .history-session-focus span {{ display:block; color:#8998a7; margin-top:2px; font-size:8px; }}
+
+            .daily-student-panel {{ padding:28px; }}
+            .daily-student-panel .v15-back {{ display:inline-flex; align-items:center; gap:6px; margin-bottom:13px; color:#3d607d; text-decoration:none; font-size:12px; font-weight:760; }}
+            .daily-student-panel .v15-back:hover {{ color:#1f5f9f; }}
+            .daily-student-panel .eyebrow-small {{ color:#6f879d; font-size:9px; font-weight:850; letter-spacing:1px; text-transform:uppercase; }}
+            .daily-student-hero {{ display:grid; grid-template-columns:58px minmax(0,1fr) auto; align-items:center; gap:15px; margin:7px 0 21px; padding-top:2px; }}
+            .daily-student-hero .history-student-avatar {{ width:54px; height:54px; border-radius:16px; font-size:18px; }}
+            .daily-student-hero h2 {{ margin:0; color:#142d49; font-size:29px; line-height:1.1; font-weight:860; letter-spacing:-.45px; }}
+            .daily-student-hero .history-subtitle {{ margin-top:5px; }}
+            .daily-student-focus {{ text-align:right; padding-left:22px; border-left:1px solid #e3ebf3; }}
+            .daily-student-focus b {{ display:block; color:#1e609b; font-size:30px; line-height:1; font-weight:860; }}
+            .daily-student-focus span {{ display:block; margin-top:5px; color:#8998a7; font-size:9px; font-weight:720; }}
+            .daily-student-panel .daily-summary-grid {{ margin-top:0; }}
+            .daily-student-panel .history-divider {{ height:1px; margin:20px 0 16px; background:linear-gradient(90deg,transparent,#e2eaf2 10%,#e2eaf2 90%,transparent); }}
+            .daily-student-panel .history-section-title {{ margin-bottom:11px; }}
+            .daily-student-panel .history-section-title > div {{ display:flex; flex-direction:column; gap:3px; }}
+            .daily-student-panel .history-section-title strong {{ color:#17324e; font-size:13px; font-weight:850; }}
+            .daily-student-panel .history-section-title span {{ color:#8a9aaa; font-size:10px; }}
+            .history-session-list {{ display:flex; flex-direction:column; gap:9px; }}
+            .history-session-card {{ display:grid; grid-template-columns:66px minmax(220px,1fr) 66px 80px 82px 29px; align-items:center; gap:11px; padding:13px 14px; border:1px solid #dce8f2; border-radius:14px; background:linear-gradient(180deg,#fff,#fbfdff); text-decoration:none; color:#203247; box-shadow:0 6px 16px rgba(52,95,129,.035); transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease; }}
+            .history-session-card:hover {{ transform:translateY(-1px); border-color:#8fb9d9; background:#fff; box-shadow:0 10px 22px rgba(43,95,142,.08); }}
+            .history-session-id {{ color:#1f5f9f; font-size:12px; font-weight:860; }}
+            .history-session-info {{ min-width:0; }}
+            .history-session-info strong {{ display:block; color:#1a3551; font-size:13px; font-weight:830; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+            .history-session-info span {{ display:block; margin-top:4px; color:#8a99a8; font-size:9px; }}
+            .history-session-stat, .history-session-focus {{ text-align:center; border-left:1px solid #e8eef4; }}
+            .history-session-stat b, .history-session-focus b {{ display:block; color:#17324e; font-size:15px; line-height:1; font-weight:860; }}
+            .history-session-stat span, .history-session-focus span {{ display:block; margin-top:4px; color:#8998a7; font-size:8px; font-weight:700; }}
             .history-session-focus b {{ color:#1f5f9f; }}
-            @media (max-width:750px) {{ .daily-student-hero {{ grid-template-columns:48px 1fr; }} .daily-student-focus {{ grid-column:1/-1; text-align:left; }} .history-session-card {{ grid-template-columns:55px 1fr 25px; }} .history-session-stat,.history-session-focus {{ text-align:left; border-left:0; }} }}
+            .history-session-card .history-day-arrow {{ width:29px; height:29px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#6d8aa4; font-size:20px; background:#f2f7fb; border:1px solid #deebf4; }}
+            @media (max-width:750px) {{ .daily-student-panel {{ padding:18px; }} .daily-student-hero {{ grid-template-columns:48px 1fr; }} .daily-student-hero .history-student-avatar {{ width:46px; height:46px; }} .daily-student-hero h2 {{ font-size:23px; }} .daily-student-focus {{ grid-column:1/-1; text-align:left; padding:0; border-left:0; }} .history-session-card {{ grid-template-columns:55px 1fr 29px; }} .history-session-stat,.history-session-focus {{ text-align:left; border-left:0; }} }}
+
         </style>
     '''
 
