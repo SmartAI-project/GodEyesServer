@@ -8013,9 +8013,9 @@ def _history_weekday_label(date_str: str, language: str = 'vi') -> str:
 def _history_focus_meta(focus: float, language: str = 'vi'):
     focus = float(focus or 0.0)
     if focus < 50.0:
-        return ('DANGER', 'danger', 'Critical review' if language == 'en' else 'Cần ưu tiên xem lại')
+        return ('ALERT' if language == 'en' else 'BÁO ĐỘNG', 'danger', 'Critical review' if language == 'en' else 'Cần ưu tiên xem lại')
     if focus < 80.0:
-        return ('ATTENTION', 'attention', 'Review context' if language == 'en' else 'Nên xem thêm bối cảnh')
+        return ('ATTENTION', 'attention', 'Review context' if language == 'en' else 'ĐÁNG CHÚ Ý')
     return ('SAFE', 'safe', 'Low priority' if language == 'en' else 'Mức ưu tiên thấp')
 
 
@@ -8214,8 +8214,12 @@ def teacher_history_day_content(teacher_id: int, date_str: str) -> str | None:
             .daily-summary-grid span {{ display:block; color:#7c8c9b; font-size:9px; font-weight:760; }}
             .daily-summary-grid b {{ display:block; margin-top:5px; font-size:21px; font-weight:850; color:#1f5f9f; }}
             .history-daily-student-list {{ display:flex; flex-direction:column; gap:8px; }}
-            .history-daily-student-card {{ display:grid; grid-template-columns:32px 40px minmax(180px,1fr) 65px 75px 100px 145px 25px; align-items:center; gap:10px; padding:11px 12px; border:1px solid #dce8f2; border-radius:13px; background:#fff; text-decoration:none; color:#203247; transition:transform .15s ease, border-color .15s ease, box-shadow .15s ease; }}
-            .history-daily-student-card:hover {{ transform:translateY(-1px); border-color:#9fc5e5; box-shadow:0 8px 20px rgba(43,95,142,.07); }}
+            .history-daily-student-card {{ display:grid; grid-template-columns:32px 40px minmax(180px,1fr) 65px 75px 100px 145px 25px; align-items:center; gap:10px; padding:11px 12px; border:1.5px solid #dce8f2; border-radius:13px; background:#fff; text-decoration:none; color:#203247; transition:transform .15s ease, border-color .15s ease, box-shadow .15s ease, background .15s ease; }}
+            .history-daily-student-card:hover {{ transform:translateY(-1px); border-color:#7eaed6; box-shadow:0 8px 20px rgba(43,95,142,.08); }}
+            .history-daily-student-card.attention {{ background:#fff9df; border-color:#d6aa22; }}
+            .history-daily-student-card.attention:hover {{ background:#fff6cf; border-color:#b98900; box-shadow:0 8px 20px rgba(177,137,0,.12); }}
+            .history-daily-student-card.danger {{ background:#fff0f0; border-color:#c73a3a; }}
+            .history-daily-student-card.danger:hover {{ background:#ffe7e7; border-color:#a92727; box-shadow:0 8px 20px rgba(185,40,40,.12); }}
             .history-student-rank {{ color:#9aabb9; font-size:10px; font-weight:850; text-align:center; }}
             .history-student-avatar {{ width:40px; height:40px; border-radius:11px; display:flex; align-items:center; justify-content:center; background:#eaf4ff; color:#1f5f9f; font-weight:850; }}
             .history-student-main {{ min-width:0; }}
@@ -8231,7 +8235,9 @@ def teacher_history_day_content(teacher_id: int, date_str: str) -> str | None:
             .history-student-status strong {{ display:block; font-size:9px; letter-spacing:.5px; }}
             .history-student-status small {{ display:block; margin-top:3px; color:#8998a7; font-size:8px; }}
             .history-daily-student-card.danger .history-student-status strong {{ color:#b4232d; }}
-            .history-daily-student-card.attention .history-student-status strong {{ color:#b07800; }}
+            .history-daily-student-card.danger .history-student-avatar {{ background:#ffdede; color:#a92727; }}
+            .history-daily-student-card.attention .history-student-status strong {{ color:#8a6800; }}
+            .history-daily-student-card.attention .history-student-avatar {{ background:#fff0b8; color:#8a6800; }}
             .history-daily-student-card.safe .history-student-status strong {{ color:#287a4a; }}
             @media (max-width:1100px) {{ .history-daily-student-card {{ grid-template-columns:32px 40px minmax(160px,1fr) 60px 65px 95px 125px 25px; }} }}
             @media (max-width:850px) {{ .daily-summary-grid {{ grid-template-columns:1fr 1fr; }} .history-daily-student-card {{ grid-template-columns:32px 40px 1fr 25px; }} .history-student-ob,.history-student-evidence,.history-student-focus,.history-student-status {{ grid-column:auto; border-left:0; text-align:left; }} }}
