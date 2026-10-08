@@ -1,4 +1,4 @@
-﻿# GODEYES UI PATCH v8 â€” severity cards + dots refined
+﻿# GODEYES UI PATCH v8 — severity cards + dots refined
 from html import escape
 import json
 import math
@@ -29,6 +29,7 @@ import numpy as np
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy import select, text
 
 from auth.security import create_access_token, decode_access_token, hash_password, verify_password
@@ -72,6 +73,20 @@ if STATIC_DIR.exists():
         StaticFiles(directory=str(STATIC_DIR)),
         name="static",
     )
+
+
+class UTF8HTMLMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        content_type = response.headers.get("content-type", "").lower()
+
+        if "text/html" in content_type:
+            response.headers["content-type"] = "text/html; charset=utf-8"
+
+        return response
+
+
+app.add_middleware(UTF8HTMLMiddleware)
 
 GODEYES_HISTORY_FOCUS_UI_VERSION = "git-main-history-focus-v8"
 
@@ -215,7 +230,7 @@ def server_login(payload: dict, response: Response):
 
     if not username or not password:
         return JSONResponse(
-            {"detail": "Vui lÃ²ng nháº­p tÃªn Ä‘Äƒng nháº­p vÃ  máº­t kháº©u."},
+            {"detail": "Vui lòng nhập tên đăng nhập và mật khẩu."},
             status_code=400,
         )
 
@@ -241,7 +256,7 @@ def server_login(payload: dict, response: Response):
 
                 if not active:
                     return JSONResponse(
-                        {"detail": "TÃ i khoáº£n Ä‘Ã£ bá»‹ khÃ³a."},
+                        {"detail": "Tài khoản đã bị khóa."},
                         status_code=401,
                     )
 
@@ -255,7 +270,7 @@ def server_login(payload: dict, response: Response):
 
                 if not password_ok:
                     return JSONResponse(
-                        {"detail": "Sai tÃªn Ä‘Äƒng nháº­p hoáº·c máº­t kháº©u."},
+                        {"detail": "Sai tên đăng nhập hoặc mật khẩu."},
                         status_code=401,
                     )
 
@@ -302,7 +317,7 @@ def server_login(payload: dict, response: Response):
 
                 if not active:
                     return JSONResponse(
-                        {"detail": "TÃ i khoáº£n Ä‘Ã£ bá»‹ khÃ³a."},
+                        {"detail": "Tài khoản đã bị khóa."},
                         status_code=401,
                     )
 
@@ -316,7 +331,7 @@ def server_login(payload: dict, response: Response):
 
                 if not password_ok:
                     return JSONResponse(
-                        {"detail": "Sai tÃªn Ä‘Äƒng nháº­p hoáº·c máº­t kháº©u."},
+                        {"detail": "Sai tên đăng nhập hoặc mật khẩu."},
                         status_code=401,
                     )
 
@@ -348,14 +363,14 @@ def server_login(payload: dict, response: Response):
         # collapsing into a generic unhandled 500.
         return JSONResponse(
             {
-                "detail": "KhÃ´ng thá»ƒ xá»­ lÃ½ Ä‘Äƒng nháº­p trÃªn Server. Vui lÃ²ng thá»­ láº¡i sau.",
+                "detail": "Không thể xử lý đăng nhập trên Server. Vui lòng thử lại sau.",
                 "error_type": type(exc).__name__,
             },
             status_code=503,
         )
 
     return JSONResponse(
-        {"detail": "Sai tÃªn Ä‘Äƒng nháº­p hoáº·c máº­t kháº©u."},
+        {"detail": "Sai tên đăng nhập hoặc mật khẩu."},
         status_code=401,
     )
 
@@ -652,201 +667,201 @@ def _normalise_teacher_preferences(language='vi', theme='light', camera_source='
 # The user's language preference controls every visible UI phrase; proper names,
 # student names, class names, codes and user-entered data are left unchanged.
 STRICT_VI_TO_EN = {
-    'Tiáº¿ng Anh': 'English', 'Tiáº¿ng Viá»‡t': 'Vietnamese',
-    'Má»Ÿ á»©ng dá»¥ng': 'Open App', 'Táº£i á»©ng dá»¥ng': 'Download App',
-    'Káº¿t ná»‘i camera': 'Connect Camera', 'Káº¾T Ná»I CAMERA': 'CONNECT CAMERA',
-    'Camera Ä‘Ã£ sáºµn sÃ ng': 'Camera ready', 'Äang káº¿t ná»‘i cameraâ€¦': 'Connecting cameraâ€¦',
-    'ÄÃ£ káº¿t ná»‘i': 'Connected', 'ChÆ°a káº¿t ná»‘i': 'Not connected',
-    'Camera tÃ­ch há»£p trÃªn mÃ¡y tÃ­nh': 'Built-in computer camera',
-    'Webcam USB rá»i': 'External USB webcam', 'Camera Wi-Fi': 'Wi-Fi Camera',
-    'Nguá»“n camera': 'Camera source', 'HÃ£ng camera': 'Camera brand',
-    'Cháº¥t lÆ°á»£ng luá»“ng': 'Stream quality', 'Cháº¥t lÆ°á»£ng cao': 'High quality',
-    'Cháº¥t lÆ°á»£ng tiÃªu chuáº©n': 'Standard quality',
-    'BÃ¬nh thÆ°á»ng': 'Normal', 'HÆ¡i nghiÃªm trá»ng': 'Attention', 'NghiÃªm trá»ng': 'Danger',
-    'Má»©c Ä‘á»™': 'Severity', 'TÃ¬m há»c sinh': 'Search student',
-    'TÃ¬m theo tÃªn hoáº·c mÃ£ há»c sinh': 'Search by name or student code',
-    'XÃ³a': 'Delete', 'LÆ°u': 'Save', 'Há»§y': 'Cancel', 'Quay láº¡i': 'Back',
-    'Trang chá»§': 'Home', 'TrÆ°á»›c': 'Previous', 'Sau': 'Next',
-    'ThÃ¡ng': 'Month', 'NgÃ y': 'Day', 'Giá»': 'Time', 'PhÃºt': 'Minute', 'GiÃ¢y': 'Second',
-    'HÃ´m nay': 'Today', 'HÃ´m qua': 'Yesterday', 'KhÃ´ng cÃ³ dá»¯ liá»‡u': 'No data',
-    'Äang cháº¡y': 'Running', 'HoÃ n táº¥t': 'Completed', 'Sáºµn sÃ ng': 'Ready',
-    'ChÆ°a sáºµn sÃ ng': 'Not ready', 'Äang hoáº¡t Ä‘á»™ng': 'Active',
-    'Quan sÃ¡t': 'Observation', 'Quan sÃ¡t gáº§n nháº¥t': 'Latest observation',
-    'Sá»± kiá»‡n': 'Event', 'Minh chá»©ng': 'Evidence', 'Khung hÃ¬nh': 'Frame',
-    'Confidence': 'Confidence', 'Äá»™ tin cáº­y': 'Confidence',
-    'MÃ£ lá»›p': 'Class code', 'TÃªn lá»›p': 'Class name', 'Há»c sinh': 'Students',
-    'Há»c sinh trong lá»›p': 'Students in class', 'Tá»•ng sá»‘ há»c sinh': 'Total students',
-    'TÃ i khoáº£n giÃ¡o viÃªn': 'Teacher account', 'TÃªn Ä‘Äƒng nháº­p': 'Username',
-    'Máº­t kháº©u': 'Password', 'ÄÄƒng nháº­p': 'Sign in', 'ÄÄƒng xuáº¥t': 'Sign out',
-    'CÃ i Ä‘áº·t': 'Settings', 'NgÃ´n ngá»¯': 'Language', 'Giao diá»‡n': 'Appearance',
-    'SÃ¡ng': 'Light', 'Tá»‘i': 'Dark',
-    'LÆ¯U CÃ€I Äáº¶T': 'SAVE SETTINGS', 'Cá»”NG GIÃO VIÃŠN': 'TEACHER PORTAL',
-    'ThÃ´ng bÃ¡o': 'Notice', 'Lá»—i': 'Error', 'ThÃ nh cÃ´ng': 'Success',
+    'Tiếng Anh': 'English', 'Tiếng Việt': 'Vietnamese',
+    'Mở ứng dụng': 'Open App', 'Tải ứng dụng': 'Download App',
+    'Kết nối camera': 'Connect Camera', 'KẾT NỐI CAMERA': 'CONNECT CAMERA',
+    'Camera đã sẵn sàng': 'Camera ready', 'Đang kết nối camera…': 'Connecting camera…',
+    'Đã kết nối': 'Connected', 'Chưa kết nối': 'Not connected',
+    'Camera tích hợp trên máy tính': 'Built-in computer camera',
+    'Webcam USB rời': 'External USB webcam', 'Camera Wi-Fi': 'Wi-Fi Camera',
+    'Nguồn camera': 'Camera source', 'Hãng camera': 'Camera brand',
+    'Chất lượng luồng': 'Stream quality', 'Chất lượng cao': 'High quality',
+    'Chất lượng tiêu chuẩn': 'Standard quality',
+    'Bình thường': 'Normal', 'Hơi nghiêm trọng': 'Attention', 'Nghiêm trọng': 'Danger',
+    'Mức độ': 'Severity', 'Tìm học sinh': 'Search student',
+    'Tìm theo tên hoặc mã học sinh': 'Search by name or student code',
+    'Xóa': 'Delete', 'Lưu': 'Save', 'Hủy': 'Cancel', 'Quay lại': 'Back',
+    'Trang chủ': 'Home', 'Trước': 'Previous', 'Sau': 'Next',
+    'Tháng': 'Month', 'Ngày': 'Day', 'Giờ': 'Time', 'Phút': 'Minute', 'Giây': 'Second',
+    'Hôm nay': 'Today', 'Hôm qua': 'Yesterday', 'Không có dữ liệu': 'No data',
+    'Đang chạy': 'Running', 'Hoàn tất': 'Completed', 'Sẵn sàng': 'Ready',
+    'Chưa sẵn sàng': 'Not ready', 'Đang hoạt động': 'Active',
+    'Quan sát': 'Observation', 'Quan sát gần nhất': 'Latest observation',
+    'Sự kiện': 'Event', 'Minh chứng': 'Evidence', 'Khung hình': 'Frame',
+    'Confidence': 'Confidence', 'Độ tin cậy': 'Confidence',
+    'Mã lớp': 'Class code', 'Tên lớp': 'Class name', 'Học sinh': 'Students',
+    'Học sinh trong lớp': 'Students in class', 'Tổng số học sinh': 'Total students',
+    'Tài khoản giáo viên': 'Teacher account', 'Tên đăng nhập': 'Username',
+    'Mật khẩu': 'Password', 'Đăng nhập': 'Sign in', 'Đăng xuất': 'Sign out',
+    'Cài đặt': 'Settings', 'Ngôn ngữ': 'Language', 'Giao diện': 'Appearance',
+    'Sáng': 'Light', 'Tối': 'Dark',
+    'LƯU CÀI ĐẶT': 'SAVE SETTINGS', 'CỔNG GIÁO VIÊN': 'TEACHER PORTAL',
+    'Thông báo': 'Notice', 'Lỗi': 'Error', 'Thành công': 'Success',
 }
 
 STRICT_EN_TO_VI = {
-    'English': 'Tiáº¿ng Anh', 'Vietnamese': 'Tiáº¿ng Viá»‡t',
-    'Open App': 'Má»Ÿ á»©ng dá»¥ng', 'Download App': 'Táº£i á»©ng dá»¥ng',
-    'CONNECT CAMERA': 'Káº¾T Ná»I CAMERA', 'Connect Camera': 'Káº¿t ná»‘i camera',
-    'Camera ready': 'Camera Ä‘Ã£ sáºµn sÃ ng', 'Connecting cameraâ€¦': 'Äang káº¿t ná»‘i cameraâ€¦',
-    'Connected': 'ÄÃ£ káº¿t ná»‘i', 'Not connected': 'ChÆ°a káº¿t ná»‘i',
-    'Built-in computer camera': 'Camera tÃ­ch há»£p trÃªn mÃ¡y tÃ­nh',
-    'External USB webcam': 'Webcam USB rá»i', 'Wi-Fi Camera': 'Camera Wi-Fi',
-    'Camera source': 'Nguá»“n camera', 'Camera brand': 'HÃ£ng camera',
-    'Stream quality': 'Cháº¥t lÆ°á»£ng luá»“ng', 'High quality': 'Cháº¥t lÆ°á»£ng cao',
-    'Standard quality': 'Cháº¥t lÆ°á»£ng tiÃªu chuáº©n',
-    'Normal': 'BÃ¬nh thÆ°á»ng', 'Attention': 'HÆ¡i nghiÃªm trá»ng', 'Danger': 'NghiÃªm trá»ng',
-    'Severity': 'Má»©c Ä‘á»™', 'Search student': 'TÃ¬m há»c sinh',
-    'Search by name or student code': 'TÃ¬m theo tÃªn hoáº·c mÃ£ há»c sinh',
-    'Delete': 'XÃ³a', 'Save': 'LÆ°u', 'Cancel': 'Há»§y', 'Back': 'Quay láº¡i',
-    'Home': 'Trang chá»§', 'Previous': 'TrÆ°á»›c', 'Next': 'Sau',
-    'Month': 'ThÃ¡ng', 'Day': 'NgÃ y', 'Time': 'Giá»', 'Minute': 'PhÃºt', 'Second': 'GiÃ¢y',
-    'Today': 'HÃ´m nay', 'Yesterday': 'HÃ´m qua', 'No data': 'KhÃ´ng cÃ³ dá»¯ liá»‡u',
-    'Running': 'Äang cháº¡y', 'Completed': 'HoÃ n táº¥t', 'Ready': 'Sáºµn sÃ ng',
-    'Not ready': 'ChÆ°a sáºµn sÃ ng', 'Active': 'Äang hoáº¡t Ä‘á»™ng',
-    'Observation': 'Quan sÃ¡t', 'Latest observation': 'Quan sÃ¡t gáº§n nháº¥t',
-    'Event': 'Sá»± kiá»‡n', 'Evidence': 'Minh chá»©ng', 'Frame': 'Khung hÃ¬nh',
-    'Confidence': 'Äá»™ tin cáº­y', 'Class code': 'MÃ£ lá»›p', 'Class name': 'TÃªn lá»›p',
-    'Students': 'Há»c sinh', 'Total students': 'Tá»•ng sá»‘ há»c sinh',
-    'Teacher account': 'TÃ i khoáº£n giÃ¡o viÃªn', 'Username': 'TÃªn Ä‘Äƒng nháº­p',
-    'Password': 'Máº­t kháº©u', 'Sign in': 'ÄÄƒng nháº­p', 'Sign out': 'ÄÄƒng xuáº¥t',
-    'Settings': 'CÃ i Ä‘áº·t', 'Language': 'NgÃ´n ngá»¯', 'Appearance': 'Giao diá»‡n',
-    'Light': 'SÃ¡ng', 'Dark': 'Tá»‘i', 'SAVE SETTINGS': 'LÆ¯U CÃ€I Äáº¶T',
-    'TEACHER PORTAL': 'Cá»”NG GIÃO VIÃŠN', 'Notice': 'ThÃ´ng bÃ¡o', 'Error': 'Lá»—i', 'Success': 'ThÃ nh cÃ´ng',
+    'English': 'Tiếng Anh', 'Vietnamese': 'Tiếng Việt',
+    'Open App': 'Mở ứng dụng', 'Download App': 'Tải ứng dụng',
+    'CONNECT CAMERA': 'KẾT NỐI CAMERA', 'Connect Camera': 'Kết nối camera',
+    'Camera ready': 'Camera đã sẵn sàng', 'Connecting camera…': 'Đang kết nối camera…',
+    'Connected': 'Đã kết nối', 'Not connected': 'Chưa kết nối',
+    'Built-in computer camera': 'Camera tích hợp trên máy tính',
+    'External USB webcam': 'Webcam USB rời', 'Wi-Fi Camera': 'Camera Wi-Fi',
+    'Camera source': 'Nguồn camera', 'Camera brand': 'Hãng camera',
+    'Stream quality': 'Chất lượng luồng', 'High quality': 'Chất lượng cao',
+    'Standard quality': 'Chất lượng tiêu chuẩn',
+    'Normal': 'Bình thường', 'Attention': 'Hơi nghiêm trọng', 'Danger': 'Nghiêm trọng',
+    'Severity': 'Mức độ', 'Search student': 'Tìm học sinh',
+    'Search by name or student code': 'Tìm theo tên hoặc mã học sinh',
+    'Delete': 'Xóa', 'Save': 'Lưu', 'Cancel': 'Hủy', 'Back': 'Quay lại',
+    'Home': 'Trang chủ', 'Previous': 'Trước', 'Next': 'Sau',
+    'Month': 'Tháng', 'Day': 'Ngày', 'Time': 'Giờ', 'Minute': 'Phút', 'Second': 'Giây',
+    'Today': 'Hôm nay', 'Yesterday': 'Hôm qua', 'No data': 'Không có dữ liệu',
+    'Running': 'Đang chạy', 'Completed': 'Hoàn tất', 'Ready': 'Sẵn sàng',
+    'Not ready': 'Chưa sẵn sàng', 'Active': 'Đang hoạt động',
+    'Observation': 'Quan sát', 'Latest observation': 'Quan sát gần nhất',
+    'Event': 'Sự kiện', 'Evidence': 'Minh chứng', 'Frame': 'Khung hình',
+    'Confidence': 'Độ tin cậy', 'Class code': 'Mã lớp', 'Class name': 'Tên lớp',
+    'Students': 'Học sinh', 'Total students': 'Tổng số học sinh',
+    'Teacher account': 'Tài khoản giáo viên', 'Username': 'Tên đăng nhập',
+    'Password': 'Mật khẩu', 'Sign in': 'Đăng nhập', 'Sign out': 'Đăng xuất',
+    'Settings': 'Cài đặt', 'Language': 'Ngôn ngữ', 'Appearance': 'Giao diện',
+    'Light': 'Sáng', 'Dark': 'Tối', 'SAVE SETTINGS': 'LƯU CÀI ĐẶT',
+    'TEACHER PORTAL': 'CỔNG GIÁO VIÊN', 'Notice': 'Thông báo', 'Error': 'Lỗi', 'Success': 'Thành công',
 }
 
 TEACHER_I18N_EN_VI_EXTRA = {
-    'Dashboard': 'Tá»•ng quan', 'Classes': 'Lá»›p há»c', 'Students': 'Há»c sinh', 'History': 'Lá»‹ch sá»­',
-    'observation': 'quan sÃ¡t', 'observations': 'quan sÃ¡t', 'evidence': 'minh chá»©ng', 'session': 'buá»•i há»c', 'sessions': 'buá»•i há»c',
-    'Main Admin': 'Quáº£n trá»‹ viÃªn chÃ­nh', 'MAIN ADMIN': 'QUáº¢N TRá»Š VIÃŠN CHÃNH', 'Teacher': 'GiÃ¡o viÃªn', 'teacher': 'giÃ¡o viÃªn',
-    'student': 'há»c sinh', 'students': 'há»c sinh', 'class': 'lá»›p', 'classes': 'lá»›p há»c',
-    'server': 'mÃ¡y chá»§', 'Server': 'MÃ¡y chá»§', 'Teacher account': 'TÃ i khoáº£n giÃ¡o viÃªn',
-    'God Eyes App': 'á»¨ng dá»¥ng God Eyes', 'Settings': 'CÃ i Ä‘áº·t', 'Teacher Portal': 'Cá»•ng giÃ¡o viÃªn',
-    'Teacher account': 'TÃ i khoáº£n giÃ¡o viÃªn', 'Teacher username': 'TÃªn Ä‘Äƒng nháº­p giÃ¡o viÃªn',
-    'Teacher': 'GiÃ¡o viÃªn', 'Current account': 'TÃ i khoáº£n hiá»‡n táº¡i', 'Open App': 'Má»Ÿ á»©ng dá»¥ng', 'Download App': 'Táº£i á»©ng dá»¥ng',
-    'Session': 'Buá»•i há»c', 'Sessions': 'Buá»•i há»c', 'Observation': 'Quan sÃ¡t', 'Observations': 'Quan sÃ¡t', 'Evidence': 'Minh chá»©ng',
-    'Status': 'Tráº¡ng thÃ¡i', 'Students': 'Há»c sinh', 'Events': 'Sá»± kiá»‡n', 'Date': 'NgÃ y', 'Duration': 'Thá»i lÆ°á»£ng',
-    'Search': 'TÃ¬m kiáº¿m', 'Clear search': 'XÃ³a tÃ¬m kiáº¿m', 'Edit': 'Chá»‰nh sá»­a', 'Delete': 'XÃ³a', 'Save': 'LÆ°u', 'Cancel': 'Há»§y',
-    'Session details': 'Chi tiáº¿t buá»•i há»c', 'Daily observations': 'Quan sÃ¡t theo ngÃ y', 'Back to history': 'Quay láº¡i lá»‹ch sá»­',
-    'Observed activity': 'Hoáº¡t Ä‘á»™ng Ä‘Æ°á»£c quan sÃ¡t', 'Evidence images and details for each observation': 'HÃ¬nh áº£nh minh chá»©ng vÃ  thÃ´ng tin cá»§a tá»«ng quan sÃ¡t',
-    'Evidence available': 'CÃ³ minh chá»©ng', 'No evidence': 'KhÃ´ng cÃ³ minh chá»©ng', 'Details': 'Chi tiáº¿t',
-    'Average confidence': 'Äá»™ tin cáº­y trung bÃ¬nh', 'Activity History': 'Lá»‹ch sá»­ hoáº¡t Ä‘á»™ng',
-    'Open app': 'Má»Ÿ á»©ng dá»¥ng', 'Download app': 'Táº£i á»©ng dá»¥ng', 'Search results': 'Káº¿t quáº£ tÃ¬m kiáº¿m',
-    'days with observations': 'ngÃ y cÃ³ quan sÃ¡t', 'Running': 'Äang cháº¡y', 'Completed': 'HoÃ n táº¥t', 'Unknown': 'KhÃ´ng xÃ¡c Ä‘á»‹nh',
-    'Session roster': 'Danh sÃ¡ch trong buá»•i há»c', 'View image': 'Xem áº£nh', 'Delete session': 'XÃ³a buá»•i há»c',
-    'Quick Actions': 'Thao tÃ¡c nhanh', 'Today': 'HÃ´m nay', 'Account': 'TÃ i khoáº£n', 'System Status': 'Tráº¡ng thÃ¡i há»‡ thá»‘ng',
-    'Manage Classes': 'Quáº£n lÃ½ lá»›p há»c', 'Manage Students': 'Quáº£n lÃ½ há»c sinh', 'View History': 'Xem lá»‹ch sá»­', 'Open God Eyes App': 'Má»Ÿ á»©ng dá»¥ng God Eyes',
-    'Create Class': 'Táº¡o lá»›p há»c', 'Create a New Class': 'Táº¡o lá»›p há»c má»›i', 'Class name': 'TÃªn lá»›p', 'Description': 'MÃ´ táº£', 'Class code': 'MÃ£ lá»›p',
-    'Student name': 'Há» vÃ  tÃªn há»c sinh', 'Student code': 'MÃ£ há»c sinh', 'Reference photo': 'áº¢nh tham chiáº¿u', 'Add Student': 'ThÃªm há»c sinh',
-    'Rebuild Face ID': 'Táº¡o láº¡i Face ID', 'Ready for recognition': 'ÄÃ£ sáºµn sÃ ng nháº­n diá»‡n', 'Not ready': 'ChÆ°a sáºµn sÃ ng',
-    'New Profile': 'Há»“ sÆ¡ má»›i', 'PROFILE MANAGEMENT': 'QUáº¢N LÃ Há»’ SÆ ', 'NEW PROFILE': 'Há»’ SÆ  Má»šI',
-    'Select class': 'Chá»n lá»›p', 'All classes': 'Táº¥t cáº£ lá»›p há»c', 'Current class': 'Lá»›p Ä‘ang xem', 'Student list': 'Danh sÃ¡ch há»c sinh',
-    'Search student name...': 'TÃ¬m tÃªn há»c sinh...', 'Open app': 'Má»Ÿ á»©ng dá»¥ng', 'Download app': 'Táº£i á»©ng dá»¥ng',
-    'Light': 'SÃ¡ng', 'Dark': 'Tá»‘i', 'Vietnamese': 'Tiáº¿ng Viá»‡t', 'Language': 'NgÃ´n ngá»¯', 'Appearance': 'Giao diá»‡n',
-    'SAVE SETTINGS': 'LÆ¯U CÃ€I Äáº¶T', 'APP NOT READY': 'á»¨NG Dá»¤NG CHÆ¯A Sáº´N SÃ€NG', 'OPEN APP': 'Má»ž á»¨NG Dá»¤NG', 'DOWNLOAD APP': 'Táº¢I á»¨NG Dá»¤NG',
+    'Dashboard': 'Tổng quan', 'Classes': 'Lớp học', 'Students': 'Học sinh', 'History': 'Lịch sử',
+    'observation': 'quan sát', 'observations': 'quan sát', 'evidence': 'minh chứng', 'session': 'buổi học', 'sessions': 'buổi học',
+    'Main Admin': 'Quản trị viên chính', 'MAIN ADMIN': 'QUẢN TRỊ VIÊN CHÍNH', 'Teacher': 'Giáo viên', 'teacher': 'giáo viên',
+    'student': 'học sinh', 'students': 'học sinh', 'class': 'lớp', 'classes': 'lớp học',
+    'server': 'máy chủ', 'Server': 'Máy chủ', 'Teacher account': 'Tài khoản giáo viên',
+    'God Eyes App': 'Ứng dụng God Eyes', 'Settings': 'Cài đặt', 'Teacher Portal': 'Cổng giáo viên',
+    'Teacher account': 'Tài khoản giáo viên', 'Teacher username': 'Tên đăng nhập giáo viên',
+    'Teacher': 'Giáo viên', 'Current account': 'Tài khoản hiện tại', 'Open App': 'Mở ứng dụng', 'Download App': 'Tải ứng dụng',
+    'Session': 'Buổi học', 'Sessions': 'Buổi học', 'Observation': 'Quan sát', 'Observations': 'Quan sát', 'Evidence': 'Minh chứng',
+    'Status': 'Trạng thái', 'Students': 'Học sinh', 'Events': 'Sự kiện', 'Date': 'Ngày', 'Duration': 'Thời lượng',
+    'Search': 'Tìm kiếm', 'Clear search': 'Xóa tìm kiếm', 'Edit': 'Chỉnh sửa', 'Delete': 'Xóa', 'Save': 'Lưu', 'Cancel': 'Hủy',
+    'Session details': 'Chi tiết buổi học', 'Daily observations': 'Quan sát theo ngày', 'Back to history': 'Quay lại lịch sử',
+    'Observed activity': 'Hoạt động được quan sát', 'Evidence images and details for each observation': 'Hình ảnh minh chứng và thông tin của từng quan sát',
+    'Evidence available': 'Có minh chứng', 'No evidence': 'Không có minh chứng', 'Details': 'Chi tiết',
+    'Average confidence': 'Độ tin cậy trung bình', 'Activity History': 'Lịch sử hoạt động',
+    'Open app': 'Mở ứng dụng', 'Download app': 'Tải ứng dụng', 'Search results': 'Kết quả tìm kiếm',
+    'days with observations': 'ngày có quan sát', 'Running': 'Đang chạy', 'Completed': 'Hoàn tất', 'Unknown': 'Không xác định',
+    'Session roster': 'Danh sách trong buổi học', 'View image': 'Xem ảnh', 'Delete session': 'Xóa buổi học',
+    'Quick Actions': 'Thao tác nhanh', 'Today': 'Hôm nay', 'Account': 'Tài khoản', 'System Status': 'Trạng thái hệ thống',
+    'Manage Classes': 'Quản lý lớp học', 'Manage Students': 'Quản lý học sinh', 'View History': 'Xem lịch sử', 'Open God Eyes App': 'Mở ứng dụng God Eyes',
+    'Create Class': 'Tạo lớp học', 'Create a New Class': 'Tạo lớp học mới', 'Class name': 'Tên lớp', 'Description': 'Mô tả', 'Class code': 'Mã lớp',
+    'Student name': 'Họ và tên học sinh', 'Student code': 'Mã học sinh', 'Reference photo': 'Ảnh tham chiếu', 'Add Student': 'Thêm học sinh',
+    'Rebuild Face ID': 'Tạo lại Face ID', 'Ready for recognition': 'Đã sẵn sàng nhận diện', 'Not ready': 'Chưa sẵn sàng',
+    'New Profile': 'Hồ sơ mới', 'PROFILE MANAGEMENT': 'QUẢN LÝ HỒ SƠ', 'NEW PROFILE': 'HỒ SƠ MỚI',
+    'Select class': 'Chọn lớp', 'All classes': 'Tất cả lớp học', 'Current class': 'Lớp đang xem', 'Student list': 'Danh sách học sinh',
+    'Search student name...': 'Tìm tên học sinh...', 'Open app': 'Mở ứng dụng', 'Download app': 'Tải ứng dụng',
+    'Light': 'Sáng', 'Dark': 'Tối', 'Vietnamese': 'Tiếng Việt', 'Language': 'Ngôn ngữ', 'Appearance': 'Giao diện',
+    'SAVE SETTINGS': 'LƯU CÀI ĐẶT', 'APP NOT READY': 'ỨNG DỤNG CHƯA SẴN SÀNG', 'OPEN APP': 'MỞ ỨNG DỤNG', 'DOWNLOAD APP': 'TẢI ỨNG DỤNG',
 }
 
 TEACHER_I18N_VI_EN = {
     # Shell / navigation
-    'Tá»•ng quan': 'Dashboard', 'Lá»›p há»c': 'Classes', 'Há»c sinh': 'Students', 'Lá»‹ch sá»­': 'History',
-    'á»¨ng dá»¥ng God Eyes': 'God Eyes App', 'CÃ i Ä‘áº·t': 'Settings', 'Cá»•ng giÃ¡o viÃªn': 'Teacher Portal',
-    'Cá»”NG GIÃO VIÃŠN': 'TEACHER PORTAL', 'GiÃ¡o viÃªn:': 'Teacher:', 'TÃ i khoáº£n Ä‘ang Ä‘Äƒng nháº­p': 'Signed-in account',
-    'Äang hoáº¡t Ä‘á»™ng': 'Active', 'ÄÄƒng xuáº¥t': 'Sign out', 'God Eyes â€¢ Cá»•ng giÃ¡o viÃªn': 'God Eyes â€¢ Teacher Portal',
-    'Cá»•ng giÃ¡o viÃªn': 'Teacher Portal',
+    'Tổng quan': 'Dashboard', 'Lớp học': 'Classes', 'Học sinh': 'Students', 'Lịch sử': 'History',
+    'Ứng dụng God Eyes': 'God Eyes App', 'Cài đặt': 'Settings', 'Cổng giáo viên': 'Teacher Portal',
+    'CỔNG GIÁO VIÊN': 'TEACHER PORTAL', 'Giáo viên:': 'Teacher:', 'Tài khoản đang đăng nhập': 'Signed-in account',
+    'Đang hoạt động': 'Active', 'Đăng xuất': 'Sign out', 'God Eyes • Cổng giáo viên': 'God Eyes • Teacher Portal',
+    'Cổng giáo viên': 'Teacher Portal',
 
     # Dashboard
-    'ChÃ o má»«ng': 'Welcome', 'Lá»›p há»c cá»§a tÃ´i': 'My Classes', 'Tá»•ng sá»‘ há»c sinh': 'Total Students',
-    'Lá»›p Ä‘ang quáº£n lÃ½': 'Managed classes', 'Há»c sinh Ä‘ang quáº£n lÃ½': 'Managed students',
-    'Buá»•i há»c Ä‘Ã£ ghi nháº­n': 'Recorded Sessions', 'ChÆ°a cÃ³ buá»•i há»c': 'No sessions yet',
-    'Hoáº¡t Ä‘á»™ng hÃ´m nay': 'Todayâ€™s Activity', 'ChÆ°a cÃ³ hoáº¡t Ä‘á»™ng': 'No activity yet',
-    'Thao tÃ¡c nhanh': 'Quick Actions', 'CÃ¡c chá»©c nÄƒng giÃ¡o viÃªn sá»­ dá»¥ng thÆ°á»ng xuyÃªn.': 'Frequently used teacher functions.',
-    'Quáº£n lÃ½ lá»›p há»c': 'Manage Classes', 'Táº¡o lá»›p vÃ  quáº£n lÃ½ danh sÃ¡ch há»c sinh.': 'Create classes and manage student lists.',
-    'Quáº£n lÃ½ há»c sinh': 'Manage Students', 'ThÃªm há»c sinh, áº£nh vÃ  dá»¯ liá»‡u nháº­n diá»‡n.': 'Add students, photos and recognition data.',
-    'Xem lá»‹ch sá»­': 'View History', 'Xem láº¡i cÃ¡c buá»•i há»c vÃ  minh chá»©ng.': 'Review sessions and evidence.',
-    'Má»Ÿ á»©ng dá»¥ng God Eyes': 'Open God Eyes App', 'Táº£i vÃ  sá»­ dá»¥ng á»©ng dá»¥ng theo lá»›p há»c.': 'Launch and use the app for your classes.',
-    'HÃ´m nay': 'Today', 'ThÃ´ng tin hoáº¡t Ä‘á»™ng gáº§n nháº¥t cá»§a giÃ¡o viÃªn.': 'The teacherâ€™s latest activity.',
-    'TÃ i khoáº£n': 'Account', 'Tráº¡ng thÃ¡i há»‡ thá»‘ng': 'System Status',
-    'ChÆ°a cÃ³ hoáº¡t Ä‘á»™ng nÃ o Ä‘Æ°á»£c ghi nháº­n hÃ´m nay.': 'No activity has been recorded today.',
+    'Chào mừng': 'Welcome', 'Lớp học của tôi': 'My Classes', 'Tổng số học sinh': 'Total Students',
+    'Lớp đang quản lý': 'Managed classes', 'Học sinh đang quản lý': 'Managed students',
+    'Buổi học đã ghi nhận': 'Recorded Sessions', 'Chưa có buổi học': 'No sessions yet',
+    'Hoạt động hôm nay': 'Today’s Activity', 'Chưa có hoạt động': 'No activity yet',
+    'Thao tác nhanh': 'Quick Actions', 'Các chức năng giáo viên sử dụng thường xuyên.': 'Frequently used teacher functions.',
+    'Quản lý lớp học': 'Manage Classes', 'Tạo lớp và quản lý danh sách học sinh.': 'Create classes and manage student lists.',
+    'Quản lý học sinh': 'Manage Students', 'Thêm học sinh, ảnh và dữ liệu nhận diện.': 'Add students, photos and recognition data.',
+    'Xem lịch sử': 'View History', 'Xem lại các buổi học và minh chứng.': 'Review sessions and evidence.',
+    'Mở ứng dụng God Eyes': 'Open God Eyes App', 'Tải và sử dụng ứng dụng theo lớp học.': 'Launch and use the app for your classes.',
+    'Hôm nay': 'Today', 'Thông tin hoạt động gần nhất của giáo viên.': 'The teacher’s latest activity.',
+    'Tài khoản': 'Account', 'Trạng thái hệ thống': 'System Status',
+    'Chưa có hoạt động nào được ghi nhận hôm nay.': 'No activity has been recorded today.',
 
     # Classes
-    'Táº¡o lá»›p há»c': 'Create Class', 'Táº¡o lá»›p há»c má»›i': 'Create a New Class',
-    'Táº¡o vÃ  quáº£n lÃ½ cÃ¡c lá»›p há»c mÃ  báº¡n Ä‘ang phá»¥ trÃ¡ch.': 'Create and manage the classes you teach.',
-    'Nháº­p tÃªn lá»›p. Há»‡ thá»‘ng tá»± táº¡o má»™t mÃ£ lá»›p riÃªng.': 'Enter a class name. The system generates a unique class code.',
-    'TÃªn lá»›p': 'Class name', 'MÃ´ táº£': 'Description', '(khÃ´ng báº¯t buá»™c)': '(optional)',
-    'VÃ­ dá»¥: Lá»›p ToÃ¡n buá»•i chiá»u, phÃ²ng 302...': 'Example: Afternoon math class, room 302...',
-    'ChÆ°a cÃ³ mÃ´ táº£ cho lá»›p há»c nÃ y.': 'No description for this class.', 'Táº¡o ngÃ y': 'Created',
-    'Chá»‰nh sá»­a': 'Edit', 'XÃ³a': 'Delete', 'LÆ°u thay Ä‘á»•i': 'Save changes', 'Há»§y': 'Cancel',
-    'ChÆ°a cÃ³ lá»›p há»c': 'No classes yet', 'Táº¡o lá»›p há»c Ä‘áº§u tiÃªn Ä‘á»ƒ báº¯t Ä‘áº§u thÃªm há»c sinh vÃ  sá»­ dá»¥ng God Eyes.': 'Create your first class to start adding students and using God Eyes.',
-    '+ Táº¡o lá»›p há»c': '+ Create Class',
+    'Tạo lớp học': 'Create Class', 'Tạo lớp học mới': 'Create a New Class',
+    'Tạo và quản lý các lớp học mà bạn đang phụ trách.': 'Create and manage the classes you teach.',
+    'Nhập tên lớp. Hệ thống tự tạo một mã lớp riêng.': 'Enter a class name. The system generates a unique class code.',
+    'Tên lớp': 'Class name', 'Mô tả': 'Description', '(không bắt buộc)': '(optional)',
+    'Ví dụ: Lớp Toán buổi chiều, phòng 302...': 'Example: Afternoon math class, room 302...',
+    'Chưa có mô tả cho lớp học này.': 'No description for this class.', 'Tạo ngày': 'Created',
+    'Chỉnh sửa': 'Edit', 'Xóa': 'Delete', 'Lưu thay đổi': 'Save changes', 'Hủy': 'Cancel',
+    'Chưa có lớp học': 'No classes yet', 'Tạo lớp học đầu tiên để bắt đầu thêm học sinh và sử dụng God Eyes.': 'Create your first class to start adding students and using God Eyes.',
+    '+ Tạo lớp học': '+ Create Class',
 
     # Students
-    'áº¢nh há»c sinh': 'Student photo', 'QUáº¢N LÃ Há»’ SÆ ': 'PROFILE MANAGEMENT',
-    'Quáº£n lÃ½ há»“ sÆ¡ há»c sinh vÃ  áº£nh tham chiáº¿u phá»¥c vá»¥ God Eyes.': 'Manage student profiles and reference photos for God Eyes.',
-    'Tá»•ng sá»‘': 'Total', 'Táº¥t cáº£ lá»›p há»c': 'All classes', 'Lá»›p Ä‘ang xem': 'Current class', 'Chá»n lá»›p': 'Select class',
-    'Chá»n lá»›p há»c': 'Select class', 'Danh sÃ¡ch há»c sinh': 'Student list', 'Há»’ SÆ  Má»šI': 'NEW PROFILE',
-    'ThÃªm há»c sinh': 'Add Student', 'Táº¡o há»“ sÆ¡ trong vÃ i bÆ°á»›c.': 'Create a profile in a few steps.',
-    'Há» vÃ  tÃªn': 'Full name', 'Há» vÃ  tÃªn há»c sinh': 'Student name', 'MÃ£ há»c sinh': 'Student code',
-    'MÃ£ lá»›p': 'Class code', 'Lá»›p há»c': 'Class', 'áº¢nh tham chiáº¿u': 'Reference photo',
-    'Chá»n áº£nh': 'Choose photo', 'Äá»ƒ trá»‘ng Ä‘á»ƒ há»‡ thá»‘ng tá»± táº¡o mÃ£.': 'Leave blank and the system will generate a code.',
-    'God Eyes sáº½ dÃ¹ng chÃ­nh áº£nh nÃ y Ä‘á»ƒ táº¡o Face ID. NÃªn áº£nh chá»‰ cÃ³ má»™t khuÃ´n máº·t, rÃµ vÃ  Ä‘á»§ sÃ¡ng.': 'God Eyes will use this photo to create Face ID. Use a clear, well-lit photo with one face only.',
-    'ThÃªm há»c sinh': 'Add Student', 'Táº¡o láº¡i Face ID': 'Rebuild Face ID', 'Chá»‰nh sá»­a': 'Edit',
-    'ÄÃ£ sáºµn sÃ ng nháº­n diá»‡n': 'Ready for recognition', 'ChÆ°a sáºµn sÃ ng': 'Not ready',
-    'ChÆ°a cÃ³ há»c sinh': 'No students yet', 'ChÆ°a cÃ³ há»c sinh trong lá»›p nÃ y': 'No students in this class',
-    'Báº¯t Ä‘áº§u báº±ng cÃ¡ch thÃªm há»“ sÆ¡ há»c sinh á»Ÿ khung bÃªn pháº£i.': 'Start by adding a student profile in the panel on the right.',
-    'Báº¡n cÃ³ thá»ƒ bá»• sung áº£nh tham chiáº¿u ngay khi táº¡o há»“ sÆ¡.': 'You can add a reference photo when creating the profile.',
-    'Dá»¯ liá»‡u Ä‘Æ°á»£c lÆ°u riÃªng cho tÃ i khoáº£n giÃ¡o viÃªn cá»§a báº¡n.': 'Data is stored separately for your teacher account.',
-    'ChÆ°a cÃ³ lá»›p há»c': 'No classes yet', 'HÃ£y táº¡o Ã­t nháº¥t má»™t lá»›p trÆ°á»›c khi thÃªm há»c sinh.': 'Create at least one class before adding students.',
-    'ÄÃ£ thÃªm há»c sinh thÃ nh cÃ´ng.': 'Student added successfully.', 'ÄÃ£ cáº­p nháº­t há»“ sÆ¡ há»c sinh.': 'Student profile updated.',
-    'ÄÃ£ xÃ³a há»“ sÆ¡ há»c sinh.': 'Student profile deleted.',
-    'ÄÃ£ phÃ¢n tÃ­ch khuÃ´n máº·t vÃ  táº¡o Face ID. Há»“ sÆ¡ Ä‘Ã£ sáºµn sÃ ng nháº­n diá»‡n.': 'Face analyzed and Face ID created. The profile is ready for recognition.',
-    'ChÆ°a cÃ³ model Face ID. áº¢nh Ä‘Ã£ Ä‘Æ°á»£c lÆ°u nhÆ°ng Face ID chÆ°a táº¡o Ä‘Æ°á»£c.': 'The Face ID model is not available. The photo was saved, but Face ID could not be created.',
-    'ChÆ°a táº¡o Ä‘Æ°á»£c Face ID. áº¢nh váº«n Ä‘Æ°á»£c giá»¯ láº¡i Ä‘á»ƒ báº¡n Ä‘á»•i áº£nh hoáº·c thá»­ táº¡o láº¡i.': 'Face ID could not be created. The photo is kept so you can replace it or try again.',
-    'Há»“ sÆ¡ nÃ y chÆ°a cÃ³ áº£nh tham chiáº¿u Ä‘á»ƒ táº¡o Face ID.': 'This profile has no reference photo for Face ID.',
-    'KhÃ´ng phÃ¡t hiá»‡n Ä‘Æ°á»£c khuÃ´n máº·t. HÃ£y dÃ¹ng áº£nh rÃµ máº·t, chá»‰ cÃ³ má»™t há»c sinh.': 'No face was detected. Use a clear photo with one student only.',
-    'áº¢nh cÃ³ nhiá»u hÆ¡n má»™t khuÃ´n máº·t. HÃ£y dÃ¹ng áº£nh chá»‰ cÃ³ má»™t há»c sinh.': 'The photo contains more than one face. Use a photo with one student only.',
-    'KhuÃ´n máº·t trong áº£nh quÃ¡ nhá». HÃ£y chá»n áº£nh cáº­n máº·t hÆ¡n.': 'The face is too small. Choose a closer photo.',
-    'KhÃ´ng thá»ƒ Ä‘á»c áº£nh. Vui lÃ²ng chá»n láº¡i áº£nh JPG, PNG hoáº·c WEBP.': 'The image could not be read. Choose a JPG, PNG or WEBP image again.',
-    'trong lá»›p Ä‘Ã£ chá»n': 'in the selected class', 'Ä‘ang Ä‘Æ°á»£c quáº£n lÃ½': 'currently managed', 'há»c sinh': 'students',
+    'Ảnh học sinh': 'Student photo', 'QUẢN LÝ HỒ SƠ': 'PROFILE MANAGEMENT',
+    'Quản lý hồ sơ học sinh và ảnh tham chiếu phục vụ God Eyes.': 'Manage student profiles and reference photos for God Eyes.',
+    'Tổng số': 'Total', 'Tất cả lớp học': 'All classes', 'Lớp đang xem': 'Current class', 'Chọn lớp': 'Select class',
+    'Chọn lớp học': 'Select class', 'Danh sách học sinh': 'Student list', 'HỒ SƠ MỚI': 'NEW PROFILE',
+    'Thêm học sinh': 'Add Student', 'Tạo hồ sơ trong vài bước.': 'Create a profile in a few steps.',
+    'Họ và tên': 'Full name', 'Họ và tên học sinh': 'Student name', 'Mã học sinh': 'Student code',
+    'Mã lớp': 'Class code', 'Lớp học': 'Class', 'Ảnh tham chiếu': 'Reference photo',
+    'Chọn ảnh': 'Choose photo', 'Để trống để hệ thống tự tạo mã.': 'Leave blank and the system will generate a code.',
+    'God Eyes sẽ dùng chính ảnh này để tạo Face ID. Nên ảnh chỉ có một khuôn mặt, rõ và đủ sáng.': 'God Eyes will use this photo to create Face ID. Use a clear, well-lit photo with one face only.',
+    'Thêm học sinh': 'Add Student', 'Tạo lại Face ID': 'Rebuild Face ID', 'Chỉnh sửa': 'Edit',
+    'Đã sẵn sàng nhận diện': 'Ready for recognition', 'Chưa sẵn sàng': 'Not ready',
+    'Chưa có học sinh': 'No students yet', 'Chưa có học sinh trong lớp này': 'No students in this class',
+    'Bắt đầu bằng cách thêm hồ sơ học sinh ở khung bên phải.': 'Start by adding a student profile in the panel on the right.',
+    'Bạn có thể bổ sung ảnh tham chiếu ngay khi tạo hồ sơ.': 'You can add a reference photo when creating the profile.',
+    'Dữ liệu được lưu riêng cho tài khoản giáo viên của bạn.': 'Data is stored separately for your teacher account.',
+    'Chưa có lớp học': 'No classes yet', 'Hãy tạo ít nhất một lớp trước khi thêm học sinh.': 'Create at least one class before adding students.',
+    'Đã thêm học sinh thành công.': 'Student added successfully.', 'Đã cập nhật hồ sơ học sinh.': 'Student profile updated.',
+    'Đã xóa hồ sơ học sinh.': 'Student profile deleted.',
+    'Đã phân tích khuôn mặt và tạo Face ID. Hồ sơ đã sẵn sàng nhận diện.': 'Face analyzed and Face ID created. The profile is ready for recognition.',
+    'Chưa có model Face ID. Ảnh đã được lưu nhưng Face ID chưa tạo được.': 'The Face ID model is not available. The photo was saved, but Face ID could not be created.',
+    'Chưa tạo được Face ID. Ảnh vẫn được giữ lại để bạn đổi ảnh hoặc thử tạo lại.': 'Face ID could not be created. The photo is kept so you can replace it or try again.',
+    'Hồ sơ này chưa có ảnh tham chiếu để tạo Face ID.': 'This profile has no reference photo for Face ID.',
+    'Không phát hiện được khuôn mặt. Hãy dùng ảnh rõ mặt, chỉ có một học sinh.': 'No face was detected. Use a clear photo with one student only.',
+    'Ảnh có nhiều hơn một khuôn mặt. Hãy dùng ảnh chỉ có một học sinh.': 'The photo contains more than one face. Use a photo with one student only.',
+    'Khuôn mặt trong ảnh quá nhỏ. Hãy chọn ảnh cận mặt hơn.': 'The face is too small. Choose a closer photo.',
+    'Không thể đọc ảnh. Vui lòng chọn lại ảnh JPG, PNG hoặc WEBP.': 'The image could not be read. Choose a JPG, PNG or WEBP image again.',
+    'trong lớp đã chọn': 'in the selected class', 'đang được quản lý': 'currently managed', 'học sinh': 'students',
 
     # History
-    'Lá»‹ch sá»­ hoáº¡t Ä‘á»™ng': 'Activity History', 'Xem cÃ¡c buá»•i há»c, sá»± kiá»‡n quan sÃ¡t vÃ  hÃ¬nh áº£nh minh chá»©ng Ä‘Ã£ lÆ°u.': 'Review recorded sessions, observations and saved evidence images.',
-    'TÃ¬m tÃªn há»c sinh...': 'Search student name...', 'TÃ¬m kiáº¿m': 'Search', 'XÃ³a tÃ¬m kiáº¿m': 'Clear search',
-    'Káº¿t quáº£ tÃ¬m kiáº¿m': 'Search results', 'ngÃ y cÃ³ observation': 'days with observations',
-    'KhÃ´ng tÃ¬m tháº¥y há»c sinh cÃ³ tÃªn chá»©a': 'No student names containing', 'trong lá»‹ch sá»­ observation.': 'were found in observation history.',
-    'Äang cháº¡y': 'Running', 'HoÃ n táº¥t': 'Completed', 'Buá»•i há»c Ä‘Ã£ Ä‘Æ°á»£c Ä‘Æ°a vÃ o thÃ¹ng rÃ¡c cá»§a Main Admin. Dá»¯ liá»‡u trÃªn server váº«n Ä‘Æ°á»£c giá»¯ láº¡i.': 'The session was moved to the Main Admin trash. Server data is still retained.',
-    'KhÃ´ng thá»ƒ xÃ³a session Ä‘ang cháº¡y. HÃ£y káº¿t thÃºc session trÆ°á»›c.': 'A running session cannot be deleted. End the session first.',
-    'Thá»i lÆ°á»£ng': 'Duration', 'Observation': 'Observation', 'Evidence': 'Evidence', 'Session': 'Session',
-    'Danh sÃ¡ch trong session': 'Session roster', 'áº£nh': 'images', 'XÃ³a buá»•i há»c': 'Delete session',
-    'ÄÆ°a session nÃ y vÃ o thÃ¹ng rÃ¡c cá»§a Main Admin?': 'Move this session to the Main Admin trash?',
-    'Xem áº£nh': 'View image', 'KhÃ´ng cÃ³ dá»¯ liá»‡u.': 'No data.', 'ChÆ°a cÃ³ observation.': 'No observations yet.',
-    'ChÆ°a cÃ³ evidence.': 'No evidence yet.', 'KhÃ´ng xÃ¡c Ä‘á»‹nh': 'Unknown',
+    'Lịch sử hoạt động': 'Activity History', 'Xem các buổi học, sự kiện quan sát và hình ảnh minh chứng đã lưu.': 'Review recorded sessions, observations and saved evidence images.',
+    'Tìm tên học sinh...': 'Search student name...', 'Tìm kiếm': 'Search', 'Xóa tìm kiếm': 'Clear search',
+    'Kết quả tìm kiếm': 'Search results', 'ngày có observation': 'days with observations',
+    'Không tìm thấy học sinh có tên chứa': 'No student names containing', 'trong lịch sử observation.': 'were found in observation history.',
+    'Đang chạy': 'Running', 'Hoàn tất': 'Completed', 'Buổi học đã được đưa vào thùng rác của Main Admin. Dữ liệu trên server vẫn được giữ lại.': 'The session was moved to the Main Admin trash. Server data is still retained.',
+    'Không thể xóa session đang chạy. Hãy kết thúc session trước.': 'A running session cannot be deleted. End the session first.',
+    'Thời lượng': 'Duration', 'Observation': 'Observation', 'Evidence': 'Evidence', 'Session': 'Session',
+    'Danh sách trong session': 'Session roster', 'ảnh': 'images', 'Xóa buổi học': 'Delete session',
+    'Đưa session này vào thùng rác của Main Admin?': 'Move this session to the Main Admin trash?',
+    'Xem ảnh': 'View image', 'Không có dữ liệu.': 'No data.', 'Chưa có observation.': 'No observations yet.',
+    'Chưa có evidence.': 'No evidence yet.', 'Không xác định': 'Unknown',
 
     # App
-    'GOD EYES DESKTOP': 'GOD EYES DESKTOP', 'á»¨ng dá»¥ng God Eyes': 'God Eyes App',
-    'Cháº¡y trá»±c tiáº¿p á»©ng dá»¥ng hoáº·c táº£i bá»™ cÃ i Ä‘á»ƒ sá»­ dá»¥ng trÃªn mÃ¡y tÃ­nh.': 'Open the app directly or download it for use on a computer.',
-    'Má»Ÿ á»©ng dá»¥ng': 'Open App', 'Má»Ÿ God Eyes trá»±c tiáº¿p trÃªn mÃ¡y nÃ y vÃ  tá»± Ä‘Äƒng nháº­p báº±ng Ä‘Ãºng tÃ i khoáº£n Teacher Ä‘ang sá»­ dá»¥ng trÃªn Server.': 'Open God Eyes on this computer and sign in automatically with the Teacher account currently used on the Server.',
-    'TÃ i khoáº£n hiá»‡n táº¡i': 'Current account', 'KhÃ´ng cáº§n nháº­p láº¡i máº­t kháº©u.': 'No password is required again.',
-    'Táº£i á»©ng dá»¥ng': 'Download App', 'Táº£i trá»±c tiáº¿p tá»‡p GodEyes.exe vá» mÃ¡y Windows. KhÃ´ng cáº§n táº£i file ZIP.': 'Download the current Windows desktop version for installation and use when needed.',
-    'PhiÃªn báº£n': 'Version', 'Tá»‡p': 'File', 'Tráº¡ng thÃ¡i': 'Status', 'Sáºµn sÃ ng': 'Ready', 'ChÆ°a build': 'Not built',
-    'á»¨ng dá»¥ng desktop Ä‘Æ°á»£c xá»­ lÃ½ cá»¥c bá»™.': 'The desktop app runs locally.', 'WINDOWS': 'WINDOWS',
-    'God Eyes Ä‘ang Ä‘Æ°á»£c má»Ÿ báº±ng tÃ i khoáº£n Teacher hiá»‡n táº¡i.': 'God Eyes is opening with the current Teacher account.',
-    'ChÆ°a tÃ¬m tháº¥y GodEyes.exe trÃªn mÃ¡y Server. HÃ£y build á»©ng dá»¥ng trÆ°á»›c.': 'GodEyes.exe was not found on the Server machine. Build the application first.',
-    'KhÃ´ng thá»ƒ má»Ÿ God Eyes trÃªn mÃ¡y Server.': 'God Eyes could not be opened on the Server machine.', 'ChÆ°a cÃ³ GodEyes.exe Ä‘á»ƒ táº£i xuá»‘ng.': 'There is no GodEyes.exe available to download.',
-    'Má»ž á»¨NG Dá»¤NG': 'OPEN APP', 'á»¨NG Dá»¤NG CHÆ¯A Sáº´N SÃ€NG': 'APP NOT READY', 'Táº¢I á»¨NG Dá»¤NG': 'DOWNLOAD APP',
+    'GOD EYES DESKTOP': 'GOD EYES DESKTOP', 'Ứng dụng God Eyes': 'God Eyes App',
+    'Chạy trực tiếp ứng dụng hoặc tải bộ cài để sử dụng trên máy tính.': 'Open the app directly or download it for use on a computer.',
+    'Mở ứng dụng': 'Open App', 'Mở God Eyes trực tiếp trên máy này và tự đăng nhập bằng đúng tài khoản Teacher đang sử dụng trên Server.': 'Open God Eyes on this computer and sign in automatically with the Teacher account currently used on the Server.',
+    'Tài khoản hiện tại': 'Current account', 'Không cần nhập lại mật khẩu.': 'No password is required again.',
+    'Tải ứng dụng': 'Download App', 'Tải trực tiếp tệp GodEyes.exe về máy Windows. Không cần tải file ZIP.': 'Download the current Windows desktop version for installation and use when needed.',
+    'Phiên bản': 'Version', 'Tệp': 'File', 'Trạng thái': 'Status', 'Sẵn sàng': 'Ready', 'Chưa build': 'Not built',
+    'Ứng dụng desktop được xử lý cục bộ.': 'The desktop app runs locally.', 'WINDOWS': 'WINDOWS',
+    'God Eyes đang được mở bằng tài khoản Teacher hiện tại.': 'God Eyes is opening with the current Teacher account.',
+    'Chưa tìm thấy GodEyes.exe trên máy Server. Hãy build ứng dụng trước.': 'GodEyes.exe was not found on the Server machine. Build the application first.',
+    'Không thể mở God Eyes trên máy Server.': 'God Eyes could not be opened on the Server machine.', 'Chưa có GodEyes.exe để tải xuống.': 'There is no GodEyes.exe available to download.',
+    'MỞ ỨNG DỤNG': 'OPEN APP', 'ỨNG DỤNG CHƯA SẴN SÀNG': 'APP NOT READY', 'TẢI ỨNG DỤNG': 'DOWNLOAD APP',
 
     # Settings
-    'CÃ i Ä‘áº·t giÃ¡o viÃªn': 'Teacher Settings',
-    'CÃ¡c lá»±a chá»n Ä‘Æ°á»£c lÆ°u theo tÃ i khoáº£n giÃ¡o viÃªn vÃ  Ä‘á»“ng bá»™ sang God Eyes App.': 'These options are saved to your Teacher account and synced with God Eyes App.',
-    'Giao diá»‡n': 'Appearance', 'Chá»n giao diá»‡n hiá»ƒn thá»‹ cho God Eyes App.': 'Choose the God Eyes App appearance.',
-    'SÃ¡ng': 'Light', 'Tá»‘i': 'Dark', 'Ná»n tráº¯ng, giao diá»‡n máº·c Ä‘á»‹nh.': 'Light interface.', 'Ná»n tá»‘i.': 'Dark interface.',
-    'NgÃ´n ngá»¯': 'Language', 'NgÃ´n ngá»¯ nÃ y Ã¡p dá»¥ng cho giao diá»‡n God Eyes App.': 'This language applies to the God Eyes interface.',
-    'Tiáº¿ng Viá»‡t': 'Vietnamese', 'Giao diá»‡n tiáº¿ng Viá»‡t.': 'Vietnamese interface.', 'English': 'English', 'English interface.': 'English interface.',
-    'LÆ¯U CÃ€I Äáº¶T': 'SAVE SETTINGS', 'ÄÃ£ lÆ°u cÃ i Ä‘áº·t. God Eyes App sáº½ Ä‘á»“ng bá»™ theo tÃ i khoáº£n nÃ y.': 'Settings saved. God Eyes App will sync to this account.',
-    'CÃ i Ä‘áº·t Server Ä‘Ã£ Ä‘á»“ng bá»™.': 'Server settings synced.', 'ÄÃ£ lÆ°u vÃ o tÃ i khoáº£n giÃ¡o viÃªn.': 'Saved to your Teacher account.',
+    'Cài đặt giáo viên': 'Teacher Settings',
+    'Các lựa chọn được lưu theo tài khoản giáo viên và đồng bộ sang God Eyes App.': 'These options are saved to your Teacher account and synced with God Eyes App.',
+    'Giao diện': 'Appearance', 'Chọn giao diện hiển thị cho God Eyes App.': 'Choose the God Eyes App appearance.',
+    'Sáng': 'Light', 'Tối': 'Dark', 'Nền trắng, giao diện mặc định.': 'Light interface.', 'Nền tối.': 'Dark interface.',
+    'Ngôn ngữ': 'Language', 'Ngôn ngữ này áp dụng cho giao diện God Eyes App.': 'This language applies to the God Eyes interface.',
+    'Tiếng Việt': 'Vietnamese', 'Giao diện tiếng Việt.': 'Vietnamese interface.', 'English': 'English', 'English interface.': 'English interface.',
+    'LƯU CÀI ĐẶT': 'SAVE SETTINGS', 'Đã lưu cài đặt. God Eyes App sẽ đồng bộ theo tài khoản này.': 'Settings saved. God Eyes App will sync to this account.',
+    'Cài đặt Server đã đồng bộ.': 'Server settings synced.', 'Đã lưu vào tài khoản giáo viên.': 'Saved to your Teacher account.',
 
     # Common
-    'Chá»©c nÄƒng nÃ y sáº½ Ä‘Æ°á»£c káº¿t ná»‘i vá»›i dá»¯ liá»‡u tháº­t á»Ÿ bÆ°á»›c tiáº¿p theo.': 'This function will be connected to live data in a later step.',
-    'MÃ£ lá»›p': 'Class code', 'Táº¡o': 'Create', 'LÆ°u': 'Save',
+    'Chức năng này sẽ được kết nối với dữ liệu thật ở bước tiếp theo.': 'This function will be connected to live data in a later step.',
+    'Mã lớp': 'Class code', 'Tạo': 'Create', 'Lưu': 'Save',
 }
 
 
@@ -854,144 +869,144 @@ TEACHER_I18N_VI_EN = {
 # and Vietnamese remain complete and consistent across older page templates.
 TEACHER_I18N_VI_EN.update({
     # Shell / common
-    'GOD EYES â€¢ Cá»”NG GIÃO VIÃŠN': 'GOD EYES â€¢ TEACHER PORTAL',
-    'TÃ i khoáº£n hiá»‡n táº¡i': 'Current account',
-    'ÄÃ£ lÆ°u cÃ i Ä‘áº·t. God Eyes sáº½ Ä‘á»“ng bá»™ theo tÃ i khoáº£n nÃ y.': 'Settings saved. God Eyes will sync to this account.',
-    'ÄÃ£ lÆ°u cÃ i Ä‘áº·t. God Eyes App sáº½ Ä‘á»“ng bá»™ theo tÃ i khoáº£n nÃ y.': 'Settings saved. God Eyes App will sync to this account.',
-    'CÃ¡c lá»±a chá»n Ä‘Æ°á»£c lÆ°u theo tÃ i khoáº£n giÃ¡o viÃªn vÃ  Ä‘á»“ng bá»™ cho God Eyes App vÃ  Cá»•ng giÃ¡o viÃªn.': 'These options are saved to your Teacher account and shared with the God Eyes App and Teacher Portal.',
-    'CÃ¡c lá»±a chá»n Ä‘Æ°á»£c lÆ°u theo tÃ i khoáº£n giÃ¡o viÃªn vÃ  Ä‘á»“ng bá»™ sang God Eyes App.': 'These options are saved to your Teacher account and synced with God Eyes App.',
-    'Thiáº¿t láº­p giao diá»‡n vÃ  ngÃ´n ngá»¯ cho God Eyes App.': 'Configure the God Eyes appearance and language.',
-    'ÄÃ£ lÆ°u': 'Saved',
-    'Chá»©c nÄƒng nÃ y sáº½ Ä‘Æ°á»£c káº¿t ná»‘i vá»›i dá»¯ liá»‡u tháº­t á»Ÿ bÆ°á»›c tiáº¿p theo.': 'This feature will be connected to live data in a later step.',
+    'GOD EYES • CỔNG GIÁO VIÊN': 'GOD EYES • TEACHER PORTAL',
+    'Tài khoản hiện tại': 'Current account',
+    'Đã lưu cài đặt. God Eyes sẽ đồng bộ theo tài khoản này.': 'Settings saved. God Eyes will sync to this account.',
+    'Đã lưu cài đặt. God Eyes App sẽ đồng bộ theo tài khoản này.': 'Settings saved. God Eyes App will sync to this account.',
+    'Các lựa chọn được lưu theo tài khoản giáo viên và đồng bộ cho God Eyes App và Cổng giáo viên.': 'These options are saved to your Teacher account and shared with the God Eyes App and Teacher Portal.',
+    'Các lựa chọn được lưu theo tài khoản giáo viên và đồng bộ sang God Eyes App.': 'These options are saved to your Teacher account and synced with God Eyes App.',
+    'Thiết lập giao diện và ngôn ngữ cho God Eyes App.': 'Configure the God Eyes appearance and language.',
+    'Đã lưu': 'Saved',
+    'Chức năng này sẽ được kết nối với dữ liệu thật ở bước tiếp theo.': 'This feature will be connected to live data in a later step.',
 
     # Classes
-    'Táº¡o ngÃ y': 'Created',
-    'ChÆ°a cÃ³ mÃ´ táº£ cho lá»›p há»c nÃ y.': 'No description for this class.',
-    'Báº¡n cÃ³ cháº¯c muá»‘n xÃ³a lá»›p há»c nÃ y khÃ´ng?': 'Are you sure you want to delete this class?',
-    'Lá»›p há»c cá»§a tÃ´i': 'My Classes',
-    'Táº¡o vÃ  quáº£n lÃ½ cÃ¡c lá»›p há»c mÃ  báº¡n Ä‘ang phá»¥ trÃ¡ch.': 'Create and manage the classes you teach.',
-    'Nháº­p tÃªn lá»›p. Há»‡ thá»‘ng tá»± táº¡o má»™t mÃ£ lá»›p riÃªng.': 'Enter a class name. The system generates a unique class code.',
-    'VÃ­ dá»¥: Lá»›p ToÃ¡n buá»•i chiá»u, phÃ²ng 302...': 'Example: Afternoon math class, room 302...',
-    'VÃ­ dá»¥: 9A1': 'Example: 9A1',
-    'Táº¡o lá»›p há»c Ä‘áº§u tiÃªn Ä‘á»ƒ báº¯t Ä‘áº§u thÃªm há»c sinh vÃ  sá»­ dá»¥ng God Eyes.': 'Create your first class to start adding students and using God Eyes.',
-    '+ Táº¡o lá»›p há»c': '+ Create Class',
-    'Há»‡ thá»‘ng tá»± táº¡o má»™t mÃ£ lá»›p riÃªng.': 'The system generates a unique class code.',
-    'Táº¡o lá»›p há»c': 'Create Class',
+    'Tạo ngày': 'Created',
+    'Chưa có mô tả cho lớp học này.': 'No description for this class.',
+    'Bạn có chắc muốn xóa lớp học này không?': 'Are you sure you want to delete this class?',
+    'Lớp học của tôi': 'My Classes',
+    'Tạo và quản lý các lớp học mà bạn đang phụ trách.': 'Create and manage the classes you teach.',
+    'Nhập tên lớp. Hệ thống tự tạo một mã lớp riêng.': 'Enter a class name. The system generates a unique class code.',
+    'Ví dụ: Lớp Toán buổi chiều, phòng 302...': 'Example: Afternoon math class, room 302...',
+    'Ví dụ: 9A1': 'Example: 9A1',
+    'Tạo lớp học đầu tiên để bắt đầu thêm học sinh và sử dụng God Eyes.': 'Create your first class to start adding students and using God Eyes.',
+    '+ Tạo lớp học': '+ Create Class',
+    'Hệ thống tự tạo một mã lớp riêng.': 'The system generates a unique class code.',
+    'Tạo lớp học': 'Create Class',
 
     # Dashboard
-    'Lá»›p Ä‘ang quáº£n lÃ½': 'Managed classes',
-    'Há»c sinh Ä‘ang quáº£n lÃ½': 'Managed students',
-    'Buá»•i há»c Ä‘Ã£ ghi nháº­n': 'Recorded sessions',
-    'ChÆ°a cÃ³ buá»•i há»c': 'No sessions yet',
-    'Hoáº¡t Ä‘á»™ng hÃ´m nay': 'Todayâ€™s activity',
-    'ChÆ°a cÃ³ hoáº¡t Ä‘á»™ng': 'No activity yet',
-    'ThÃ´ng tin hoáº¡t Ä‘á»™ng gáº§n nháº¥t cá»§a giÃ¡o viÃªn.': 'The teacherâ€™s latest activity.',
-    'ChÆ°a cÃ³ hoáº¡t Ä‘á»™ng nÃ o Ä‘Æ°á»£c ghi nháº­n hÃ´m nay.': 'No activity has been recorded today.',
-    'Táº¡o lá»›p vÃ  quáº£n lÃ½ danh sÃ¡ch há»c sinh.': 'Create classes and manage student lists.',
-    'ThÃªm há»c sinh, áº£nh vÃ  dá»¯ liá»‡u nháº­n diá»‡n.': 'Add students, photos, and recognition data.',
-    'Xem láº¡i cÃ¡c buá»•i há»c vÃ  minh chá»©ng.': 'Review sessions and evidence.',
-    'Táº£i vÃ  sá»­ dá»¥ng á»©ng dá»¥ng theo lá»›p há»c.': 'Download and use the app for your classes.',
+    'Lớp đang quản lý': 'Managed classes',
+    'Học sinh đang quản lý': 'Managed students',
+    'Buổi học đã ghi nhận': 'Recorded sessions',
+    'Chưa có buổi học': 'No sessions yet',
+    'Hoạt động hôm nay': 'Today’s activity',
+    'Chưa có hoạt động': 'No activity yet',
+    'Thông tin hoạt động gần nhất của giáo viên.': 'The teacher’s latest activity.',
+    'Chưa có hoạt động nào được ghi nhận hôm nay.': 'No activity has been recorded today.',
+    'Tạo lớp và quản lý danh sách học sinh.': 'Create classes and manage student lists.',
+    'Thêm học sinh, ảnh và dữ liệu nhận diện.': 'Add students, photos, and recognition data.',
+    'Xem lại các buổi học và minh chứng.': 'Review sessions and evidence.',
+    'Tải và sử dụng ứng dụng theo lớp học.': 'Download and use the app for your classes.',
 
     # Students
-    'QUáº¢N LÃ Há»’ SÆ ': 'PROFILE MANAGEMENT',
-    'Há»’ SÆ  Má»šI': 'NEW PROFILE',
-    'Quáº£n lÃ½ há»“ sÆ¡ há»c sinh vÃ  áº£nh tham chiáº¿u phá»¥c vá»¥ God Eyes.': 'Manage student profiles and reference photos for God Eyes.',
-    'Tá»•ng sá»‘': 'Total',
-    'Lá»›p Ä‘ang xem': 'Current class',
-    'Danh sÃ¡ch há»c sinh': 'Student list',
-    'Táº¡o há»“ sÆ¡ trong vÃ i bÆ°á»›c.': 'Create a profile in a few steps.',
-    'Äá»ƒ trá»‘ng Ä‘á»ƒ há»‡ thá»‘ng tá»± táº¡o mÃ£.': 'Leave blank and the system will generate a code.',
-    'Chá»n áº£nh': 'Choose photo',
-    'HÃ£y táº¡o Ã­t nháº¥t má»™t lá»›p trÆ°á»›c khi thÃªm há»c sinh.': 'Create at least one class before adding students.',
-    'HÃ£y táº¡o Ã­t nháº¥t má»™t lá»›p trÆ°á»›c khi thÃªm há»c sinh.': 'Create at least one class before adding students.',
-    'ChÆ°a cÃ³ há»c sinh trong lá»›p nÃ y': 'No students in this class',
-    'Báº¯t Ä‘áº§u báº±ng cÃ¡ch thÃªm há»“ sÆ¡ há»c sinh á»Ÿ khung bÃªn pháº£i.': 'Start by adding a student profile in the panel on the right.',
-    'Báº¡n cÃ³ thá»ƒ bá»• sung áº£nh tham chiáº¿u ngay khi táº¡o há»“ sÆ¡.': 'You can add a reference photo when creating the profile.',
-    'Dá»¯ liá»‡u Ä‘Æ°á»£c lÆ°u riÃªng cho tÃ i khoáº£n giÃ¡o viÃªn cá»§a báº¡n.': 'Data is stored separately for your teacher account.',
-    'ÄÃ£ thÃªm há»c sinh thÃ nh cÃ´ng.': 'Student added successfully.',
-    'ÄÃ£ cáº­p nháº­t há»“ sÆ¡ há»c sinh.': 'Student profile updated.',
-    'ÄÃ£ xÃ³a há»“ sÆ¡ há»c sinh.': 'Student profile deleted.',
-    'KhÃ´ng phÃ¡t hiá»‡n Ä‘Æ°á»£c khuÃ´n máº·t. HÃ£y dÃ¹ng áº£nh rÃµ máº·t, chá»‰ cÃ³ má»™t há»c sinh.': 'No face was detected. Use a clear photo with one student only.',
-    'áº¢nh cÃ³ nhiá»u hÆ¡n má»™t khuÃ´n máº·t. HÃ£y dÃ¹ng áº£nh chá»‰ cÃ³ má»™t há»c sinh.': 'The photo contains more than one face. Use a photo with one student only.',
-    'KhuÃ´n máº·t trong áº£nh quÃ¡ nhá». HÃ£y chá»n áº£nh cáº­n máº·t hÆ¡n.': 'The face is too small. Choose a closer photo.',
-    'KhÃ´ng thá»ƒ Ä‘á»c áº£nh. Vui lÃ²ng chá»n láº¡i áº£nh JPG, PNG hoáº·c WEBP.': 'The image could not be read. Choose a JPG, PNG, or WEBP image.',
-    'ÄÃ£ sáºµn sÃ ng nháº­n diá»‡n': 'Ready for recognition',
-    'ChÆ°a sáºµn sÃ ng': 'Not ready',
-    'Táº¡o láº¡i Face ID': 'Rebuild Face ID',
+    'QUẢN LÝ HỒ SƠ': 'PROFILE MANAGEMENT',
+    'HỒ SƠ MỚI': 'NEW PROFILE',
+    'Quản lý hồ sơ học sinh và ảnh tham chiếu phục vụ God Eyes.': 'Manage student profiles and reference photos for God Eyes.',
+    'Tổng số': 'Total',
+    'Lớp đang xem': 'Current class',
+    'Danh sách học sinh': 'Student list',
+    'Tạo hồ sơ trong vài bước.': 'Create a profile in a few steps.',
+    'Để trống để hệ thống tự tạo mã.': 'Leave blank and the system will generate a code.',
+    'Chọn ảnh': 'Choose photo',
+    'Hãy tạo ít nhất một lớp trước khi thêm học sinh.': 'Create at least one class before adding students.',
+    'Hãy tạo ít nhất một lớp trước khi thêm học sinh.': 'Create at least one class before adding students.',
+    'Chưa có học sinh trong lớp này': 'No students in this class',
+    'Bắt đầu bằng cách thêm hồ sơ học sinh ở khung bên phải.': 'Start by adding a student profile in the panel on the right.',
+    'Bạn có thể bổ sung ảnh tham chiếu ngay khi tạo hồ sơ.': 'You can add a reference photo when creating the profile.',
+    'Dữ liệu được lưu riêng cho tài khoản giáo viên của bạn.': 'Data is stored separately for your teacher account.',
+    'Đã thêm học sinh thành công.': 'Student added successfully.',
+    'Đã cập nhật hồ sơ học sinh.': 'Student profile updated.',
+    'Đã xóa hồ sơ học sinh.': 'Student profile deleted.',
+    'Không phát hiện được khuôn mặt. Hãy dùng ảnh rõ mặt, chỉ có một học sinh.': 'No face was detected. Use a clear photo with one student only.',
+    'Ảnh có nhiều hơn một khuôn mặt. Hãy dùng ảnh chỉ có một học sinh.': 'The photo contains more than one face. Use a photo with one student only.',
+    'Khuôn mặt trong ảnh quá nhỏ. Hãy chọn ảnh cận mặt hơn.': 'The face is too small. Choose a closer photo.',
+    'Không thể đọc ảnh. Vui lòng chọn lại ảnh JPG, PNG hoặc WEBP.': 'The image could not be read. Choose a JPG, PNG, or WEBP image.',
+    'Đã sẵn sàng nhận diện': 'Ready for recognition',
+    'Chưa sẵn sàng': 'Not ready',
+    'Tạo lại Face ID': 'Rebuild Face ID',
 
     # History
-    'Lá»‹ch sá»­': 'History',
-    'TÃ¬m tÃªn há»c sinh...': 'Search student name...',
-    'TÃ¬m kiáº¿m': 'Search',
-    'XÃ³a tÃ¬m kiáº¿m': 'Clear search',
-    'Káº¿t quáº£ tÃ¬m kiáº¿m': 'Search results',
-    'ngÃ y cÃ³ observation': 'days with observations',
-    'KhÃ´ng tÃ¬m tháº¥y há»c sinh cÃ³ tÃªn chá»©a': 'No student names containing',
-    'trong lá»‹ch sá»­ observation.': 'were found in observation history.',
-    'Buá»•i há»c Ä‘Ã£ Ä‘Æ°á»£c Ä‘Æ°a vÃ o thÃ¹ng rÃ¡c cá»§a Main Admin. Dá»¯ liá»‡u trÃªn server váº«n Ä‘Æ°á»£c giá»¯ láº¡i.': 'The session was moved to the Main Admin trash. Server data is still retained.',
-    'KhÃ´ng thá»ƒ xÃ³a session Ä‘ang cháº¡y. HÃ£y káº¿t thÃºc session trÆ°á»›c.': 'A running session cannot be deleted. End the session first.',
-    'Danh sÃ¡ch session gáº§n nháº¥t': 'Recent sessions',
-    'CÃ¡c buá»•i há»c': 'Sessions',
-    'Báº¯t Ä‘áº§u': 'Started',
-    'Thá»i gian': 'Time',
-    'Chi tiáº¿t': 'Details',
-    'Xem áº£nh': 'View image',
-    'ChÆ°a cÃ³ lá»‹ch sá»­ trÃªn server.': 'No history on the Server yet.',
-    'TÃ¬m há»c sinh theo tÃªn Ä‘á»ƒ xem cÃ¡c observation theo tá»«ng ngÃ y. Dá»¯ liá»‡u trÃªn server Ä‘Æ°á»£c giá»¯ láº¡i cho Ä‘áº¿n khi Main Admin xÃ³a vÄ©nh viá»…n.': 'Search for a student by name to view observations by day. Server data is retained until the Main Admin permanently deletes it.',
-    'ÄÆ°a buá»•i há»c nÃ y vÃ o thÃ¹ng rÃ¡c cá»§a Main Admin? Dá»¯ liá»‡u server váº«n Ä‘Æ°á»£c giá»¯ láº¡i.': 'Move this session to the Main Admin trash? Server data will be retained.',
-    'ÄÆ°a session nÃ y vÃ o thÃ¹ng rÃ¡c cá»§a Main Admin?': 'Move this session to the Main Admin trash?',
-    'XÃ³a buá»•i há»c': 'Delete session',
-    'Danh sÃ¡ch trong session': 'Session roster',
-    'Dá»¯ liá»‡u Ä‘Æ°á»£c lÆ°u trÃªn server': 'Data is stored on the Server',
-    'KhÃ´ng cÃ³ dá»¯ liá»‡u.': 'No data.',
-    'ChÆ°a cÃ³ observation.': 'No observations yet.',
-    'ChÆ°a cÃ³ evidence.': 'No evidence yet.',
-    'Lá»›p Ä‘Ã£ xÃ³a': 'Class deleted',
-    'KhÃ´ng xÃ¡c Ä‘á»‹nh': 'Unknown',
-    'bá»Ÿi': 'by',
+    'Lịch sử': 'History',
+    'Tìm tên học sinh...': 'Search student name...',
+    'Tìm kiếm': 'Search',
+    'Xóa tìm kiếm': 'Clear search',
+    'Kết quả tìm kiếm': 'Search results',
+    'ngày có observation': 'days with observations',
+    'Không tìm thấy học sinh có tên chứa': 'No student names containing',
+    'trong lịch sử observation.': 'were found in observation history.',
+    'Buổi học đã được đưa vào thùng rác của Main Admin. Dữ liệu trên server vẫn được giữ lại.': 'The session was moved to the Main Admin trash. Server data is still retained.',
+    'Không thể xóa session đang chạy. Hãy kết thúc session trước.': 'A running session cannot be deleted. End the session first.',
+    'Danh sách session gần nhất': 'Recent sessions',
+    'Các buổi học': 'Sessions',
+    'Bắt đầu': 'Started',
+    'Thời gian': 'Time',
+    'Chi tiết': 'Details',
+    'Xem ảnh': 'View image',
+    'Chưa có lịch sử trên server.': 'No history on the Server yet.',
+    'Tìm học sinh theo tên để xem các observation theo từng ngày. Dữ liệu trên server được giữ lại cho đến khi Main Admin xóa vĩnh viễn.': 'Search for a student by name to view observations by day. Server data is retained until the Main Admin permanently deletes it.',
+    'Đưa buổi học này vào thùng rác của Main Admin? Dữ liệu server vẫn được giữ lại.': 'Move this session to the Main Admin trash? Server data will be retained.',
+    'Đưa session này vào thùng rác của Main Admin?': 'Move this session to the Main Admin trash?',
+    'Xóa buổi học': 'Delete session',
+    'Danh sách trong session': 'Session roster',
+    'Dữ liệu được lưu trên server': 'Data is stored on the Server',
+    'Không có dữ liệu.': 'No data.',
+    'Chưa có observation.': 'No observations yet.',
+    'Chưa có evidence.': 'No evidence yet.',
+    'Lớp đã xóa': 'Class deleted',
+    'Không xác định': 'Unknown',
+    'bởi': 'by',
 
     # App page
-    'á»¨ng dá»¥ng God Eyes': 'God Eyes App',
-    'Cháº¡y trá»±c tiáº¿p á»©ng dá»¥ng hoáº·c táº£i bá»™ cÃ i Ä‘á»ƒ sá»­ dá»¥ng trÃªn mÃ¡y tÃ­nh.': 'Open the app directly or download it for use on a computer.',
-    'Má»Ÿ á»©ng dá»¥ng': 'Open App',
-    'Má»Ÿ God Eyes trá»±c tiáº¿p trÃªn mÃ¡y nÃ y vÃ  tá»± Ä‘Äƒng nháº­p báº±ng Ä‘Ãºng tÃ i khoáº£n Teacher Ä‘ang sá»­ dá»¥ng trÃªn Server.': 'Open God Eyes on this computer and sign in automatically with the Teacher account currently used on the Server.',
-    'KhÃ´ng cáº§n nháº­p láº¡i máº­t kháº©u.': 'No password is required again.',
-    'Táº£i á»©ng dá»¥ng': 'Download App',
-    'Táº£i phiÃªn báº£n desktop hiá»‡n táº¡i vá» mÃ¡y Windows Ä‘á»ƒ cÃ i Ä‘áº·t vÃ  sá»­ dá»¥ng khi cáº§n.': 'Download the current Windows desktop version for installation and use when needed.',
-    'PhiÃªn báº£n': 'Version',
-    'Tá»‡p': 'File',
-    'Tráº¡ng thÃ¡i': 'Status',
-    'Sáºµn sÃ ng': 'Ready',
-    'ChÆ°a build': 'Not built',
-    'á»¨ng dá»¥ng desktop Ä‘Æ°á»£c xá»­ lÃ½ cá»¥c bá»™.': 'The desktop app runs locally.',
-    'God Eyes Ä‘ang Ä‘Æ°á»£c má»Ÿ báº±ng tÃ i khoáº£n Teacher hiá»‡n táº¡i.': 'God Eyes is opening with the current Teacher account.',
-    'ChÆ°a tÃ¬m tháº¥y GodEyes.exe trÃªn mÃ¡y Server. HÃ£y build á»©ng dá»¥ng trÆ°á»›c.': 'GodEyes.exe was not found on the Server machine. Build the application first.',
-    'KhÃ´ng thá»ƒ má»Ÿ God Eyes trÃªn mÃ¡y Server.': 'God Eyes could not be opened on the Server machine.',
-    'ChÆ°a cÃ³ GodEyes.exe Ä‘á»ƒ táº£i xuá»‘ng.': 'There is no GodEyes.exe available to download.',
+    'Ứng dụng God Eyes': 'God Eyes App',
+    'Chạy trực tiếp ứng dụng hoặc tải bộ cài để sử dụng trên máy tính.': 'Open the app directly or download it for use on a computer.',
+    'Mở ứng dụng': 'Open App',
+    'Mở God Eyes trực tiếp trên máy này và tự đăng nhập bằng đúng tài khoản Teacher đang sử dụng trên Server.': 'Open God Eyes on this computer and sign in automatically with the Teacher account currently used on the Server.',
+    'Không cần nhập lại mật khẩu.': 'No password is required again.',
+    'Tải ứng dụng': 'Download App',
+    'Tải phiên bản desktop hiện tại về máy Windows để cài đặt và sử dụng khi cần.': 'Download the current Windows desktop version for installation and use when needed.',
+    'Phiên bản': 'Version',
+    'Tệp': 'File',
+    'Trạng thái': 'Status',
+    'Sẵn sàng': 'Ready',
+    'Chưa build': 'Not built',
+    'Ứng dụng desktop được xử lý cục bộ.': 'The desktop app runs locally.',
+    'God Eyes đang được mở bằng tài khoản Teacher hiện tại.': 'God Eyes is opening with the current Teacher account.',
+    'Chưa tìm thấy GodEyes.exe trên máy Server. Hãy build ứng dụng trước.': 'GodEyes.exe was not found on the Server machine. Build the application first.',
+    'Không thể mở God Eyes trên máy Server.': 'God Eyes could not be opened on the Server machine.',
+    'Chưa có GodEyes.exe để tải xuống.': 'There is no GodEyes.exe available to download.',
 
     # Settings
-    'CÃ i Ä‘áº·t giÃ¡o viÃªn': 'Teacher Settings',
-    'CÃ¡c lá»±a chá»n Ä‘Æ°á»£c lÆ°u theo tÃ i khoáº£n giÃ¡o viÃªn vÃ  Ä‘á»“ng bá»™ sang God Eyes App.': 'These options are saved to your Teacher account and synced with God Eyes App.',
-    'Chá»n giao diá»‡n hiá»ƒn thá»‹ cho God Eyes App.': 'Choose the God Eyes App appearance.',
-    'Ná»n tráº¯ng, giao diá»‡n máº·c Ä‘á»‹nh.': 'Light interface.',
-    'Ná»n tá»‘i.': 'Dark interface.',
-    'NgÃ´n ngá»¯ nÃ y Ã¡p dá»¥ng cho toÃ n bá»™ giao diá»‡n God Eyes.': 'This language applies to the entire God Eyes interface.',
-    'Giao diá»‡n tiáº¿ng Viá»‡t.': 'Vietnamese interface.',
-    'ÄÃ£ lÆ°u vÃ o tÃ i khoáº£n giÃ¡o viÃªn.': 'Saved to your Teacher account.',
+    'Cài đặt giáo viên': 'Teacher Settings',
+    'Các lựa chọn được lưu theo tài khoản giáo viên và đồng bộ sang God Eyes App.': 'These options are saved to your Teacher account and synced with God Eyes App.',
+    'Chọn giao diện hiển thị cho God Eyes App.': 'Choose the God Eyes App appearance.',
+    'Nền trắng, giao diện mặc định.': 'Light interface.',
+    'Nền tối.': 'Dark interface.',
+    'Ngôn ngữ này áp dụng cho toàn bộ giao diện God Eyes.': 'This language applies to the entire God Eyes interface.',
+    'Giao diện tiếng Việt.': 'Vietnamese interface.',
+    'Đã lưu vào tài khoản giáo viên.': 'Saved to your Teacher account.',
 
     # Mixed technical phrases that should still be full-English in English mode
-    'Observation theo ngÃ y': 'Daily observations',
-    'áº¢nh minh chá»©ng vÃ  thÃ´ng tin cá»§a tá»«ng observation': 'Evidence images and details for each observation',
-    'CÃ³ evidence': 'Evidence available',
-    'KhÃ´ng cÃ³ evidence': 'No evidence',
-    'Confidence trung bÃ¬nh': 'Average confidence',
-    'Chi tiáº¿t session': 'Session details',
-    'QuÃ©t Face ID': 'Scan Face ID',
-    'Tráº¡ng thÃ¡i Face ID': 'Face ID status',
-    'Há»c sinh trong lá»›p': 'Students in class',
-    'MÃ£ lá»›p': 'Class code',
-    'Lá»›p': 'Class',
-    'KhÃ´ng cÃ³': 'None',
+    'Observation theo ngày': 'Daily observations',
+    'Ảnh minh chứng và thông tin của từng observation': 'Evidence images and details for each observation',
+    'Có evidence': 'Evidence available',
+    'Không có evidence': 'No evidence',
+    'Confidence trung bình': 'Average confidence',
+    'Chi tiết session': 'Session details',
+    'Quét Face ID': 'Scan Face ID',
+    'Trạng thái Face ID': 'Face ID status',
+    'Học sinh trong lớp': 'Students in class',
+    'Mã lớp': 'Class code',
+    'Lớp': 'Class',
+    'Không có': 'None',
 })
 
 
@@ -1001,77 +1016,77 @@ TEACHER_I18N_VI_EN.update({
 # could bypass the bilingual map and remain in English in Vietnamese mode.
 TEACHER_I18N_VI_EN.update({
     # History overview / student focus list
-    'SESSION': 'BUá»”I Há»ŒC',
-    'FOCUS OVERVIEW': 'Tá»”NG QUAN Táº¬P TRUNG',
-    'CLASS OVERVIEW': 'Tá»”NG QUAN Lá»šP Há»ŒC',
-    'NOT REALLY DANGER': 'HÆ I NGHIÃŠM TRá»ŒNG',
-    'SAFE': 'BÃŒNH THÆ¯á»œNG',
-    'DANGER': 'NGHIÃŠM TRá»ŒNG',
-    'ATTENTION': 'CHÃš Ã',
-    'OB TIME': 'THá»œI GIAN OB',
-    'FOCUS SCORE': 'ÄIá»‚M Táº¬P TRUNG',
-    'Focus': 'Táº­p trung',
-    'FOCUS': 'Táº¬P TRUNG',
-    'Sáº¯p xáº¿p': 'Sort',
-    'Má»©c Ä‘á»™ â€¢ NghiÃªm trá»ng â†’ BÃ¬nh thÆ°á»ng': 'Severity â€¢ Danger â†’ Normal',
-    'TÃªn gá»i â€¢ A â†’ Z': 'Given name â€¢ A â†’ Z',
-    'TÃªn gá»i â€¢ Z â†’ A': 'Given name â€¢ Z â†’ A',
+    'SESSION': 'BUỔI HỌC',
+    'FOCUS OVERVIEW': 'TỔNG QUAN TẬP TRUNG',
+    'CLASS OVERVIEW': 'TỔNG QUAN LỚP HỌC',
+    'NOT REALLY DANGER': 'HƠI NGHIÊM TRỌNG',
+    'SAFE': 'BÌNH THƯỜNG',
+    'DANGER': 'NGHIÊM TRỌNG',
+    'ATTENTION': 'CHÚ Ý',
+    'OB TIME': 'THỜI GIAN OB',
+    'FOCUS SCORE': 'ĐIỂM TẬP TRUNG',
+    'Focus': 'Tập trung',
+    'FOCUS': 'TẬP TRUNG',
+    'Sắp xếp': 'Sort',
+    'Mức độ • Nghiêm trọng → Bình thường': 'Severity • Danger → Normal',
+    'Tên gọi • A → Z': 'Given name • A → Z',
+    'Tên gọi • Z → A': 'Given name • Z → A',
     'Trang': 'Page',
-    'Hiá»ƒn thá»‹': 'Showing',
-    'Láº§n gáº§n nháº¥t': 'Latest',
-    'ChÆ°a cÃ³ OB': 'No OB yet',
-    'quan sÃ¡t': 'observations',
-    'minh chá»©ng': 'evidence',
-    'khung hÃ¬nh': 'frame',
-    'Má»—i há»c sinh chá»‰ xuáº¥t hiá»‡n má»™t láº§n. Chá»n má»™t dÃ²ng Ä‘á»ƒ xem cÃ¡c frame quan trá»ng.':
+    'Hiển thị': 'Showing',
+    'Lần gần nhất': 'Latest',
+    'Chưa có OB': 'No OB yet',
+    'quan sát': 'observations',
+    'minh chứng': 'evidence',
+    'khung hình': 'frame',
+    'Mỗi học sinh chỉ xuất hiện một lần. Chọn một dòng để xem các frame quan trọng.':
         'Each student appears only once. Select a row to review important frames.',
-    'há»c sinh cáº§n xem láº¡i': 'students to review',
-    'Ä‘Æ°á»£c chá»n Ä‘á»ƒ quÃ©t': 'selected for scanning',
-    'há»c sinh cáº§n chÃº Ã½': 'students needing attention',
-    'khÃ´ng cÃ³ tÃ­n hiá»‡u Ä‘Ã¡ng chÃº Ã½': 'no notable signals',
-    'há»c sinh trong buá»•i há»c': 'students in the session',
-    'TÃ¬m há»c sinh theo tÃªn hoáº·c mÃ£...': 'Search by student name or code...',
+    'học sinh cần xem lại': 'students to review',
+    'được chọn để quét': 'selected for scanning',
+    'học sinh cần chú ý': 'students needing attention',
+    'không có tín hiệu đáng chú ý': 'no notable signals',
+    'học sinh trong buổi học': 'students in the session',
+    'Tìm học sinh theo tên hoặc mã...': 'Search by student name or code...',
 })
 
 TEACHER_I18N_EN_VI_EXTRA.update({
     # Exact English labels used by the legacy History template.
-    'SESSION': 'BUá»”I Há»ŒC',
-    'FOCUS OVERVIEW': 'Tá»”NG QUAN Táº¬P TRUNG',
-    'CLASS OVERVIEW': 'Tá»”NG QUAN Lá»šP Há»ŒC',
-    'NOT REALLY DANGER': 'HÆ I NGHIÃŠM TRá»ŒNG',
-    'SAFE': 'BÃŒNH THÆ¯á»œNG',
-    'DANGER': 'NGHIÃŠM TRá»ŒNG',
-    'ATTENTION': 'CHÃš Ã',
-    'OB TIME': 'THá»œI GIAN OB',
-    'FOCUS SCORE': 'ÄIá»‚M Táº¬P TRUNG',
-    'Focus': 'Táº­p trung',
-    'FOCUS': 'Táº¬P TRUNG',
-    'Severity â€¢ Danger â†’ Normal': 'Má»©c Ä‘á»™ â€¢ NghiÃªm trá»ng â†’ BÃ¬nh thÆ°á»ng',
-    'Given name â€¢ A â†’ Z': 'TÃªn gá»i â€¢ A â†’ Z',
-    'Given name â€¢ Z â†’ A': 'TÃªn gá»i â€¢ Z â†’ A',
+    'SESSION': 'BUỔI HỌC',
+    'FOCUS OVERVIEW': 'TỔNG QUAN TẬP TRUNG',
+    'CLASS OVERVIEW': 'TỔNG QUAN LỚP HỌC',
+    'NOT REALLY DANGER': 'HƠI NGHIÊM TRỌNG',
+    'SAFE': 'BÌNH THƯỜNG',
+    'DANGER': 'NGHIÊM TRỌNG',
+    'ATTENTION': 'CHÚ Ý',
+    'OB TIME': 'THỜI GIAN OB',
+    'FOCUS SCORE': 'ĐIỂM TẬP TRUNG',
+    'Focus': 'Tập trung',
+    'FOCUS': 'TẬP TRUNG',
+    'Severity • Danger → Normal': 'Mức độ • Nghiêm trọng → Bình thường',
+    'Given name • A → Z': 'Tên gọi • A → Z',
+    'Given name • Z → A': 'Tên gọi • Z → A',
     'Page': 'Trang',
-    'Showing': 'Hiá»ƒn thá»‹',
-    'Latest': 'Láº§n gáº§n nháº¥t',
-    'No OB yet': 'ChÆ°a cÃ³ OB',
-    'students in the session': 'há»c sinh trong buá»•i há»c',
-    'students to review': 'há»c sinh cáº§n xem láº¡i',
-    'selected for scanning': 'Ä‘Æ°á»£c chá»n Ä‘á»ƒ quÃ©t',
-    'students needing attention': 'há»c sinh cáº§n chÃº Ã½',
-    'no notable signals': 'khÃ´ng cÃ³ tÃ­n hiá»‡u Ä‘Ã¡ng chÃº Ã½',
-    'Search by student name or code...': 'TÃ¬m há»c sinh theo tÃªn hoáº·c mÃ£...',
-    'observations': 'quan sÃ¡t',
-    'evidence': 'minh chá»©ng',
-    'frame': 'khung hÃ¬nh',
+    'Showing': 'Hiển thị',
+    'Latest': 'Lần gần nhất',
+    'No OB yet': 'Chưa có OB',
+    'students in the session': 'học sinh trong buổi học',
+    'students to review': 'học sinh cần xem lại',
+    'selected for scanning': 'được chọn để quét',
+    'students needing attention': 'học sinh cần chú ý',
+    'no notable signals': 'không có tín hiệu đáng chú ý',
+    'Search by student name or code...': 'Tìm học sinh theo tên hoặc mã...',
+    'observations': 'quan sát',
+    'evidence': 'minh chứng',
+    'frame': 'khung hình',
 })
 
 
 
 TEACHER_I18N_VI_EN.update({
-    'Sá»‘ Ä‘iá»‡n thoáº¡i nháº­n thÃ´ng bÃ¡o': 'Notification phone number',
-    'Sá»‘ nháº­n': 'Recipient',
-    'ChÆ°a nháº­p': 'Not set',
-    'ChÆ°a cÃ³ khung hÃ¬nh minh chá»©ng Ä‘á»ƒ chá»n.': 'No evidence frame is available to select.',
-    'Sá»‘ Ä‘iá»‡n thoáº¡i chÆ°a há»£p lá»‡.': 'The phone number is invalid.',
+    'Số điện thoại nhận thông báo': 'Notification phone number',
+    'Số nhận': 'Recipient',
+    'Chưa nhập': 'Not set',
+    'Chưa có khung hình minh chứng để chọn.': 'No evidence frame is available to select.',
+    'Số điện thoại chưa hợp lệ.': 'The phone number is invalid.',
 })
 
 # v16: harden English mode against legacy reverse-mapping collisions.
@@ -1079,32 +1094,32 @@ TEACHER_I18N_VI_EN.update({
 # which caused an English page to be translated back into Vietnamese.  These
 # exact Vietnamese labels are now explicitly converted to English in English mode.
 STRICT_VI_LABELS_TO_EN = {
-    'Tá»”NG QUAN Táº¬P TRUNG': 'FOCUS OVERVIEW',
-    'Tá»”NG QUAN Lá»šP Há»ŒC': 'CLASS OVERVIEW',
-    'ÄIá»‚M Táº¬P TRUNG': 'FOCUS SCORE',
-    'Táº¬P TRUNG': 'FOCUS',
-    'Sá» OB': 'OB',
-    'NGHIÃŠM TRá»ŒNG': 'DANGER',
-    'CHÃš Ã': 'ATTENTION',
-    'THá»œI GIAN OB': 'OB TIME',
-    'Há»ŒC SINH': 'STUDENTS',
-    'BÃŒNH THÆ¯á»œNG': 'NORMAL',
-    'HÆ I NGHIÃŠM TRá»ŒNG': 'ATTENTION',
-    'BUá»”I Há»ŒC': 'SESSION',
-    'Láº¦N GHI NHáº¬N': 'OBSERVATIONS',
-    'MINH CHá»¨NG': 'EVIDENCE',
-    'Má»¨C Äá»˜': 'SEVERITY',
-    'TÃŒM Há»ŒC SINH': 'SEARCH STUDENT',
-    'QUAY Láº I Lá»ŠCH Sá»¬': 'BACK TO HISTORY',
-    'XÃ“A BUá»”I Há»ŒC': 'DELETE SESSION',
-    'HIá»‚N THá»Š': 'SHOWING',
+    'TỔNG QUAN TẬP TRUNG': 'FOCUS OVERVIEW',
+    'TỔNG QUAN LỚP HỌC': 'CLASS OVERVIEW',
+    'ĐIỂM TẬP TRUNG': 'FOCUS SCORE',
+    'TẬP TRUNG': 'FOCUS',
+    'SỐ OB': 'OB',
+    'NGHIÊM TRỌNG': 'DANGER',
+    'CHÚ Ý': 'ATTENTION',
+    'THỜI GIAN OB': 'OB TIME',
+    'HỌC SINH': 'STUDENTS',
+    'BÌNH THƯỜNG': 'NORMAL',
+    'HƠI NGHIÊM TRỌNG': 'ATTENTION',
+    'BUỔI HỌC': 'SESSION',
+    'LẦN GHI NHẬN': 'OBSERVATIONS',
+    'MINH CHỨNG': 'EVIDENCE',
+    'MỨC ĐỘ': 'SEVERITY',
+    'TÌM HỌC SINH': 'SEARCH STUDENT',
+    'QUAY LẠI LỊCH SỬ': 'BACK TO HISTORY',
+    'XÓA BUỔI HỌC': 'DELETE SESSION',
+    'HIỂN THỊ': 'SHOWING',
     'TRANG': 'PAGE',
-    'Láº¦N Gáº¦N NHáº¤T': 'LATEST',
-    'ÄÆ¯á»¢C CHá»ŒN Äá»‚ QUÃ‰T': 'SELECTED FOR SCANNING',
-    'Há»ŒC SINH Cáº¦N XEM Láº I': 'STUDENTS TO REVIEW',
-    'Há»ŒC SINH Cáº¦N CHÃš Ã': 'STUDENTS NEEDING ATTENTION',
-    'KHÃ”NG CÃ“ TÃN HIá»†U ÄÃNG CHÃš Ã': 'NO NOTABLE SIGNALS',
-    'Há»ŒC SINH TRONG BUá»”I Há»ŒC': 'STUDENTS IN THE SESSION',
+    'LẦN GẦN NHẤT': 'LATEST',
+    'ĐƯỢC CHỌN ĐỂ QUÉT': 'SELECTED FOR SCANNING',
+    'HỌC SINH CẦN XEM LẠI': 'STUDENTS TO REVIEW',
+    'HỌC SINH CẦN CHÚ Ý': 'STUDENTS NEEDING ATTENTION',
+    'KHÔNG CÓ TÍN HIỆU ĐÁNG CHÚ Ý': 'NO NOTABLE SIGNALS',
+    'HỌC SINH TRONG BUỔI HỌC': 'STUDENTS IN THE SESSION',
 }
 
 
@@ -1113,7 +1128,7 @@ def _teacher_localize_text(value: str, language: str) -> str:
     if language == 'en':
         # English mode must never apply legacy English->Vietnamese entries.
         # Use only Vietnamese-source entries plus the strict English overrides.
-        mapping = {k: v for k, v in TEACHER_I18N_VI_EN.items() if any(ch in k for ch in 'ÄƒÃ¢Ä‘ÃªÃ´Æ¡Æ°Ä‚Ã‚ÄÃŠÃ”Æ Æ¯Ã¡Ã áº£Ã£áº¡áº¥áº§áº©áº«áº­áº¯áº±áº³áºµáº·Ã©Ã¨áº»áº½áº¹áº¿á»á»ƒá»…á»‡Ã­Ã¬á»‰Ä©á»‹Ã³Ã²á»Ãµá»á»‘á»“á»•á»—á»™á»›á»á»Ÿá»¡á»£ÃºÃ¹á»§Å©á»¥á»©á»«á»­á»¯á»±Ã½á»³á»·á»¹á»µ')}
+        mapping = {k: v for k, v in TEACHER_I18N_VI_EN.items() if any(ch in k for ch in 'ăâđêôơưĂÂĐÊÔƠƯáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ')}
         mapping.update(STRICT_VI_TO_EN)
         mapping.update(STRICT_VI_LABELS_TO_EN)
     else:
@@ -1661,13 +1676,13 @@ LOGIN_PAGE = """
     <div class="login-background-copy" aria-hidden="true">
         <div class="info-card left">
             <div class="info-kicker">CLASSROOM INTELLIGENCE</div>
-            <div class="info-title">Quan sÃ¡t thÃ´ng minh</div>
-            <div class="info-text">Há»— trá»£ giÃ¡o viÃªn theo dÃµi buá»•i há»c, ghi nháº­n tÃ­n hiá»‡u Ä‘Ã¡ng chÃº Ã½ vÃ  xem láº¡i dá»¯ liá»‡u sau giá» há»c.</div>
+            <div class="info-title">Quan sát thông minh</div>
+            <div class="info-text">Hỗ trợ giáo viên theo dõi buổi học, ghi nhận tín hiệu đáng chú ý và xem lại dữ liệu sau giờ học.</div>
         </div>
         <div class="info-card right">
             <div class="info-kicker">GOD EYES</div>
-            <div class="info-title">Theo dÃµi Â· PhÃ¢n tÃ­ch Â· Xem láº¡i</div>
-            <div class="info-text">Má»™t khÃ´ng gian quáº£n lÃ½ táº­p trung cho lá»›p há»c, há»c sinh vÃ  lá»‹ch sá»­ quan sÃ¡t.</div>
+            <div class="info-title">Theo dõi · Phân tích · Xem lại</div>
+            <div class="info-text">Một không gian quản lý tập trung cho lớp học, học sinh và lịch sử quan sát.</div>
         </div>
         <span class="particle p1"></span>
         <span class="particle p2"></span>
@@ -1685,17 +1700,17 @@ LOGIN_PAGE = """
 
             <form id="loginForm">
                 <div class="field">
-                    <label for="username">TÃªn Ä‘Äƒng nháº­p</label>
+                    <label for="username">Tên đăng nhập</label>
                     <input id="username" type="text" autocomplete="username" required>
                 </div>
 
                 <div class="field">
-                    <label for="password">Máº­t kháº©u</label>
+                    <label for="password">Mật khẩu</label>
                     <input id="password" type="password" autocomplete="current-password" required>
                 </div>
-                <div class="login-hint">ÄÄƒng nháº­p Ä‘á»ƒ truy cáº­p God Eyes Server vÃ  quáº£n lÃ½ lá»›p há»c.</div>
+                <div class="login-hint">Đăng nhập để truy cập God Eyes Server và quản lý lớp học.</div>
 
-                <button id="loginButton" class="login-button" type="submit">ÄÄ‚NG NHáº¬P</button>
+                <button id="loginButton" class="login-button" type="submit">ĐĂNG NHẬP</button>
                 <div id="message" class="message"></div>
             </form>
 
@@ -1711,7 +1726,7 @@ LOGIN_PAGE = """
             const message = document.getElementById("message");
 
             button.disabled = true;
-            button.textContent = "ÄANG ÄÄ‚NG NHáº¬P...";
+            button.textContent = "ĐANG ĐĂNG NHẬP...";
             message.textContent = "";
             message.className = "message";
 
@@ -1729,14 +1744,14 @@ LOGIN_PAGE = """
                 const data = await response.json();
 
                 if (!response.ok) {
-                    throw new Error(data.detail || "ÄÄƒng nháº­p khÃ´ng thÃ nh cÃ´ng.");
+                    throw new Error(data.detail || "Đăng nhập không thành công.");
                 }
 
                 sessionStorage.setItem("godEyesAccessToken", data.access_token);
                 sessionStorage.setItem("godEyesRole", data.role);
                 sessionStorage.setItem("godEyesUsername", data.username);
 
-                message.textContent = "ÄÄƒng nháº­p thÃ nh cÃ´ng.";
+                message.textContent = "Đăng nhập thành công.";
                 message.className = "message success";
 
                 window.location.href = data.role === "MAIN_ADMIN" ? "/admin" : "/teacher";
@@ -1744,7 +1759,7 @@ LOGIN_PAGE = """
                 message.textContent = error.message;
                 message.className = "message error";
                 button.disabled = false;
-                button.textContent = "ÄÄ‚NG NHáº¬P";
+                button.textContent = "ĐĂNG NHẬP";
             }
         });
     </script>
@@ -1781,13 +1796,13 @@ def get_admin_payload(request: Request):
 
 def admin_shell(title: str, content: str, section: str) -> str:
     nav_items = [
-        ("dashboard", "Tá»•ng quan"),
-        ("accounts", "Quáº£n lÃ½ tÃ i khoáº£n"),
-        ("teachers", "GiÃ¡o viÃªn"),
-        ("classes", "Lá»›p há»c"),
-        ("students", "Há»c sinh"),
-        ("data", "Dá»¯ liá»‡u"),
-        ("system", "Há»‡ thá»‘ng"),
+        ("dashboard", "Tổng quan"),
+        ("accounts", "Quản lý tài khoản"),
+        ("teachers", "Giáo viên"),
+        ("classes", "Lớp học"),
+        ("students", "Học sinh"),
+        ("data", "Dữ liệu"),
+        ("system", "Hệ thống"),
     ]
 
     nav_html = "".join(
@@ -2152,8 +2167,8 @@ def admin_shell(title: str, content: str, section: str) -> str:
         <aside class="sidebar">
             <div class="sidebar-head">
                 <div class="kicker">Main Account</div>
-                <div class="title">Báº£ng Ä‘iá»u khiá»ƒn</div>
-                <div class="sub">Quáº£n trá»‹ há»‡ thá»‘ng God Eyes</div>
+                <div class="title">Bảng điều khiển</div>
+                <div class="sub">Quản trị hệ thống God Eyes</div>
             </div>
 
             <nav class="nav">
@@ -2163,9 +2178,9 @@ def admin_shell(title: str, content: str, section: str) -> str:
             <div class="sidebar-bottom">
                 <div class="server-status">
                     <div class="status-label">Server</div>
-                    <div class="status-value">Äang hoáº¡t Ä‘á»™ng</div>
+                    <div class="status-value">Đang hoạt động</div>
                 </div>
-                <a class="logout" href="/">ÄÄƒng xuáº¥t</a>
+                <a class="logout" href="/">Đăng xuất</a>
             </div>
         </aside>
 
@@ -2197,19 +2212,19 @@ def dashboard_content():
     return f"""
         <div class="grid">
             <div class="card metric">
-                <div class="metric-label">TÃ i khoáº£n giÃ¡o viÃªn</div>
+                <div class="metric-label">Tài khoản giáo viên</div>
                 <div class="metric-value">{len(teachers)}</div>
             </div>
             <div class="card metric">
-                <div class="metric-label">Lá»›p há»c</div>
+                <div class="metric-label">Lớp học</div>
                 <div class="metric-value">{class_count}</div>
             </div>
             <div class="card metric">
-                <div class="metric-label">Há»c sinh</div>
+                <div class="metric-label">Học sinh</div>
                 <div class="metric-value">{student_count}</div>
             </div>
             <div class="card metric">
-                <div class="metric-label">PhiÃªn quÃ©t</div>
+                <div class="metric-label">Phiên quét</div>
                 <div class="metric-value">{session_count}</div>
             </div>
         </div>
@@ -2218,27 +2233,27 @@ def dashboard_content():
             <section class="card section-card">
                 <div class="section-head">
                     <div>
-                        <h2>Quáº£n lÃ½ nhanh</h2>
-                        <span>CÃ¡c chá»©c nÄƒng quáº£n trá»‹ chÃ­nh</span>
+                        <h2>Quản lý nhanh</h2>
+                        <span>Các chức năng quản trị chính</span>
                     </div>
                 </div>
 
                 <div class="action-grid">
                     <a class="action" href="/admin?section=accounts">
-                        <div class="action-title">Quáº£n lÃ½ tÃ i khoáº£n</div>
-                        <div class="action-text">Táº¡o, khÃ³a, má»Ÿ, Ä‘á»•i máº­t kháº©u vÃ  xÃ³a tÃ i khoáº£n giÃ¡o viÃªn.</div>
+                        <div class="action-title">Quản lý tài khoản</div>
+                        <div class="action-text">Tạo, khóa, mở, đổi mật khẩu và xóa tài khoản giáo viên.</div>
                     </a>
                     <a class="action" href="/admin?section=teachers">
-                        <div class="action-title">Quáº£n lÃ½ giÃ¡o viÃªn</div>
-                        <div class="action-text">Xem danh sÃ¡ch vÃ  tráº¡ng thÃ¡i tÃ i khoáº£n giÃ¡o viÃªn.</div>
+                        <div class="action-title">Quản lý giáo viên</div>
+                        <div class="action-text">Xem danh sách và trạng thái tài khoản giáo viên.</div>
                     </a>
                     <a class="action" href="/admin?section=classes">
-                        <div class="action-title">Quáº£n lÃ½ lá»›p há»c</div>
-                        <div class="action-text">Táº¡o vÃ  quáº£n lÃ½ lá»›p cá»§a Main Account vÃ  giÃ¡o viÃªn.</div>
+                        <div class="action-title">Quản lý lớp học</div>
+                        <div class="action-text">Tạo và quản lý lớp của Main Account và giáo viên.</div>
                     </a>
                     <a class="action" href="/admin?section=students">
-                        <div class="action-title">Quáº£n lÃ½ há»c sinh</div>
-                        <div class="action-text">Quáº£n lÃ½ há»“ sÆ¡ há»c sinh, lá»›p vÃ  áº£nh tham chiáº¿u.</div>
+                        <div class="action-title">Quản lý học sinh</div>
+                        <div class="action-text">Quản lý hồ sơ học sinh, lớp và ảnh tham chiếu.</div>
                     </a>
                 </div>
             </section>
@@ -2246,12 +2261,12 @@ def dashboard_content():
             <section class="card section-card">
                 <div class="section-head">
                     <div>
-                        <h2>Hoáº¡t Ä‘á»™ng gáº§n Ä‘Ã¢y</h2>
-                        <span>Dá»¯ liá»‡u há»‡ thá»‘ng</span>
+                        <h2>Hoạt động gần đây</h2>
+                        <span>Dữ liệu hệ thống</span>
                     </div>
                 </div>
 
-                <div class="empty-state">ChÆ°a cÃ³ dá»¯ liá»‡u hoáº¡t Ä‘á»™ng.</div>
+                <div class="empty-state">Chưa có dữ liệu hoạt động.</div>
             </section>
         </div>
     """
@@ -2271,14 +2286,14 @@ def account_content():
 
     if not rows:
         table = ""
-        empty = '<div class="empty-state" style="margin-top:14px;">ChÆ°a cÃ³ tÃ i khoáº£n giÃ¡o viÃªn.</div>'
+        empty = '<div class="empty-state" style="margin-top:14px;">Chưa có tài khoản giáo viên.</div>'
     else:
         body = ""
 
         for teacher in rows:
-            status = "Äang hoáº¡t Ä‘á»™ng" if teacher.is_active else "ÄÃ£ khÃ³a"
+            status = "Đang hoạt động" if teacher.is_active else "Đã khóa"
             status_class = "active" if teacher.is_active else "locked"
-            action = "KhÃ³a" if teacher.is_active else "Má»Ÿ khÃ³a"
+            action = "Khóa" if teacher.is_active else "Mở khóa"
 
             body += f"""
                 <tr>
@@ -2301,13 +2316,13 @@ def account_content():
                             </form>
 
                             <a class="row-button" href="/admin/accounts/password?teacher_id={teacher.id}">
-                                Äá»•i máº­t kháº©u
+                                Đổi mật khẩu
                             </a>
 
                             <form class="inline-form" method="post" action="/admin/accounts/delete">
                                 <input type="hidden" name="teacher_id" value="{teacher.id}">
                                 <button class="row-button danger" type="submit">
-                                    XÃ³a
+                                    Xóa
                                 </button>
                             </form>
                         </div>
@@ -2321,11 +2336,11 @@ def account_content():
                     <thead>
                         <tr>
                             <th>ID</th>
-                            <th>GiÃ¡o viÃªn</th>
-                            <th>TÃªn Ä‘Äƒng nháº­p</th>
-                            <th>Tráº¡ng thÃ¡i</th>
-                            <th>NgÃ y táº¡o</th>
-                            <th>Thao tÃ¡c</th>
+                            <th>Giáo viên</th>
+                            <th>Tên đăng nhập</th>
+                            <th>Trạng thái</th>
+                            <th>Ngày tạo</th>
+                            <th>Thao tác</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -2341,12 +2356,12 @@ def account_content():
         <section class="card section-card">
             <div class="section-head">
                 <div>
-                    <h2>Quáº£n lÃ½ tÃ i khoáº£n giÃ¡o viÃªn</h2>
-                    <span>ADMIN táº¡o vÃ  quáº£n lÃ½ toÃ n bá»™ Teacher Account.</span>
+                    <h2>Quản lý tài khoản giáo viên</h2>
+                    <span>ADMIN tạo và quản lý toàn bộ Teacher Account.</span>
                 </div>
 
                 <a class="primary" href="/admin/accounts/new">
-                    + Táº¡o tÃ i khoáº£n giÃ¡o viÃªn
+                    + Tạo tài khoản giáo viên
                 </a>
             </div>
 
@@ -2364,13 +2379,13 @@ def teachers_content():
             <section class="card section-card">
                 <div class="section-head">
                     <div>
-                        <h2>GiÃ¡o viÃªn</h2>
-                        <span>Danh sÃ¡ch Teacher Account.</span>
+                        <h2>Giáo viên</h2>
+                        <span>Danh sách Teacher Account.</span>
                     </div>
                 </div>
 
                 <div class="empty-state">
-                    ChÆ°a cÃ³ tÃ i khoáº£n giÃ¡o viÃªn.
+                    Chưa có tài khoản giáo viên.
                 </div>
             </section>
         """
@@ -2379,7 +2394,7 @@ def teachers_content():
 
     for teacher in rows:
         status_class = "active" if teacher.is_active else "locked"
-        status = "Äang hoáº¡t Ä‘á»™ng" if teacher.is_active else "ÄÃ£ khÃ³a"
+        status = "Đang hoạt động" if teacher.is_active else "Đã khóa"
 
         body += f"""
             <tr>
@@ -2398,12 +2413,12 @@ def teachers_content():
         <section class="card section-card">
             <div class="section-head">
                 <div>
-                    <h2>GiÃ¡o viÃªn</h2>
-                    <span>Danh sÃ¡ch Teacher Account.</span>
+                    <h2>Giáo viên</h2>
+                    <span>Danh sách Teacher Account.</span>
                 </div>
 
                 <a class="secondary" href="/admin?section=accounts">
-                    Quáº£n lÃ½ tÃ i khoáº£n
+                    Quản lý tài khoản
                 </a>
             </div>
 
@@ -2412,9 +2427,9 @@ def teachers_content():
                     <thead>
                         <tr>
                             <th>ID</th>
-                            <th>GiÃ¡o viÃªn</th>
-                            <th>TÃªn Ä‘Äƒng nháº­p</th>
-                            <th>Tráº¡ng thÃ¡i</th>
+                            <th>Giáo viên</th>
+                            <th>Tên đăng nhập</th>
+                            <th>Trạng thái</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -2437,7 +2452,7 @@ def placeholder_content(title_text: str, description: str):
             </div>
 
             <div class="empty-state">
-                Module nÃ y sáº½ Ä‘Æ°á»£c xÃ¢y á»Ÿ bÆ°á»›c tiáº¿p theo.
+                Module này sẽ được xây ở bước tiếp theo.
             </div>
         </section>
     """
@@ -2478,33 +2493,33 @@ def admin(request: Request, section: str = "dashboard"):
     normalized = str(section or "dashboard").strip().lower()
 
     if normalized == "accounts":
-        title = "Quáº£n lÃ½ tÃ i khoáº£n"
+        title = "Quản lý tài khoản"
         content = account_content()
     elif normalized == "teachers":
-        title = "GiÃ¡o viÃªn"
+        title = "Giáo viên"
         content = teachers_content()
     elif normalized == "classes":
-        title = "Lá»›p há»c"
+        title = "Lớp học"
         content = admin_classes_content(admin_id)
     elif normalized == "students":
-        title = "Há»c sinh"
+        title = "Học sinh"
         content = admin_students_content(
             admin_id,
             request.query_params.get("class_id", ""),
             request.query_params.get("error", "") or request.query_params.get("status", ""),
         )
     elif normalized == "data":
-        title = "Dá»¯ liá»‡u"
+        title = "Dữ liệu"
         content = admin_history_content(request.query_params.get("view", "history"))
     elif normalized == "system":
-        title = "Há»‡ thá»‘ng"
+        title = "Hệ thống"
         content = placeholder_content(
-            "Há»‡ thá»‘ng",
-            "Quáº£n lÃ½ á»©ng dá»¥ng vÃ  server.",
+            "Hệ thống",
+            "Quản lý ứng dụng và server.",
         )
     else:
         normalized = "dashboard"
-        title = "Tá»•ng quan"
+        title = "Tổng quan"
         content = dashboard_content()
 
     return admin_shell(title, content, normalized)
@@ -2518,11 +2533,11 @@ def new_teacher_page(request: Request):
     error = str(request.query_params.get("error", "")).strip().lower()
     error_html = (
         '<div style="margin-bottom:16px;padding:12px 14px;border:1px solid #f1c7cb;background:#fff4f4;color:#b4232d;border-radius:12px;font-size:13px;font-weight:650;">'
-        'KhÃ´ng thá»ƒ táº¡o tÃ i khoáº£n. Há»‡ thá»‘ng Ä‘Ã£ há»§y thao tÃ¡c Ä‘á»ƒ khÃ´ng lÃ m há»ng dá»¯ liá»‡u. Kiá»ƒm tra Server log Ä‘á»ƒ xem lá»—i cÆ¡ sá»Ÿ dá»¯ liá»‡u.'
+        'Không thể tạo tài khoản. Hệ thống đã hủy thao tác để không làm hỏng dữ liệu. Kiểm tra Server log để xem lỗi cơ sở dữ liệu.'
         '</div>'
     ) if error == "create_failed" else (
         '<div style="margin-bottom:16px;padding:12px 14px;border:1px solid #f1c7cb;background:#fff4f4;color:#b4232d;border-radius:12px;font-size:13px;font-weight:650;">'
-        'TÃªn Ä‘Äƒng nháº­p nÃ y Ä‘Ã£ Ä‘Æ°á»£c dÃ¹ng cho Main Account. HÃ£y chá»n tÃªn Ä‘Äƒng nháº­p khÃ¡c cho giÃ¡o viÃªn.'
+        'Tên đăng nhập này đã được dùng cho Main Account. Hãy chọn tên đăng nhập khác cho giáo viên.'
         '</div>'
     ) if error == "username_reserved" else ""
 
@@ -2531,40 +2546,40 @@ def new_teacher_page(request: Request):
         <section class="card section-card form-card">
             <div class="section-head">
                 <div>
-                    <h2>Táº¡o tÃ i khoáº£n giÃ¡o viÃªn</h2>
-                    <span>TÃ i khoáº£n do ADMIN táº¡o vÃ  quáº£n lÃ½.</span>
+                    <h2>Tạo tài khoản giáo viên</h2>
+                    <span>Tài khoản do ADMIN tạo và quản lý.</span>
                 </div>
 
                 <a class="secondary" href="/admin?section=accounts">
-                    Quay láº¡i
+                    Quay lại
                 </a>
             </div>
 
             <form method="post" action="/admin/accounts/create-v2">
                 <div class="field">
-                    <label for="full_name">Há» vÃ  tÃªn</label>
+                    <label for="full_name">Họ và tên</label>
                     <input id="full_name" name="full_name" type="text" required>
                 </div>
 
                 <div class="field">
-                    <label for="username">TÃªn Ä‘Äƒng nháº­p</label>
+                    <label for="username">Tên đăng nhập</label>
                     <input id="username" name="username" type="text" required>
                 </div>
 
                 <div class="field">
-                    <label for="password">Máº­t kháº©u</label>
+                    <label for="password">Mật khẩu</label>
                     <input id="password" name="password" type="password" minlength="8" required>
                 </div>
 
                 <button class="primary" type="submit">
-                    Táº¡o tÃ i khoáº£n
+                    Tạo tài khoản
                 </button>
             </form>
         </section>
     """
 
     return admin_shell(
-        "Táº¡o tÃ i khoáº£n giÃ¡o viÃªn",
+        "Tạo tài khoản giáo viên",
         content,
         "accounts"
     )
@@ -3173,12 +3188,12 @@ def password_page(
         <section class="card section-card form-card">
             <div class="section-head">
                 <div>
-                    <h2>Äá»•i máº­t kháº©u</h2>
-                    <span>Äáº·t máº­t kháº©u má»›i cho {full_name}.</span>
+                    <h2>Đổi mật khẩu</h2>
+                    <span>Đặt mật khẩu mới cho {full_name}.</span>
                 </div>
 
                 <a class="secondary" href="/admin?section=accounts">
-                    Quay láº¡i
+                    Quay lại
                 </a>
             </div>
 
@@ -3186,19 +3201,19 @@ def password_page(
                 <input type="hidden" name="teacher_id" value="{teacher_id}">
 
                 <div class="field">
-                    <label for="password">Máº­t kháº©u má»›i</label>
+                    <label for="password">Mật khẩu mới</label>
                     <input id="password" name="password" type="password" minlength="8" required>
                 </div>
 
                 <button class="primary" type="submit">
-                    LÆ°u máº­t kháº©u
+                    Lưu mật khẩu
                 </button>
             </form>
         </section>
     """
 
     return admin_shell(
-        "Äá»•i máº­t kháº©u",
+        "Đổi mật khẩu",
         content,
         "accounts"
     )
@@ -3272,7 +3287,7 @@ def get_admin_class_rows():
                 teacher_id = int(row["teacher_id"])
                 if teacher_id not in teacher_cache:
                     teacher = db.get(TeacherAccount, teacher_id)
-                    teacher_cache[teacher_id] = teacher.full_name if teacher else f"GiÃ¡o viÃªn #{teacher_id}"
+                    teacher_cache[teacher_id] = teacher.full_name if teacher else f"Giáo viên #{teacher_id}"
                 owner_name = teacher_cache[teacher_id]
 
             result.append({
@@ -3305,13 +3320,13 @@ def admin_classes_content(admin_id: int) -> str:
                 </div>
                 <div class="admin-class-code">{escape(row['code'])}</div>
                 <h3>{escape(row['name'])}</h3>
-                <p>{escape(row['description']) if row['description'] else 'ChÆ°a cÃ³ mÃ´ táº£ cho lá»›p há»c nÃ y.'}</p>
-                <div class="admin-class-meta">Táº¡o ngÃ y {escape(created) if created else '-'}</div>
+                <p>{escape(row['description']) if row['description'] else 'Chưa có mô tả cho lớp học này.'}</p>
+                <div class="admin-class-meta">Tạo ngày {escape(created) if created else '-'}</div>
                 <div class="admin-class-actions">
-                    <a class="admin-secondary" href="/admin/classes/edit?class_id={row['id']}">Chá»‰nh sá»­a</a>
-                    <form method="post" action="/admin/classes/delete" onsubmit="return confirm('Báº¡n cÃ³ cháº¯c muá»‘n xÃ³a lá»›p há»c nÃ y khÃ´ng?');">
+                    <a class="admin-secondary" href="/admin/classes/edit?class_id={row['id']}">Chỉnh sửa</a>
+                    <form method="post" action="/admin/classes/delete" onsubmit="return confirm('Bạn có chắc muốn xóa lớp học này không?');">
                         <input type="hidden" name="class_id" value="{row['id']}">
-                        <button class="admin-danger" type="submit">XÃ³a</button>
+                        <button class="admin-danger" type="submit">Xóa</button>
                     </form>
                 </div>
             </article>
@@ -3321,51 +3336,51 @@ def admin_classes_content(admin_id: int) -> str:
         cards = f"""
             <div class="admin-empty-classes">
                 <div class="admin-empty-icon">{ICON_CLASSES}</div>
-                <h3>ChÆ°a cÃ³ lá»›p há»c</h3>
-                <p>Main Account cÃ³ thá»ƒ táº¡o lá»›p há»c táº¡i Ä‘Ã¢y Ä‘á»ƒ quáº£n lÃ½ táº­p trung trÃªn há»‡ thá»‘ng.</p>
+                <h3>Chưa có lớp học</h3>
+                <p>Main Account có thể tạo lớp học tại đây để quản lý tập trung trên hệ thống.</p>
             </div>
         """
 
     return f"""
         <section class="admin-page-title">
             <div>
-                <div class="admin-breadcrumb">QUáº¢N LÃ Dá»® LIá»†U</div>
-                <h2>Lá»›p há»c</h2>
-                <p>Táº¡o vÃ  quáº£n lÃ½ toÃ n bá»™ lá»›p há»c trÃªn há»‡ thá»‘ng God Eyes.</p>
+                <div class="admin-breadcrumb">QUẢN LÝ DỮ LIỆU</div>
+                <h2>Lớp học</h2>
+                <p>Tạo và quản lý toàn bộ lớp học trên hệ thống God Eyes.</p>
             </div>
         </section>
 
         <section class="admin-class-stats">
-            <div class="admin-stat"><span>Tá»•ng sá»‘ lá»›p</span><strong>{total}</strong></div>
-            <div class="admin-stat"><span>Lá»›p cá»§a Main Account</span><strong>{own}</strong></div>
-            <div class="admin-stat"><span>Lá»›p cá»§a giÃ¡o viÃªn</span><strong>{teacher_owned}</strong></div>
+            <div class="admin-stat"><span>Tổng số lớp</span><strong>{total}</strong></div>
+            <div class="admin-stat"><span>Lớp của Main Account</span><strong>{own}</strong></div>
+            <div class="admin-stat"><span>Lớp của giáo viên</span><strong>{teacher_owned}</strong></div>
         </section>
 
         <section class="admin-class-create">
             <div class="admin-create-head">
                 <div>
-                    <h3>Táº¡o lá»›p há»c má»›i</h3>
-                    <p>MÃ£ lá»›p sáº½ Ä‘Æ°á»£c há»‡ thá»‘ng táº¡o tá»± Ä‘á»™ng.</p>
+                    <h3>Tạo lớp học mới</h3>
+                    <p>Mã lớp sẽ được hệ thống tạo tự động.</p>
                 </div>
                 <div class="admin-create-mark">+</div>
             </div>
             <form class="admin-create-form" method="post" action="/admin/classes/create">
                 <div class="admin-field">
-                    <label for="admin-class-name">TÃªn lá»›p</label>
-                    <input id="admin-class-name" name="name" type="text" maxlength="120" placeholder="VÃ­ dá»¥: 9A1" required>
+                    <label for="admin-class-name">Tên lớp</label>
+                    <input id="admin-class-name" name="name" type="text" maxlength="120" placeholder="Ví dụ: 9A1" required>
                 </div>
                 <div class="admin-field admin-field-wide">
-                    <label for="admin-class-description">MÃ´ táº£ <span>(khÃ´ng báº¯t buá»™c)</span></label>
-                    <textarea id="admin-class-description" name="description" maxlength="500" rows="3" placeholder="VÃ­ dá»¥: Lá»›p 9A1 - nÄƒm há»c 2026â€“2027"></textarea>
+                    <label for="admin-class-description">Mô tả <span>(không bắt buộc)</span></label>
+                    <textarea id="admin-class-description" name="description" maxlength="500" rows="3" placeholder="Ví dụ: Lớp 9A1 - năm học 2026–2027"></textarea>
                 </div>
-                <button class="admin-primary" type="submit">Táº¡o lá»›p há»c</button>
+                <button class="admin-primary" type="submit">Tạo lớp học</button>
             </form>
         </section>
 
         <section class="admin-class-list-head">
             <div>
-                <h3>Danh sÃ¡ch lá»›p há»c</h3>
-                <p>CÃ³ {total} lá»›p Ä‘ang Ä‘Æ°á»£c lÆ°u trÃªn server.</p>
+                <h3>Danh sách lớp học</h3>
+                <p>Có {total} lớp đang được lưu trên server.</p>
             </div>
         </section>
 
@@ -3482,30 +3497,30 @@ def admin_edit_class_page(request: Request, class_id: int):
             <div class="admin-edit-hero">
                 <div class="admin-edit-icon">{ICON_CLASSES}</div>
                 <div>
-                    <div class="admin-edit-kicker">THÃ”NG TIN Lá»šP Há»ŒC</div>
-                    <h2>Chá»‰nh sá»­a lá»›p há»c</h2>
-                    <p>Cáº­p nháº­t tÃªn vÃ  mÃ´ táº£. MÃ£ lá»›p Ä‘Æ°á»£c giá»¯ nguyÃªn Ä‘á»ƒ khÃ´ng áº£nh hÆ°á»Ÿng dá»¯ liá»‡u liÃªn quan.</p>
+                    <div class="admin-edit-kicker">THÔNG TIN LỚP HỌC</div>
+                    <h2>Chỉnh sửa lớp học</h2>
+                    <p>Cập nhật tên và mô tả. Mã lớp được giữ nguyên để không ảnh hưởng dữ liệu liên quan.</p>
                 </div>
             </div>
 
             <div class="admin-code-row">
-                <span>MÃ£ lá»›p</span>
+                <span>Mã lớp</span>
                 <strong>{escape(row['code'])}</strong>
             </div>
 
             <form method="post" action="/admin/classes/edit" class="admin-edit-form">
                 <input type="hidden" name="class_id" value="{class_id}">
                 <div class="admin-edit-field">
-                    <label for="admin-edit-name">TÃªn lá»›p</label>
+                    <label for="admin-edit-name">Tên lớp</label>
                     <input id="admin-edit-name" name="name" type="text" value="{escape(row['name'])}" maxlength="120" required autofocus>
                 </div>
                 <div class="admin-edit-field">
-                    <label for="admin-edit-description">MÃ´ táº£ <span>(khÃ´ng báº¯t buá»™c)</span></label>
+                    <label for="admin-edit-description">Mô tả <span>(không bắt buộc)</span></label>
                     <textarea id="admin-edit-description" name="description" maxlength="500" rows="5">{escape(row['description'])}</textarea>
                 </div>
                 <div class="admin-edit-actions">
-                    <a class="admin-secondary large" href="/admin?section=classes">Quay láº¡i danh sÃ¡ch</a>
-                    <button class="admin-primary" type="submit">LÆ°u thay Ä‘á»•i</button>
+                    <a class="admin-secondary large" href="/admin?section=classes">Quay lại danh sách</a>
+                    <button class="admin-primary" type="submit">Lưu thay đổi</button>
                 </div>
             </form>
         </section>
@@ -3534,7 +3549,7 @@ def admin_edit_class_page(request: Request, class_id: int):
         </style>
     """
 
-    return admin_shell("Chá»‰nh sá»­a lá»›p há»c", content, "classes")
+    return admin_shell("Chỉnh sửa lớp học", content, "classes")
 
 
 @app.post("/admin/classes/edit")
@@ -3605,7 +3620,7 @@ def get_main_class_options(admin_id: int):
 def admin_student_avatar(row) -> str:
     if row["photo_path"]:
         filename = Path(row["photo_path"]).name
-        return f'<div class="admin-student-avatar"><img src="/admin/student-photo/{escape(filename)}" alt="áº¢nh há»c sinh"></div>'
+        return f'<div class="admin-student-avatar"><img src="/admin/student-photo/{escape(filename)}" alt="Ảnh học sinh"></div>'
     initial = escape((row["full_name"] or "H").strip()[:1].upper())
     return f'<div class="admin-student-avatar admin-student-avatar-empty">{initial}</div>'
 
@@ -3660,7 +3675,7 @@ def admin_student_owner_label(row) -> str:
 
     with SessionLocal() as db:
         teacher = db.get(TeacherAccount, int(row["owner_id"])) if row["owner_id"] else None
-        return teacher.full_name if teacher else f"GiÃ¡o viÃªn #{row['owner_id']}"
+        return teacher.full_name if teacher else f"Giáo viên #{row['owner_id']}"
 
 
 def admin_students_content(admin_id: int, class_id_raw: str = "", status_raw: str = "") -> str:
@@ -3678,23 +3693,23 @@ def admin_students_content(admin_id: int, class_id_raw: str = "", status_raw: st
     rows = get_admin_student_rows(selected_class_id)
 
     status_messages = {
-        "created": ("ÄÃ£ thÃªm há»c sinh thÃ nh cÃ´ng.", "success"),
-        "updated": ("ÄÃ£ cáº­p nháº­t há»“ sÆ¡ há»c sinh.", "success"),
-        "deleted": ("ÄÃ£ xÃ³a há»“ sÆ¡ há»c sinh.", "success"),
-        "face_ready": ("ÄÃ£ phÃ¢n tÃ­ch khuÃ´n máº·t vÃ  táº¡o Face ID. Há»“ sÆ¡ Ä‘Ã£ sáºµn sÃ ng nháº­n diá»‡n.", "success"),
-        "face_model_missing": ("ChÆ°a cÃ³ model Face ID. áº¢nh Ä‘Ã£ Ä‘Æ°á»£c lÆ°u nhÆ°ng Face ID chÆ°a táº¡o Ä‘Æ°á»£c.", "error"),
-        "face_embedding_error": ("ChÆ°a táº¡o Ä‘Æ°á»£c Face ID. áº¢nh váº«n Ä‘Æ°á»£c giá»¯ láº¡i Ä‘á»ƒ báº¡n Ä‘á»•i áº£nh hoáº·c thá»­ táº¡o láº¡i.", "error"),
-        "face_no_photo": ("Há»“ sÆ¡ nÃ y chÆ°a cÃ³ áº£nh tham chiáº¿u Ä‘á»ƒ táº¡o Face ID.", "error"),
-        "face_scan_started": ("ÄÃ£ má»Ÿ God Eyes Face ID. ÄÆ°a Ä‘Ãºng há»c sinh trÆ°á»›c camera Ä‘á»ƒ há»‡ thá»‘ng tá»± Ä‘á»™ng quÃ©t.", "success"),
-        "face_scan_client_missing": ("KhÃ´ng tÃ¬m tháº¥y God Eyes App. HÃ£y kiá»ƒm tra Ä‘Æ°á»ng dáº«n á»©ng dá»¥ng.", "error"),
-        "face_scan_error": ("KhÃ´ng thá»ƒ má»Ÿ God Eyes App Ä‘á»ƒ quÃ©t Face ID.", "error"),
-        "code": ("MÃ£ há»c sinh Ä‘Ã£ tá»“n táº¡i trong lá»›p nÃ y.", "error"),
-        "photo": ("áº¢nh khÃ´ng há»£p lá»‡. Vui lÃ²ng chá»n áº£nh JPG, PNG hoáº·c WEBP cÃ³ khuÃ´n máº·t rÃµ rÃ ng.", "error"),
-        "invalid_image": ("KhÃ´ng thá»ƒ Ä‘á»c áº£nh. Vui lÃ²ng chá»n láº¡i áº£nh JPG, PNG hoáº·c WEBP.", "error"),
-        "no_face": ("KhÃ´ng phÃ¡t hiá»‡n Ä‘Æ°á»£c khuÃ´n máº·t. Vui lÃ²ng chá»n áº£nh rÃµ máº·t cá»§a má»™t há»c sinh.", "error"),
-        "multiple_faces": ("áº¢nh cÃ³ nhiá»u hÆ¡n má»™t khuÃ´n máº·t. Vui lÃ²ng dÃ¹ng áº£nh chá»‰ cÃ³ má»™t há»c sinh.", "error"),
-        "face_too_small": ("KhuÃ´n máº·t trong áº£nh quÃ¡ nhá». Vui lÃ²ng chá»n áº£nh cÃ³ khuÃ´n máº·t rÃµ hÆ¡n.", "error"),
-        "invalid": ("ThÃ´ng tin há»c sinh chÆ°a há»£p lá»‡.", "error"),
+        "created": ("Đã thêm học sinh thành công.", "success"),
+        "updated": ("Đã cập nhật hồ sơ học sinh.", "success"),
+        "deleted": ("Đã xóa hồ sơ học sinh.", "success"),
+        "face_ready": ("Đã phân tích khuôn mặt và tạo Face ID. Hồ sơ đã sẵn sàng nhận diện.", "success"),
+        "face_model_missing": ("Chưa có model Face ID. Ảnh đã được lưu nhưng Face ID chưa tạo được.", "error"),
+        "face_embedding_error": ("Chưa tạo được Face ID. Ảnh vẫn được giữ lại để bạn đổi ảnh hoặc thử tạo lại.", "error"),
+        "face_no_photo": ("Hồ sơ này chưa có ảnh tham chiếu để tạo Face ID.", "error"),
+        "face_scan_started": ("Đã mở God Eyes Face ID. Đưa đúng học sinh trước camera để hệ thống tự động quét.", "success"),
+        "face_scan_client_missing": ("Không tìm thấy God Eyes App. Hãy kiểm tra đường dẫn ứng dụng.", "error"),
+        "face_scan_error": ("Không thể mở God Eyes App để quét Face ID.", "error"),
+        "code": ("Mã học sinh đã tồn tại trong lớp này.", "error"),
+        "photo": ("Ảnh không hợp lệ. Vui lòng chọn ảnh JPG, PNG hoặc WEBP có khuôn mặt rõ ràng.", "error"),
+        "invalid_image": ("Không thể đọc ảnh. Vui lòng chọn lại ảnh JPG, PNG hoặc WEBP.", "error"),
+        "no_face": ("Không phát hiện được khuôn mặt. Vui lòng chọn ảnh rõ mặt của một học sinh.", "error"),
+        "multiple_faces": ("Ảnh có nhiều hơn một khuôn mặt. Vui lòng dùng ảnh chỉ có một học sinh.", "error"),
+        "face_too_small": ("Khuôn mặt trong ảnh quá nhỏ. Vui lòng chọn ảnh có khuôn mặt rõ hơn.", "error"),
+        "invalid": ("Thông tin học sinh chưa hợp lệ.", "error"),
     }
     message = status_messages.get(status_raw)
     if message:
@@ -3702,13 +3717,13 @@ def admin_students_content(admin_id: int, class_id_raw: str = "", status_raw: st
     else:
         notice_html = ""
 
-    filter_options = '<option value="">Táº¥t cáº£ lá»›p há»c</option>' + "".join(
-        f'<option value="{r["id"]}" {"selected" if selected_class is not None and int(r["id"]) == selected_class_id else ""}>{escape(r["name"])} Â· {escape(r["code"])}</option>'
+    filter_options = '<option value="">Tất cả lớp học</option>' + "".join(
+        f'<option value="{r["id"]}" {"selected" if selected_class is not None and int(r["id"]) == selected_class_id else ""}>{escape(r["name"])} · {escape(r["code"])}</option>'
         for r in all_classes
     )
 
-    create_options = '<option value="">Chá»n lá»›p cá»§a Main Account</option>' + "".join(
-        f'<option value="{r["id"]}" {"selected" if selected_class is not None and int(r["id"]) == selected_class_id else ""}>{escape(r["name"])} Â· {escape(r["code"])}</option>'
+    create_options = '<option value="">Chọn lớp của Main Account</option>' + "".join(
+        f'<option value="{r["id"]}" {"selected" if selected_class is not None and int(r["id"]) == selected_class_id else ""}>{escape(r["name"])} · {escape(r["code"])}</option>'
         for r in main_classes
     )
 
@@ -3725,18 +3740,18 @@ def admin_students_content(admin_id: int, class_id_raw: str = "", status_raw: st
                 </div>
                 <div class="admin-student-name">{escape(row['full_name'])}</div>
                 <div class="admin-student-code">{escape(row['student_code'])}</div>
-                <div class="admin-student-class">{escape(row['class_name'])} <span>Â·</span> {escape(row['class_code'])}</div>
+                <div class="admin-student-class">{escape(row['class_name'])} <span>·</span> {escape(row['class_code'])}</div>
                 <div class="admin-student-face {face_class}">{escape(face_text)}</div>
                 <div class="admin-student-actions">
                     <form method="post" action="/admin/students/start-face-scan">
                         <input type="hidden" name="student_id" value="{row['id']}">
-                        <button class="admin-student-primary" type="submit">QuÃ©t Face ID</button>
+                        <button class="admin-student-primary" type="submit">Quét Face ID</button>
                     </form>
-                    {'<form method="post" action="/admin/students/rebuild-face"><input type="hidden" name="student_id" value="'+str(row['id'])+'"><button class="admin-student-secondary admin-face-retry" type="submit">Táº¡o láº¡i tá»« áº£nh</button></form>' if row['photo_path'] and row['face_status'] == 'REVIEW' else ''}
-                    <a class="admin-student-secondary" href="/admin/students/edit?student_id={row['id']}">Chá»‰nh sá»­a</a>
-                    <form method="post" action="/admin/students/delete" onsubmit="return confirm('Báº¡n cÃ³ cháº¯c muá»‘n xÃ³a há»“ sÆ¡ há»c sinh nÃ y khÃ´ng?');">
+                    {'<form method="post" action="/admin/students/rebuild-face"><input type="hidden" name="student_id" value="'+str(row['id'])+'"><button class="admin-student-secondary admin-face-retry" type="submit">Tạo lại từ ảnh</button></form>' if row['photo_path'] and row['face_status'] == 'REVIEW' else ''}
+                    <a class="admin-student-secondary" href="/admin/students/edit?student_id={row['id']}">Chỉnh sửa</a>
+                    <form method="post" action="/admin/students/delete" onsubmit="return confirm('Bạn có chắc muốn xóa hồ sơ học sinh này không?');">
                         <input type="hidden" name="student_id" value="{row['id']}">
-                        <button class="admin-student-danger" type="submit">XÃ³a</button>
+                        <button class="admin-student-danger" type="submit">Xóa</button>
                     </form>
                 </div>
             </article>
@@ -3746,13 +3761,13 @@ def admin_students_content(admin_id: int, class_id_raw: str = "", status_raw: st
         cards = f"""
             <div class="admin-students-empty">
                 <div class="admin-students-empty-icon">{ICON_STUDENTS}</div>
-                <h3>{'ChÆ°a cÃ³ há»c sinh trong lá»›p Ä‘Ã£ chá»n' if selected_class else 'ChÆ°a cÃ³ há»c sinh'}</h3>
-                <p>Main Account cÃ³ thá»ƒ táº¡o há»“ sÆ¡ há»c sinh cho cÃ¡c lá»›p do Main Account quáº£n lÃ½.</p>
+                <h3>{'Chưa có học sinh trong lớp đã chọn' if selected_class else 'Chưa có học sinh'}</h3>
+                <p>Main Account có thể tạo hồ sơ học sinh cho các lớp do Main Account quản lý.</p>
             </div>
         """
 
     if not main_classes:
-        create_notice = '<div class="admin-student-notice">Báº¡n cáº§n táº¡o Ã­t nháº¥t má»™t lá»›p thuá»™c Main Account trÆ°á»›c khi thÃªm há»c sinh.</div>'
+        create_notice = '<div class="admin-student-notice">Bạn cần tạo ít nhất một lớp thuộc Main Account trước khi thêm học sinh.</div>'
     else:
         create_notice = ''
 
@@ -3761,22 +3776,22 @@ def admin_students_content(admin_id: int, class_id_raw: str = "", status_raw: st
             {notice_html}
             <div class="admin-student-page-head">
                 <div>
-                    <div class="admin-breadcrumb">QUáº¢N LÃ Dá»® LIá»†U</div>
-                    <h2>Há»c sinh</h2>
-                    <p>Quáº£n lÃ½ toÃ n bá»™ há»“ sÆ¡ há»c sinh trÃªn há»‡ thá»‘ng God Eyes.</p>
+                    <div class="admin-breadcrumb">QUẢN LÝ DỮ LIỆU</div>
+                    <h2>Học sinh</h2>
+                    <p>Quản lý toàn bộ hồ sơ học sinh trên hệ thống God Eyes.</p>
                 </div>
             </div>
 
             <section class="admin-student-stats">
-                <div class="admin-student-stat"><span>Tá»•ng há»c sinh</span><strong>{len(get_admin_student_rows())}</strong></div>
-                <div class="admin-student-stat"><span>Trong bá»™ lá»c</span><strong>{len(rows)}</strong></div>
-                <div class="admin-student-stat"><span>Lá»›p cá»§a Main Account</span><strong>{len(main_classes)}</strong></div>
+                <div class="admin-student-stat"><span>Tổng học sinh</span><strong>{len(get_admin_student_rows())}</strong></div>
+                <div class="admin-student-stat"><span>Trong bộ lọc</span><strong>{len(rows)}</strong></div>
+                <div class="admin-student-stat"><span>Lớp của Main Account</span><strong>{len(main_classes)}</strong></div>
             </section>
 
             <section class="admin-student-toolbar">
                 <div>
-                    <div class="admin-student-toolbar-label">Lá»c theo lá»›p</div>
-                    <div class="admin-student-toolbar-title">{escape(selected_class['name']) if selected_class else 'Táº¥t cáº£ lá»›p há»c'}</div>
+                    <div class="admin-student-toolbar-label">Lọc theo lớp</div>
+                    <div class="admin-student-toolbar-title">{escape(selected_class['name']) if selected_class else 'Tất cả lớp học'}</div>
                 </div>
                 <form method="get" action="/admin">
                     <input type="hidden" name="section" value="students">
@@ -3785,8 +3800,8 @@ def admin_students_content(admin_id: int, class_id_raw: str = "", status_raw: st
             </section>
 
             <section class="admin-student-count-row">
-                <div><strong>{len(rows)}</strong> há»c sinh Ä‘ang hiá»ƒn thá»‹</div>
-                <div>áº¢nh há»c sinh Ä‘Æ°á»£c lÆ°u trong dá»¯ liá»‡u mÃ¡y chá»§.</div>
+                <div><strong>{len(rows)}</strong> học sinh đang hiển thị</div>
+                <div>Ảnh học sinh được lưu trong dữ liệu máy chủ.</div>
             </section>
 
             <section class="admin-students-grid">{cards}</section>
@@ -3794,37 +3809,37 @@ def admin_students_content(admin_id: int, class_id_raw: str = "", status_raw: st
             <section class="admin-student-create-panel">
                 <div class="admin-student-create-head">
                     <div>
-                        <h3>ThÃªm há»c sinh</h3>
-                        <p>Há»“ sÆ¡ má»›i Ä‘Æ°á»£c sá»Ÿ há»¯u bá»Ÿi Main Account.</p>
+                        <h3>Thêm học sinh</h3>
+                        <p>Hồ sơ mới được sở hữu bởi Main Account.</p>
                     </div>
                     <div class="admin-student-create-icon">{ICON_STUDENTS}</div>
                 </div>
                 {create_notice}
                 <form method="post" action="/admin/students/create" enctype="multipart/form-data" class="admin-student-create-form">
                     <div class="admin-student-field">
-                        <label for="admin-student-class">Lá»›p há»c</label>
+                        <label for="admin-student-class">Lớp học</label>
                         <select id="admin-student-class" name="class_id" required {'disabled' if not main_classes else ''}>
                             {create_options}
                         </select>
                     </div>
                     <div class="admin-student-field">
-                        <label for="admin-student-name">Há» vÃ  tÃªn há»c sinh</label>
-                        <input id="admin-student-name" name="full_name" type="text" maxlength="120" placeholder="VÃ­ dá»¥: Nguyá»…n VÄƒn An" required>
+                        <label for="admin-student-name">Họ và tên học sinh</label>
+                        <input id="admin-student-name" name="full_name" type="text" maxlength="120" placeholder="Ví dụ: Nguyễn Văn An" required>
                     </div>
                     <div class="admin-student-field">
-                        <label for="admin-student-code">MÃ£ há»c sinh <span>(khÃ´ng báº¯t buá»™c)</span></label>
-                        <input id="admin-student-code" name="student_code" type="text" maxlength="40" placeholder="VÃ­ dá»¥: 9A1-001">
+                        <label for="admin-student-code">Mã học sinh <span>(không bắt buộc)</span></label>
+                        <input id="admin-student-code" name="student_code" type="text" maxlength="40" placeholder="Ví dụ: 9A1-001">
                     </div>
                     <div class="admin-student-field">
-                        <label for="admin-student-phone">Sá»‘ Ä‘iá»‡n thoáº¡i nháº­n thÃ´ng bÃ¡o <span>(khÃ´ng báº¯t buá»™c)</span></label>
-                        <input id="admin-student-phone" name="guardian_phone" type="tel" maxlength="20" placeholder="VÃ­ dá»¥: 0901234567">
+                        <label for="admin-student-phone">Số điện thoại nhận thông báo <span>(không bắt buộc)</span></label>
+                        <input id="admin-student-phone" name="guardian_phone" type="tel" maxlength="20" placeholder="Ví dụ: 0901234567">
                     </div>
                     <div class="admin-student-field">
-                        <label for="admin-student-photo">áº¢nh tham chiáº¿u <span>(khÃ´ng báº¯t buá»™c)</span></label>
+                        <label for="admin-student-photo">Ảnh tham chiếu <span>(không bắt buộc)</span></label>
                         <input id="admin-student-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp">
-                        <div class="admin-student-help">JPG, PNG hoáº·c WEBP Â· tá»‘i Ä‘a 5 MB.</div>
+                        <div class="admin-student-help">JPG, PNG hoặc WEBP · tối đa 5 MB.</div>
                     </div>
-                    <button class="admin-student-primary" type="submit" {'disabled' if not main_classes else ''}>ThÃªm há»c sinh</button>
+                    <button class="admin-student-primary" type="submit" {'disabled' if not main_classes else ''}>Thêm học sinh</button>
                 </form>
             </section>
         </section>
@@ -3943,7 +3958,7 @@ def admin_edit_student_page(request: Request, student_id: int):
 
     face_text, face_class = admin_student_face_label(row["face_status"])
     options = "".join(
-        f'<option value="{r["id"]}" {"selected" if int(r["id"]) == int(row["class_id"]) else ""}>{escape(r["name"])} Â· {escape(r["code"])}</option>'
+        f'<option value="{r["id"]}" {"selected" if int(r["id"]) == int(row["class_id"]) else ""}>{escape(r["name"])} · {escape(r["code"])}</option>'
         for r in classes
     )
     owner_label = admin_student_owner_label(row)
@@ -3957,51 +3972,51 @@ def admin_edit_student_page(request: Request, student_id: int):
                 <div class="admin-student-edit-heading">
                     <div class="admin-student-edit-icon">{ICON_STUDENTS}</div>
                     <div>
-                        <div class="admin-edit-kicker">Há»’ SÆ  Há»ŒC SINH</div>
-                        <h2>Chá»‰nh sá»­a há»c sinh</h2>
-                        <p>Cáº­p nháº­t thÃ´ng tin há»“ sÆ¡ vÃ  áº£nh tham chiáº¿u cá»§a há»c sinh.</p>
+                        <div class="admin-edit-kicker">HỒ SƠ HỌC SINH</div>
+                        <h2>Chỉnh sửa học sinh</h2>
+                        <p>Cập nhật thông tin hồ sơ và ảnh tham chiếu của học sinh.</p>
                     </div>
                 </div>
-                <a class="admin-student-back" href="/admin?section=students">Quay láº¡i danh sÃ¡ch</a>
+                <a class="admin-student-back" href="/admin?section=students">Quay lại danh sách</a>
             </div>
 
             <div class="admin-student-edit-layout">
                 <div class="admin-student-photo-card">
                     {admin_student_avatar(row)}
-                    <div class="admin-student-photo-label">áº¢nh tham chiáº¿u</div>
+                    <div class="admin-student-photo-label">Ảnh tham chiếu</div>
                     <div class="admin-student-face {face_class}">{escape(face_text)}</div>
-                    <div class="admin-student-owner-line">Chá»§ sá»Ÿ há»¯u: <strong>{escape(owner_label)}</strong></div>
+                    <div class="admin-student-owner-line">Chủ sở hữu: <strong>{escape(owner_label)}</strong></div>
                 </div>
 
                 <div class="admin-student-edit-form-card">
                     <form method="post" action="/admin/students/edit" enctype="multipart/form-data">
                         <input type="hidden" name="student_id" value="{student_id}">
                         <div class="admin-edit-field">
-                            <label for="admin-edit-student-name">Há» vÃ  tÃªn há»c sinh</label>
+                            <label for="admin-edit-student-name">Họ và tên học sinh</label>
                             <input id="admin-edit-student-name" name="full_name" type="text" value="{escape(row['full_name'])}" maxlength="120" required>
                         </div>
                         <div class="admin-edit-field">
-                            <label for="admin-edit-student-code">MÃ£ há»c sinh</label>
+                            <label for="admin-edit-student-code">Mã học sinh</label>
                             <input id="admin-edit-student-code" name="student_code" type="text" value="{escape(row['student_code'])}" maxlength="40" required>
                         </div>
                         <div class="admin-edit-field">
-                            <label for="admin-edit-student-class">Lá»›p há»c</label>
+                            <label for="admin-edit-student-class">Lớp học</label>
                             <select id="admin-edit-student-class" name="class_id" required>
                                 {options}
                             </select>
                         </div>
                         <div class="admin-edit-field">
-                            <label for="admin-edit-student-phone">Sá»‘ Ä‘iá»‡n thoáº¡i nháº­n thÃ´ng bÃ¡o <span>(khÃ´ng báº¯t buá»™c)</span></label>
-                            <input id="admin-edit-student-phone" name="guardian_phone" type="tel" value="{escape(row['guardian_phone'] or '')}" maxlength="20" placeholder="VÃ­ dá»¥: 0901234567">
+                            <label for="admin-edit-student-phone">Số điện thoại nhận thông báo <span>(không bắt buộc)</span></label>
+                            <input id="admin-edit-student-phone" name="guardian_phone" type="tel" value="{escape(row['guardian_phone'] or '')}" maxlength="20" placeholder="Ví dụ: 0901234567">
                         </div>
                         <div class="admin-edit-field">
-                            <label for="admin-edit-student-photo">áº¢nh tham chiáº¿u má»›i <span>(khÃ´ng báº¯t buá»™c)</span></label>
+                            <label for="admin-edit-student-photo">Ảnh tham chiếu mới <span>(không bắt buộc)</span></label>
                             <input id="admin-edit-student-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp">
-                            <div class="admin-student-help">Chá»n áº£nh má»›i sáº½ Ä‘áº·t tráº¡ng thÃ¡i khuÃ´n máº·t vá» â€œÄÃ£ cÃ³ áº£nh Â· chá» phÃ¢n tÃ­châ€.</div>
+                            <div class="admin-student-help">Chọn ảnh mới sẽ đặt trạng thái khuôn mặt về “Đã có ảnh · chờ phân tích”.</div>
                         </div>
                         <div class="admin-student-edit-actions">
-                            <a class="admin-student-secondary" href="/admin?section=students">Há»§y</a>
-                            <button class="admin-student-primary" type="submit">LÆ°u thay Ä‘á»•i</button>
+                            <a class="admin-student-secondary" href="/admin?section=students">Hủy</a>
+                            <button class="admin-student-primary" type="submit">Lưu thay đổi</button>
                         </div>
                     </form>
                 </div>
@@ -4037,7 +4052,7 @@ def admin_edit_student_page(request: Request, student_id: int):
         </style>
     """
 
-    return admin_shell("Chá»‰nh sá»­a há»c sinh", content, "students")
+    return admin_shell("Chỉnh sửa học sinh", content, "students")
 
 
 @app.post("/admin/students/create")
@@ -4291,7 +4306,7 @@ def generate_class_code(db) -> str:
         )
         if exists is None:
             return code
-    raise RuntimeError("KhÃ´ng thá»ƒ táº¡o mÃ£ lá»›p má»›i.")
+    raise RuntimeError("Không thể tạo mã lớp mới.")
 
 
 @app.get("/teacher", response_class=HTMLResponse)
@@ -4314,7 +4329,7 @@ def teacher(request: Request):
     if section not in allowed:
         section = "dashboard"
 
-    username = payload.get("username", "GiÃ¡o viÃªn")
+    username = payload.get("username", "Giáo viên")
     teacher_id = int(payload["sub"])
 
     with SessionLocal() as db:
@@ -4325,13 +4340,13 @@ def teacher(request: Request):
     full_name = teacher_account.full_name if teacher_account else username
 
     if section == "dashboard":
-        title = "Tá»•ng quan"
+        title = "Tổng quan"
         content = teacher_dashboard_content(teacher_id, full_name)
     elif section == "classes":
-        title = "Lá»›p há»c"
+        title = "Lớp học"
         content = teacher_classes_content(teacher_id)
     elif section == "students":
-        title = "Há»c sinh"
+        title = "Học sinh"
         class_id_raw = request.query_params.get("class_id", "")
         try:
             class_id = int(class_id_raw) if class_id_raw else None
@@ -4349,16 +4364,16 @@ def teacher(request: Request):
             student_page,
         )
     elif section == "history":
-        title = "Lá»‹ch sá»­"
+        title = "Lịch sử"
         content = teacher_history_content(teacher_id, request.query_params.get("status", ""), request.query_params.get("q", ""))
     elif section == "app":
-        title = "á»¨ng dá»¥ng God Eyes"
+        title = "Ứng dụng God Eyes"
         content = teacher_app_content(
             teacher_id,
             request.query_params.get("status", "")
         )
     else:
-        title = "CÃ i Ä‘áº·t"
+        title = "Cài đặt"
         content = teacher_settings_content(teacher_id, request.query_params.get("status", ""))
 
     return teacher_shell(
@@ -4432,7 +4447,7 @@ def edit_class_page(request: Request, class_id: int):
     if row is None:
         return RedirectResponse(url="/teacher?section=classes", status_code=303)
 
-    full_name = teacher_account.full_name if teacher_account else payload.get("username", "GiÃ¡o viÃªn")
+    full_name = teacher_account.full_name if teacher_account else payload.get("username", "Giáo viên")
 
     content = f"""
         <section class="teacher-edit-page">
@@ -4440,37 +4455,37 @@ def edit_class_page(request: Request, class_id: int):
                 <div class="teacher-edit-heading">
                     <div class="teacher-edit-icon">{ICON_CLASSES}</div>
                     <div>
-                        <div class="teacher-edit-kicker">THÃ”NG TIN Lá»šP Há»ŒC</div>
-                        <h2>Chá»‰nh sá»­a lá»›p há»c</h2>
-                        <p>Cáº­p nháº­t thÃ´ng tin lá»›p há»c. MÃ£ lá»›p Ä‘Æ°á»£c giá»¯ nguyÃªn.</p>
+                        <div class="teacher-edit-kicker">THÔNG TIN LỚP HỌC</div>
+                        <h2>Chỉnh sửa lớp học</h2>
+                        <p>Cập nhật thông tin lớp học. Mã lớp được giữ nguyên.</p>
                     </div>
                 </div>
-                <a class="teacher-back-button" href="/teacher?section=classes">Quay láº¡i danh sÃ¡ch</a>
+                <a class="teacher-back-button" href="/teacher?section=classes">Quay lại danh sách</a>
             </div>
 
             <div class="teacher-code-box">
                 <div>
-                    <span>MÃ£ lá»›p</span>
+                    <span>Mã lớp</span>
                     <strong>{escape(row['code'])}</strong>
                 </div>
-                <div class="teacher-code-status"><span></span>Äang hoáº¡t Ä‘á»™ng</div>
+                <div class="teacher-code-status"><span></span>Đang hoạt động</div>
             </div>
 
             <form method="post" action="/teacher/classes/edit" class="teacher-edit-form">
                 <input type="hidden" name="class_id" value="{class_id}">
                 <div class="teacher-edit-field">
-                    <label for="teacher-edit-name">TÃªn lá»›p</label>
+                    <label for="teacher-edit-name">Tên lớp</label>
                     <input id="teacher-edit-name" name="name" type="text" value="{escape(row['name'])}" maxlength="120" required autofocus>
-                    <small>TÃªn lá»›p sáº½ Ä‘Æ°á»£c hiá»ƒn thá»‹ trong danh sÃ¡ch lá»›p há»c cá»§a báº¡n.</small>
+                    <small>Tên lớp sẽ được hiển thị trong danh sách lớp học của bạn.</small>
                 </div>
                 <div class="teacher-edit-field">
-                    <label for="teacher-edit-description">MÃ´ táº£ <span>(khÃ´ng báº¯t buá»™c)</span></label>
-                    <textarea id="teacher-edit-description" name="description" maxlength="500" rows="5" placeholder="Nháº­p thÃ´ng tin mÃ´ táº£ cho lá»›p há»c...">{escape(row['description'])}</textarea>
-                    <small>CÃ³ thá»ƒ ghi phÃ²ng há»c, mÃ´n há»c hoáº·c ghi chÃº cá»§a lá»›p.</small>
+                    <label for="teacher-edit-description">Mô tả <span>(không bắt buộc)</span></label>
+                    <textarea id="teacher-edit-description" name="description" maxlength="500" rows="5" placeholder="Nhập thông tin mô tả cho lớp học...">{escape(row['description'])}</textarea>
+                    <small>Có thể ghi phòng học, môn học hoặc ghi chú của lớp.</small>
                 </div>
                 <div class="teacher-edit-actions">
-                    <a class="teacher-cancel-button" href="/teacher?section=classes">Há»§y</a>
-                    <button class="teacher-save-button" type="submit">LÆ°u thay Ä‘á»•i</button>
+                    <a class="teacher-cancel-button" href="/teacher?section=classes">Hủy</a>
+                    <button class="teacher-save-button" type="submit">Lưu thay đổi</button>
                 </div>
             </form>
         </section>
@@ -4510,7 +4525,7 @@ def edit_class_page(request: Request, class_id: int):
         </style>
     """
 
-    return teacher_shell("Chá»‰nh sá»­a lá»›p há»c", content, "classes", full_name, teacher_id=teacher_id)
+    return teacher_shell("Chỉnh sửa lớp học", content, "classes", full_name, teacher_id=teacher_id)
 
 
 @app.post("/teacher/classes/edit")
@@ -4694,7 +4709,7 @@ def generate_student_code(db, class_id: int) -> str:
         )
         if exists is None:
             return code
-    raise RuntimeError("KhÃ´ng thá»ƒ táº¡o mÃ£ há»c sinh má»›i.")
+    raise RuntimeError("Không thể tạo mã học sinh mới.")
 
 
 def _load_face_models():
@@ -4845,11 +4860,11 @@ def mark_face_review(db, student_id: int):
 
 def face_validation_notice(code: str) -> tuple[str, str]:
     notices = {
-        "no_face": ("KhÃ´ng phÃ¡t hiá»‡n Ä‘Æ°á»£c khuÃ´n máº·t. HÃ£y dÃ¹ng áº£nh rÃµ máº·t, chá»‰ cÃ³ má»™t há»c sinh.", "error"),
-        "multiple_faces": ("áº¢nh cÃ³ nhiá»u hÆ¡n má»™t khuÃ´n máº·t. HÃ£y dÃ¹ng áº£nh chá»‰ cÃ³ má»™t há»c sinh.", "error"),
-        "face_too_small": ("KhuÃ´n máº·t trong áº£nh quÃ¡ nhá». HÃ£y chá»n áº£nh cáº­n máº·t hÆ¡n.", "error"),
-        "invalid_image": ("KhÃ´ng thá»ƒ Ä‘á»c áº£nh. Vui lÃ²ng chá»n láº¡i áº£nh JPG, PNG hoáº·c WEBP.", "error"),
-        "face_embedding_error": ("ChÆ°a táº¡o Ä‘Æ°á»£c Face ID tá»« áº£nh nÃ y. áº¢nh váº«n Ä‘Æ°á»£c giá»¯ láº¡i Ä‘á»ƒ báº¡n Ä‘á»•i áº£nh hoáº·c thá»­ táº¡o láº¡i.", "error"),
+        "no_face": ("Không phát hiện được khuôn mặt. Hãy dùng ảnh rõ mặt, chỉ có một học sinh.", "error"),
+        "multiple_faces": ("Ảnh có nhiều hơn một khuôn mặt. Hãy dùng ảnh chỉ có một học sinh.", "error"),
+        "face_too_small": ("Khuôn mặt trong ảnh quá nhỏ. Hãy chọn ảnh cận mặt hơn.", "error"),
+        "invalid_image": ("Không thể đọc ảnh. Vui lòng chọn lại ảnh JPG, PNG hoặc WEBP.", "error"),
+        "face_embedding_error": ("Chưa tạo được Face ID từ ảnh này. Ảnh vẫn được giữ lại để bạn đổi ảnh hoặc thử tạo lại.", "error"),
     }
     return notices.get(code, ("", ""))
 
@@ -4858,11 +4873,11 @@ def save_student_photo(photo: UploadFile) -> str:
     allowed_types = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
     suffix = allowed_types.get((photo.content_type or "").lower())
     if suffix is None:
-        raise ValueError("Chá»‰ cháº¥p nháº­n áº£nh JPG, PNG hoáº·c WEBP.")
+        raise ValueError("Chỉ chấp nhận ảnh JPG, PNG hoặc WEBP.")
 
     data = photo.file.read()
     if len(data) > 5 * 1024 * 1024:
-        raise ValueError("áº¢nh há»c sinh khÃ´ng Ä‘Æ°á»£c vÆ°á»£t quÃ¡ 5 MB.")
+        raise ValueError("Ảnh học sinh không được vượt quá 5 MB.")
 
     filename = f"{uuid.uuid4().hex}{suffix}"
     destination = STUDENT_PHOTO_DIR / filename
@@ -4881,10 +4896,10 @@ def remove_student_photo(path_value: str):
 
 def student_face_label(status: str) -> tuple[str, str]:
     labels = {
-        "NO_DATA": ("ChÆ°a cÃ³ dá»¯ liá»‡u khuÃ´n máº·t", "neutral"),
-        "PENDING": ("ÄÃ£ cÃ³ áº£nh Â· chá» phÃ¢n tÃ­ch", "pending"),
-        "READY": ("ÄÃ£ sáºµn sÃ ng nháº­n diá»‡n", "ready"),
-        "REVIEW": ("Cáº§n kiá»ƒm tra láº¡i", "review"),
+        "NO_DATA": ("Chưa có dữ liệu khuôn mặt", "neutral"),
+        "PENDING": ("Đã có ảnh · chờ phân tích", "pending"),
+        "READY": ("Đã sẵn sàng nhận diện", "ready"),
+        "REVIEW": ("Cần kiểm tra lại", "review"),
     }
     return labels.get(status, labels["NO_DATA"])
 
@@ -4892,7 +4907,7 @@ def student_face_label(status: str) -> tuple[str, str]:
 def student_avatar(row) -> str:
     if row["photo_path"]:
         filename = Path(row["photo_path"]).name
-        return f'<div class="student-avatar"><img src="/teacher/student-photo/{escape(filename)}" alt="áº¢nh há»c sinh"></div>'
+        return f'<div class="student-avatar"><img src="/teacher/student-photo/{escape(filename)}" alt="Ảnh học sinh"></div>'
     initial = escape((row["full_name"] or "H").strip()[:1].upper())
     return f'<div class="student-avatar student-avatar-empty">{initial}</div>'
 
@@ -5018,32 +5033,32 @@ def edit_student_page(request: Request, student_id: int):
     face_text, face_class = student_face_label(row["face_status"])
     photo_preview = student_avatar(row)
     options = "".join(
-        f'<option value="{r["id"]}" {"selected" if int(r["id"]) == int(row["class_id"]) else ""}>{escape(r["name"])} Â· {escape(r["code"])}</option>'
+        f'<option value="{r["id"]}" {"selected" if int(r["id"]) == int(row["class_id"]) else ""}>{escape(r["name"])} · {escape(r["code"])}</option>'
         for r in classes
     )
-    full_name = teacher_account.full_name if teacher_account else payload.get("username", "GiÃ¡o viÃªn")
+    full_name = teacher_account.full_name if teacher_account else payload.get("username", "Giáo viên")
     initial = escape((row["full_name"] or "H").strip()[:1].upper())
 
     content = f"""
         <section class="student-edit-page-v2">
             <div class="student-edit-hero-v2">
                 <div class="student-edit-hero-copy">
-                    <div class="student-edit-breadcrumb">Há»ŒC SINH / Há»’ SÆ </div>
+                    <div class="student-edit-breadcrumb">HỌC SINH / HỒ SƠ</div>
                     <div class="student-edit-title-row">
                         <div class="student-edit-icon-v2">{ICON_STUDENTS}</div>
                         <div>
-                            <h2>Chá»‰nh sá»­a há»c sinh</h2>
-                            <p>Cáº­p nháº­t thÃ´ng tin há»“ sÆ¡, lá»›p há»c vÃ  áº£nh tham chiáº¿u Ä‘á»ƒ God Eyes sá»­ dá»¥ng khi nháº­n diá»‡n.</p>
+                            <h2>Chỉnh sửa học sinh</h2>
+                            <p>Cập nhật thông tin hồ sơ, lớp học và ảnh tham chiếu để God Eyes sử dụng khi nhận diện.</p>
                         </div>
                     </div>
                 </div>
                 <div class="student-edit-nav-v2">
                     <a class="student-nav-button home" href="/teacher?section=dashboard">
-                        <span class="student-nav-icon">âŒ‚</span>
-                        <span>Trang chá»§</span>
+                        <span class="student-nav-icon">⌂</span>
+                        <span>Trang chủ</span>
                     </a>
                     <a class="student-nav-button" href="/teacher?section=students">
-                        <span>Danh sÃ¡ch há»c sinh</span>
+                        <span>Danh sách học sinh</span>
                     </a>
                 </div>
             </div>
@@ -5051,32 +5066,32 @@ def edit_student_page(request: Request, student_id: int):
             <div class="student-edit-grid-v2">
                 <aside class="student-profile-card-v2">
                     <div class="student-profile-topline">
-                        <span>Há»’ SÆ  HIá»†N Táº I</span>
+                        <span>HỒ SƠ HIỆN TẠI</span>
                         <span class="student-profile-id">#{student_id}</span>
                     </div>
                     <div class="student-profile-photo-wrap-v2">
                         {photo_preview}
                     </div>
                     <div class="student-profile-name">{escape(row['full_name'])}</div>
-                    <div class="student-profile-code">MÃ£ há»c sinh Â· <strong>{escape(row['student_code'])}</strong></div>
-                    <div class="student-profile-class-pill">{escape(row['class_name'])} Â· {escape(row['class_code'])}</div>
+                    <div class="student-profile-code">Mã học sinh · <strong>{escape(row['student_code'])}</strong></div>
+                    <div class="student-profile-class-pill">{escape(row['class_name'])} · {escape(row['class_code'])}</div>
                     <div class="student-profile-status-row">
                         <span class="student-status-label">Face ID</span>
                         <span class="face-status-v2 {face_class}"><span class="status-dot"></span>{escape(face_text)}</span>
                     </div>
                     <div class="student-profile-note">
                         <div class="note-icon">i</div>
-                        <div>áº¢nh rÃµ máº·t, Ä‘á»§ sÃ¡ng vÃ  chá»‰ cÃ³ má»™t há»c sinh sáº½ cho káº¿t quáº£ Face ID á»•n Ä‘á»‹nh hÆ¡n.</div>
+                        <div>Ảnh rõ mặt, đủ sáng và chỉ có một học sinh sẽ cho kết quả Face ID ổn định hơn.</div>
                     </div>
                 </aside>
 
                 <div class="student-edit-card-v2">
                     <div class="student-edit-section-heading">
                         <div>
-                            <div class="section-kicker">THÃ”NG TIN Há»’ SÆ </div>
-                            <h3>ThÃ´ng tin há»c sinh</h3>
+                            <div class="section-kicker">THÔNG TIN HỒ SƠ</div>
+                            <h3>Thông tin học sinh</h3>
                         </div>
-                        <span class="required-hint">* Báº¯t buá»™c</span>
+                        <span class="required-hint">* Bắt buộc</span>
                     </div>
 
                     <form method="post" action="/teacher/students/edit" enctype="multipart/form-data" class="student-edit-form-v2">
@@ -5084,60 +5099,60 @@ def edit_student_page(request: Request, student_id: int):
 
                         <div class="student-form-row-v2 two-col">
                             <div class="student-field-v2">
-                                <label for="edit-student-name">Há» vÃ  tÃªn há»c sinh <span>*</span></label>
+                                <label for="edit-student-name">Họ và tên học sinh <span>*</span></label>
                                 <input id="edit-student-name" name="full_name" type="text" value="{escape(row['full_name'])}" maxlength="120" required>
-                                <small>TÃªn hiá»ƒn thá»‹ trong danh sÃ¡ch vÃ  History.</small>
+                                <small>Tên hiển thị trong danh sách và History.</small>
                             </div>
                             <div class="student-field-v2">
-                                <label for="edit-student-code">MÃ£ há»c sinh <span>*</span></label>
+                                <label for="edit-student-code">Mã học sinh <span>*</span></label>
                                 <input id="edit-student-code" name="student_code" type="text" value="{escape(row['student_code'])}" maxlength="40" required>
-                                <small>MÃ£ dÃ¹ng Ä‘á»ƒ tÃ¬m kiáº¿m nhanh há»c sinh.</small>
+                                <small>Mã dùng để tìm kiếm nhanh học sinh.</small>
                             </div>
                         </div>
 
                         <div class="student-field-v2">
-                            <label for="edit-student-phone">Sá»‘ Ä‘iá»‡n thoáº¡i nháº­n thÃ´ng bÃ¡o <span>(khÃ´ng báº¯t buá»™c)</span></label>
-                            <input id="edit-student-phone" name="guardian_phone" type="tel" value="{escape(row['guardian_phone'] or '')}" maxlength="20" placeholder="VÃ­ dá»¥: 0901234567">
+                            <label for="edit-student-phone">Số điện thoại nhận thông báo <span>(không bắt buộc)</span></label>
+                            <input id="edit-student-phone" name="guardian_phone" type="tel" value="{escape(row['guardian_phone'] or '')}" maxlength="20" placeholder="Ví dụ: 0901234567">
                         </div>
 
                         <div class="student-field-v2">
-                            <label for="edit-student-class">Lá»›p há»c <span>*</span></label>
+                            <label for="edit-student-class">Lớp học <span>*</span></label>
                             <select id="edit-student-class" name="class_id" required>{options}</select>
-                            <small>Chuyá»ƒn há»c sinh sang lá»›p khÃ¡c sáº½ cáº­p nháº­t danh sÃ¡ch cá»§a lá»›p Ä‘Ã³.</small>
+                            <small>Chuyển học sinh sang lớp khác sẽ cập nhật danh sách của lớp đó.</small>
                         </div>
 
                         <div class="student-upload-panel-v2">
                             <div class="student-upload-heading-v2">
                                 <div>
                                     <div class="section-kicker">FACE ID</div>
-                                    <h4>áº¢nh tham chiáº¿u</h4>
-                                    <p>Chá»n áº£nh má»›i khi cáº§n cáº­p nháº­t dá»¯ liá»‡u nháº­n diá»‡n.</p>
+                                    <h4>Ảnh tham chiếu</h4>
+                                    <p>Chọn ảnh mới khi cần cập nhật dữ liệu nhận diện.</p>
                                 </div>
-                                <span class="upload-optional">KhÃ´ng báº¯t buá»™c</span>
+                                <span class="upload-optional">Không bắt buộc</span>
                             </div>
 
                             <label class="student-dropzone-v2" for="edit-student-photo">
-                                <div class="upload-symbol">â†‘</div>
+                                <div class="upload-symbol">↑</div>
                                 <div class="upload-copy">
-                                    <strong>Chá»n áº£nh má»›i</strong>
-                                    <span>JPG, PNG hoáº·c WEBP Â· tá»‘i Ä‘a 5 MB</span>
+                                    <strong>Chọn ảnh mới</strong>
+                                    <span>JPG, PNG hoặc WEBP · tối đa 5 MB</span>
                                 </div>
-                                <span class="upload-button-v2">Chá»n tá»‡p</span>
+                                <span class="upload-button-v2">Chọn tệp</span>
                             </label>
                             <input id="edit-student-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" class="student-file-input-v2">
-                            <div id="student-file-name" class="student-file-name-v2">ChÆ°a chá»n áº£nh má»›i.</div>
+                            <div id="student-file-name" class="student-file-name-v2">Chưa chọn ảnh mới.</div>
                             <div class="student-photo-preview-v2" id="student-photo-preview" hidden>
-                                <img id="student-photo-preview-img" alt="Xem trÆ°á»›c áº£nh má»›i">
+                                <img id="student-photo-preview-img" alt="Xem trước ảnh mới">
                                 <div>
-                                    <strong>Xem trÆ°á»›c áº£nh má»›i</strong>
-                                    <span>áº¢nh nÃ y chá»‰ Ä‘Æ°á»£c lÆ°u khi báº¡n báº¥m â€œLÆ°u thay Ä‘á»•iâ€.</span>
+                                    <strong>Xem trước ảnh mới</strong>
+                                    <span>Ảnh này chỉ được lưu khi bạn bấm “Lưu thay đổi”.</span>
                                 </div>
                             </div>
                         </div>
 
                         <div class="student-form-actions-v2">
-                            <a class="secondary-button-v2" href="/teacher?section=students">Há»§y</a>
-                            <button class="primary-button-v2" type="submit">LÆ°u thay Ä‘á»•i</button>
+                            <a class="secondary-button-v2" href="/teacher?section=students">Hủy</a>
+                            <button class="primary-button-v2" type="submit">Lưu thay đổi</button>
                         </div>
                     </form>
                 </div>
@@ -5275,12 +5290,12 @@ def edit_student_page(request: Request, student_id: int):
                 input.addEventListener('change', function() {{
                     const file = input.files && input.files[0];
                     if (!file) {{
-                        name.textContent = 'ChÆ°a chá»n áº£nh má»›i.';
+                        name.textContent = 'Chưa chọn ảnh mới.';
                         preview.hidden = true;
                         previewImg.removeAttribute('src');
                         return;
                     }}
-                    name.textContent = 'ÄÃ£ chá»n: ' + file.name;
+                    name.textContent = 'Đã chọn: ' + file.name;
                     if (file.type && file.type.startsWith('image/')) {{
                         const reader = new FileReader();
                         reader.onload = function(e) {{
@@ -5295,7 +5310,7 @@ def edit_student_page(request: Request, student_id: int):
             }})();
         </script>
     """
-    return teacher_shell("Chá»‰nh sá»­a há»c sinh", content, "students", full_name, teacher_id=teacher_id)
+    return teacher_shell("Chỉnh sửa học sinh", content, "students", full_name, teacher_id=teacher_id)
 
 
 @app.post("/teacher/students/edit")
@@ -5460,10 +5475,10 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
     page_rows = rows[page_start:page_start + per_page]
     search_value = escape(search_query)
 
-    class_options = '<option value="">Táº¥t cáº£ lá»›p há»c</option>' + "".join(
+    class_options = '<option value="">Tất cả lớp học</option>' + "".join(
         f'<option value="{r["id"]}" '
         f'{"selected" if selected_class is not None and int(r["id"]) == selected_class_id else ""}>'
-        f'{escape(r["name"])} Â· {escape(r["code"])}</option>'
+        f'{escape(r["name"])} · {escape(r["code"])}</option>'
         for r in classes
     )
 
@@ -5486,31 +5501,31 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
 
                 <div class="modern-student-info">
                     <div class="student-info-item">
-                        <span class="student-info-label">Lá»›p há»c</span>
+                        <span class="student-info-label">Lớp học</span>
                         <strong>{escape(row['class_name'])}</strong>
                     </div>
                     <div class="student-info-item">
-                        <span class="student-info-label">MÃ£ lá»›p</span>
+                        <span class="student-info-label">Mã lớp</span>
                         <strong>{escape(row['class_code'])}</strong>
                     </div>
                 </div>
 
                 <div class="modern-student-actions">
-                    {'<form method="post" action="/teacher/students/rebuild-face"><input type="hidden" name="student_id" value="'+str(row['id'])+'"><button class="modern-secondary modern-face-retry" type="submit">Táº¡o láº¡i Face ID</button></form>' if row['photo_path'] and row['face_status'] == 'REVIEW' else ''}
+                    {'<form method="post" action="/teacher/students/rebuild-face"><input type="hidden" name="student_id" value="'+str(row['id'])+'"><button class="modern-secondary modern-face-retry" type="submit">Tạo lại Face ID</button></form>' if row['photo_path'] and row['face_status'] == 'REVIEW' else ''}
                     <a class="modern-secondary" href="/teacher/students/edit?student_id={row['id']}">
                         {ICON_SETTINGS}
-                        <span>Chá»‰nh sá»­a</span>
+                        <span>Chỉnh sửa</span>
                     </a>
                     <form method="post"
                           action="/teacher/students/delete"
-                          onsubmit="return confirm('Báº¡n cÃ³ cháº¯c muá»‘n xÃ³a há»“ sÆ¡ há»c sinh nÃ y khÃ´ng?');">
+                          onsubmit="return confirm('Bạn có chắc muốn xóa hồ sơ học sinh này không?');">
                         <input type="hidden" name="student_id" value="{row['id']}">
                         <button class="modern-danger" type="submit">
                             <svg viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M4.5 7h15M9.5 7V4.5h5V7M8 10v7.5M12 10v7.5M16 10v7.5"/>
                                 <path d="M6.5 7 7.2 19h9.6l.7-12"/>
                             </svg>
-                            <span>XÃ³a</span>
+                            <span>Xóa</span>
                         </button>
                     </form>
                 </div>
@@ -5522,15 +5537,15 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
             <div class="modern-empty">
                 <div class="modern-empty-icon">{ICON_STUDENTS}</div>
                 <div class="modern-empty-title">
-                    {'ChÆ°a cÃ³ há»c sinh trong lá»›p nÃ y' if selected_class else 'ChÆ°a cÃ³ há»c sinh'}
+                    {'Chưa có học sinh trong lớp này' if selected_class else 'Chưa có học sinh'}
                 </div>
                 <div class="modern-empty-text">
-                    Báº¯t Ä‘áº§u báº±ng cÃ¡ch thÃªm há»“ sÆ¡ há»c sinh á»Ÿ khung bÃªn pháº£i.
-                    Báº¡n cÃ³ thá»ƒ bá»• sung áº£nh tham chiáº¿u ngay khi táº¡o há»“ sÆ¡.
+                    Bắt đầu bằng cách thêm hồ sơ học sinh ở khung bên phải.
+                    Bạn có thể bổ sung ảnh tham chiếu ngay khi tạo hồ sơ.
                 </div>
                 <div class="modern-empty-hint">
                     <span class="hint-dot"></span>
-                    Dá»¯ liá»‡u Ä‘Æ°á»£c lÆ°u riÃªng cho tÃ i khoáº£n giÃ¡o viÃªn cá»§a báº¡n.
+                    Dữ liệu được lưu riêng cho tài khoản giáo viên của bạn.
                 </div>
             </div>
         """
@@ -5541,7 +5556,7 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
             retry_html = (
                 '<form method="post" action="/teacher/students/rebuild-face" class="student-row-inline-form">'
                 '<input type="hidden" name="student_id" value="'+str(row["id"])+'">'
-                '<button class="student-row-button face" type="submit">Táº¡o láº¡i Face ID</button>'
+                '<button class="student-row-button face" type="submit">Tạo lại Face ID</button>'
                 '</form>'
             ) if row["photo_path"] and row["face_status"] == 'REVIEW' else ''
             table_rows += f"""
@@ -5561,10 +5576,10 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                     <td>
                         <div class="student-row-actions">
                             {retry_html}
-                            <a class="student-row-button" href="/teacher/students/edit?student_id={row['id']}">Chá»‰nh sá»­a</a>
-                            <form method="post" action="/teacher/students/delete" class="student-row-inline-form" onsubmit="return confirm('Báº¡n cÃ³ cháº¯c muá»‘n xÃ³a há»“ sÆ¡ há»c sinh nÃ y khÃ´ng?');">
+                            <a class="student-row-button" href="/teacher/students/edit?student_id={row['id']}">Chỉnh sửa</a>
+                            <form method="post" action="/teacher/students/delete" class="student-row-inline-form" onsubmit="return confirm('Bạn có chắc muốn xóa hồ sơ học sinh này không?');">
                                 <input type="hidden" name="student_id" value="{row['id']}">
-                                <button class="student-row-button danger" type="submit">XÃ³a</button>
+                                <button class="student-row-button danger" type="submit">Xóa</button>
                             </form>
                         </div>
                     </td>
@@ -5577,10 +5592,10 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                     <thead>
                         <tr>
                             <th>#</th>
-                            <th>Há»c sinh</th>
-                            <th>Lá»›p</th>
+                            <th>Học sinh</th>
+                            <th>Lớp</th>
                             <th>Face ID</th>
-                            <th>Thao tÃ¡c</th>
+                            <th>Thao tác</th>
                         </tr>
                     </thead>
                     <tbody>{table_rows}</tbody>
@@ -5589,29 +5604,29 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
         """
 
     status_messages = {
-        "created": ("ÄÃ£ thÃªm há»c sinh thÃ nh cÃ´ng.", "success"),
-        "updated": ("ÄÃ£ cáº­p nháº­t há»“ sÆ¡ há»c sinh.", "success"),
-        "deleted": ("ÄÃ£ xÃ³a há»“ sÆ¡ há»c sinh.", "success"),
-        "face_ready": ("ÄÃ£ phÃ¢n tÃ­ch khuÃ´n máº·t vÃ  táº¡o Face ID. Há»“ sÆ¡ Ä‘Ã£ sáºµn sÃ ng nháº­n diá»‡n.", "success"),
-        "face_model_missing": ("ChÆ°a cÃ³ model Face ID. áº¢nh Ä‘Ã£ Ä‘Æ°á»£c lÆ°u nhÆ°ng Face ID chÆ°a táº¡o Ä‘Æ°á»£c.", "error"),
-        "face_embedding_error": ("ChÆ°a táº¡o Ä‘Æ°á»£c Face ID. áº¢nh váº«n Ä‘Æ°á»£c giá»¯ láº¡i Ä‘á»ƒ báº¡n Ä‘á»•i áº£nh hoáº·c thá»­ táº¡o láº¡i.", "error"),
-        "face_no_photo": ("Há»“ sÆ¡ nÃ y chÆ°a cÃ³ áº£nh tham chiáº¿u Ä‘á»ƒ táº¡o Face ID.", "error"),
-        "no_face": ("KhÃ´ng phÃ¡t hiá»‡n Ä‘Æ°á»£c khuÃ´n máº·t. HÃ£y dÃ¹ng áº£nh rÃµ máº·t, chá»‰ cÃ³ má»™t há»c sinh.", "error"),
-        "multiple_faces": ("áº¢nh cÃ³ nhiá»u hÆ¡n má»™t khuÃ´n máº·t. HÃ£y dÃ¹ng áº£nh chá»‰ cÃ³ má»™t há»c sinh.", "error"),
-        "face_too_small": ("KhuÃ´n máº·t trong áº£nh quÃ¡ nhá». HÃ£y chá»n áº£nh cáº­n máº·t hÆ¡n.", "error"),
-        "invalid_image": ("KhÃ´ng thá»ƒ Ä‘á»c áº£nh. Vui lÃ²ng chá»n láº¡i áº£nh JPG, PNG hoáº·c WEBP.", "error"),
+        "created": ("Đã thêm học sinh thành công.", "success"),
+        "updated": ("Đã cập nhật hồ sơ học sinh.", "success"),
+        "deleted": ("Đã xóa hồ sơ học sinh.", "success"),
+        "face_ready": ("Đã phân tích khuôn mặt và tạo Face ID. Hồ sơ đã sẵn sàng nhận diện.", "success"),
+        "face_model_missing": ("Chưa có model Face ID. Ảnh đã được lưu nhưng Face ID chưa tạo được.", "error"),
+        "face_embedding_error": ("Chưa tạo được Face ID. Ảnh vẫn được giữ lại để bạn đổi ảnh hoặc thử tạo lại.", "error"),
+        "face_no_photo": ("Hồ sơ này chưa có ảnh tham chiếu để tạo Face ID.", "error"),
+        "no_face": ("Không phát hiện được khuôn mặt. Hãy dùng ảnh rõ mặt, chỉ có một học sinh.", "error"),
+        "multiple_faces": ("Ảnh có nhiều hơn một khuôn mặt. Hãy dùng ảnh chỉ có một học sinh.", "error"),
+        "face_too_small": ("Khuôn mặt trong ảnh quá nhỏ. Hãy chọn ảnh cận mặt hơn.", "error"),
+        "invalid_image": ("Không thể đọc ảnh. Vui lòng chọn lại ảnh JPG, PNG hoặc WEBP.", "error"),
     }
     notice = ""
     status_message = status_messages.get(status_raw)
     if status_message:
         notice = f'<div class="modern-notice {status_message[1]}">{escape(status_message[0])}</div>'
 
-    selected_label = escape(selected_class["name"]) if selected_class else "Táº¥t cáº£ lá»›p há»c"
+    selected_label = escape(selected_class["name"]) if selected_class else "Tất cả lớp học"
 
     class_create_options = "".join(
         f'<option value="{r["id"]}" '
         f'{"selected" if selected_class is not None and int(r["id"]) == selected_class_id else ""}>'
-        f'{escape(r["name"])} Â· {escape(r["code"])}</option>'
+        f'{escape(r["name"])} · {escape(r["code"])}</option>'
         for r in classes
     )
 
@@ -5621,8 +5636,8 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
             <div class="modern-warning">
                 <div class="modern-warning-icon">!</div>
                 <div>
-                    <strong>ChÆ°a cÃ³ lá»›p há»c</strong>
-                    <p>HÃ£y táº¡o Ã­t nháº¥t má»™t lá»›p trÆ°á»›c khi thÃªm há»c sinh.</p>
+                    <strong>Chưa có lớp học</strong>
+                    <p>Hãy tạo ít nhất một lớp trước khi thêm học sinh.</p>
                 </div>
             </div>
         """ if not classes else ""
@@ -5633,13 +5648,13 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
 
             <header class="students-modern-header">
                 <div>
-                    <div class="students-modern-kicker">QUáº¢N LÃ Há»’ SÆ </div>
-                    <h2>Há»c sinh</h2>
-                    <p>Quáº£n lÃ½ há»“ sÆ¡ há»c sinh vÃ  áº£nh tham chiáº¿u phá»¥c vá»¥ God Eyes.</p>
+                    <div class="students-modern-kicker">QUẢN LÝ HỒ SƠ</div>
+                    <h2>Học sinh</h2>
+                    <p>Quản lý hồ sơ học sinh và ảnh tham chiếu phục vụ God Eyes.</p>
                 </div>
 
                 <div class="students-modern-header-stat">
-                    <span>Tá»•ng sá»‘</span>
+                    <span>Tổng số</span>
                     <strong>{len(rows)}</strong>
                     <small>{selected_label}</small>
                 </div>
@@ -5655,14 +5670,14 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                         <div class="modern-toolbar-title">
                             <div class="toolbar-mini-icon">{ICON_CLASSES}</div>
                             <div>
-                                <span>Lá»›p Ä‘ang xem</span>
+                                <span>Lớp đang xem</span>
                                 <strong>{selected_label}</strong>
                             </div>
                         </div>
 
                         <form method="get" action="/teacher" class="modern-filter-form">
                             <input type="hidden" name="section" value="students">
-                            <label for="student-class-filter">Chá»n lá»›p</label>
+                            <label for="student-class-filter">Chọn lớp</label>
                             <select id="student-class-filter"
                                     name="class_id"
                                     onchange="this.form.submit()">
@@ -5673,11 +5688,11 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
 
                     <section class="modern-list-head">
                         <div>
-                            <h3>Danh sÃ¡ch há»c sinh</h3>
+                            <h3>Danh sách học sinh</h3>
                             <p>
-                                {total_students} há»c sinh
-                                {'trong lá»›p Ä‘Ã£ chá»n' if selected_class else 'Ä‘ang Ä‘Æ°á»£c quáº£n lÃ½'}
-                                Â· trang {page}/{total_pages}
+                                {total_students} học sinh
+                                {'trong lớp đã chọn' if selected_class else 'đang được quản lý'}
+                                · trang {page}/{total_pages}
                             </p>
                         </div>
                     </section>
@@ -5686,21 +5701,21 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                         <input type="hidden" name="section" value="students">
                         {('<input type="hidden" name="class_id" value="'+str(selected_class_id)+'">' if selected_class_id is not None else '')}
                         <div class="student-search-input-wrap">
-                            <span class="student-search-icon">âŒ•</span>
-                            <input name="q" value="{search_value}" placeholder="TÃ¬m tÃªn hoáº·c mÃ£ há»c sinh..." autocomplete="off">
+                            <span class="student-search-icon">⌕</span>
+                            <input name="q" value="{search_value}" placeholder="Tìm tên hoặc mã học sinh..." autocomplete="off">
                         </div>
-                        <button class="student-search-button" type="submit">TÃ¬m kiáº¿m</button>
-                        {('<a class="student-search-clear" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+'">XÃ³a tÃ¬m kiáº¿m</a>' if search_query else '')}
+                        <button class="student-search-button" type="submit">Tìm kiếm</button>
+                        {('<a class="student-search-clear" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+'">Xóa tìm kiếm</a>' if search_query else '')}
                     </form>
 
                     {empty}
 
                     <div class="students-pagination">
-                        {('<a class="students-page-button disabled" href="#">â€¹ TrÆ°á»›c</a>' if page <= 1 else '<a class="students-page-button" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+('&q='+url_quote(search_query) if search_query else '')+'&page='+str(page-1)+'">â€¹ TrÆ°á»›c</a>')}
+                        {('<a class="students-page-button disabled" href="#">‹ Trước</a>' if page <= 1 else '<a class="students-page-button" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+('&q='+url_quote(search_query) if search_query else '')+'&page='+str(page-1)+'">‹ Trước</a>')}
                         <div class="students-page-numbers">
                             {''.join(f'<a class="students-page-number {"active" if page_number == page else ""}" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+('&q='+url_quote(search_query) if search_query else '')+'&page='+str(page_number)+'">{page_number}</a>' for page_number in range(1, total_pages+1))}
                         </div>
-                        {('<a class="students-page-button disabled" href="#">Sau â€º</a>' if page >= total_pages else '<a class="students-page-button" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+('&q='+url_quote(search_query) if search_query else '')+'&page='+str(page+1)+'">Sau â€º</a>')}
+                        {('<a class="students-page-button disabled" href="#">Sau ›</a>' if page >= total_pages else '<a class="students-page-button" href="/teacher?section=students'+('&class_id='+str(selected_class_id) if selected_class_id is not None else '')+('&q='+url_quote(search_query) if search_query else '')+'&page='+str(page+1)+'">Sau ›</a>')}
                     </div>
 
                 </main>
@@ -5709,9 +5724,9 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                     <div class="modern-create-top">
                         <div class="modern-create-icon">{ICON_STUDENTS}</div>
                         <div>
-                            <div class="modern-create-kicker">Há»’ SÆ  Má»šI</div>
-                            <h3>ThÃªm há»c sinh</h3>
-                            <p>Táº¡o há»“ sÆ¡ trong vÃ i bÆ°á»›c.</p>
+                            <div class="modern-create-kicker">HỒ SƠ MỚI</div>
+                            <h3>Thêm học sinh</h3>
+                            <p>Tạo hồ sơ trong vài bước.</p>
                         </div>
                     </div>
 
@@ -5721,45 +5736,45 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                           class="modern-student-form">
 
                         <div class="modern-form-field">
-                            <label for="modern-student-class">Lá»›p há»c</label>
+                            <label for="modern-student-class">Lớp học</label>
                             <select id="modern-student-class"
                                     name="class_id"
                                     required
                                     {form_disabled}>
-                                <option value="">Chá»n lá»›p há»c</option>
+                                <option value="">Chọn lớp học</option>
                                 {class_create_options}
                             </select>
                         </div>
 
                         <div class="modern-form-field">
-                            <label for="modern-student-name">Há» vÃ  tÃªn</label>
+                            <label for="modern-student-name">Họ và tên</label>
                             <input id="modern-student-name"
                                    name="full_name"
                                    type="text"
                                    maxlength="120"
-                                   placeholder="VÃ­ dá»¥: Nguyá»…n VÄƒn An"
+                                   placeholder="Ví dụ: Nguyễn Văn An"
                                    required
                                    {form_disabled}>
                         </div>
 
                         <div class="modern-form-field">
                             <label for="modern-student-code">
-                                MÃ£ há»c sinh
-                                <span>KhÃ´ng báº¯t buá»™c</span>
+                                Mã học sinh
+                                <span>Không bắt buộc</span>
                             </label>
                             <input id="modern-student-code"
                                    name="student_code"
                                    type="text"
                                    maxlength="40"
-                                   placeholder="VÃ­ dá»¥: 9A1-001"
+                                   placeholder="Ví dụ: 9A1-001"
                                    {form_disabled}>
                             <div class="modern-field-help">
-                                Äá»ƒ trá»‘ng Ä‘á»ƒ há»‡ thá»‘ng tá»± táº¡o mÃ£.
+                                Để trống để hệ thống tự tạo mã.
                             </div>
                         </div>
 
                         <div class="modern-form-field">
-                            <label>áº¢nh tham chiáº¿u <span>Báº¯t buá»™c</span></label>
+                            <label>Ảnh tham chiếu <span>Bắt buộc</span></label>
 
                             <label class="modern-upload" for="modern-student-photo">
                                 <div class="modern-upload-icon">
@@ -5770,10 +5785,10 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                                     </svg>
                                 </div>
                                 <div class="modern-upload-text">
-                                    <strong>Chá»n áº£nh há»c sinh</strong>
-                                    <span id="modern-photo-name">JPG, PNG hoáº·c WEBP Â· tá»‘i Ä‘a 5 MB</span>
+                                    <strong>Chọn ảnh học sinh</strong>
+                                    <span id="modern-photo-name">JPG, PNG hoặc WEBP · tối đa 5 MB</span>
                                 </div>
-                                <span class="modern-upload-button">Chá»n áº£nh</span>
+                                <span class="modern-upload-button">Chọn ảnh</span>
                             </label>
 
                             <input id="modern-student-photo"
@@ -5790,8 +5805,8 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                         <div class="modern-form-note">
                             <div class="modern-note-icon">{ICON_EYE}</div>
                             <div>
-                                <strong>áº¢nh tham chiáº¿u</strong>
-                                <span>God Eyes sáº½ dÃ¹ng chÃ­nh áº£nh nÃ y Ä‘á»ƒ táº¡o Face ID. áº¢nh nÃªn chá»‰ cÃ³ má»™t khuÃ´n máº·t, rÃµ vÃ  Ä‘á»§ lá»›n.</span>
+                                <strong>Ảnh tham chiếu</strong>
+                                <span>God Eyes sẽ dùng chính ảnh này để tạo Face ID. Ảnh nên chỉ có một khuôn mặt, rõ và đủ lớn.</span>
                             </div>
                         </div>
 
@@ -5799,7 +5814,7 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                                 type="submit"
                                 {form_disabled}>
                             {ICON_STUDENTS}
-                            <span>ThÃªm há»c sinh</span>
+                            <span>Thêm học sinh</span>
                         </button>
 
                     </form>
@@ -5818,7 +5833,7 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                     if (this.files && this.files.length > 0) {{
                         photoName.textContent = this.files[0].name;
                     }} else {{
-                        photoName.textContent = "JPG, PNG hoáº·c WEBP Â· tá»‘i Ä‘a 5 MB";
+                        photoName.textContent = "JPG, PNG hoặc WEBP · tối đa 5 MB";
                     }}
                 }});
             }}
@@ -6704,7 +6719,7 @@ def teacher_students_content(teacher_id: int, selected_class_id: int | None = No
                 pointer-events:none;
             }}
             .students-page-search .student-search-input-wrap::after {{
-                content:'TÃ¬m theo tÃªn hoáº·c mÃ£ há»c sinh';
+                content:'Tìm theo tên hoặc mã học sinh';
                 position:absolute;
                 right:13px;
                 top:50%;
@@ -6814,18 +6829,18 @@ def teacher_shell(title: str, content: str, section: str, full_name: str, teache
     lang_attr = 'en' if is_en else 'vi'
 
     labels = {
-        'dashboard': 'Dashboard' if is_en else 'Tá»•ng quan',
-        'classes': 'Classes' if is_en else 'Lá»›p há»c',
-        'students': 'Students' if is_en else 'Há»c sinh',
-        'history': 'History' if is_en else 'Lá»‹ch sá»­',
-        'app': 'God Eyes App' if is_en else 'á»¨ng dá»¥ng God Eyes',
-        'settings': 'Settings' if is_en else 'CÃ i Ä‘áº·t',
+        'dashboard': 'Dashboard' if is_en else 'Tổng quan',
+        'classes': 'Classes' if is_en else 'Lớp học',
+        'students': 'Students' if is_en else 'Học sinh',
+        'history': 'History' if is_en else 'Lịch sử',
+        'app': 'God Eyes App' if is_en else 'Ứng dụng God Eyes',
+        'settings': 'Settings' if is_en else 'Cài đặt',
     }
-    shell_title = 'God Eyes â€¢ Teacher Portal' if is_en else 'God Eyes â€¢ Cá»•ng giÃ¡o viÃªn'
-    account_label = 'Teacher:' if is_en else 'GiÃ¡o viÃªn:'
-    active_label = 'Active' if is_en else 'Äang hoáº¡t Ä‘á»™ng'
-    profile_label = 'Signed-in account' if is_en else 'TÃ i khoáº£n Ä‘ang Ä‘Äƒng nháº­p'
-    logout_label = 'Sign out' if is_en else 'ÄÄƒng xuáº¥t'
+    shell_title = 'God Eyes • Teacher Portal' if is_en else 'God Eyes • Cổng giáo viên'
+    account_label = 'Teacher:' if is_en else 'Giáo viên:'
+    active_label = 'Active' if is_en else 'Đang hoạt động'
+    profile_label = 'Signed-in account' if is_en else 'Tài khoản đang đăng nhập'
+    logout_label = 'Sign out' if is_en else 'Đăng xuất'
 
     nav_items = [
         ('dashboard', labels['dashboard'], ICON_HOME),
@@ -6848,29 +6863,29 @@ def teacher_shell(title: str, content: str, section: str, full_name: str, teache
     # these replacements localize the shared Teacher portal without duplicating all
     # existing page templates.
     i18n_pairs = {
-        'CÃ i Ä‘áº·t': 'Settings', 'CÃ i Ä‘áº·t giÃ¡o viÃªn': 'Teacher Settings',
-        'CÃ¡c lá»±a chá»n Ä‘Æ°á»£c lÆ°u theo tÃ i khoáº£n giÃ¡o viÃªn vÃ  Ä‘á»“ng bá»™ sang God Eyes App.': 'These options are saved to your Teacher account and synced with God Eyes App.',
-        'Giao diá»‡n': 'Appearance', 'Chá»n giao diá»‡n hiá»ƒn thá»‹ cho God Eyes App.': 'Choose the God Eyes App appearance.',
-        'Chá»n Light hoáº·c Dark. Thay Ä‘á»•i sáº½ Ã¡p dá»¥ng ngay trÃªn á»©ng dá»¥ng.': 'Choose Light or Dark. Changes apply immediately.',
-        'SÃ¡ng': 'Light', 'Ná»n tráº¯ng, giao diá»‡n máº·c Ä‘á»‹nh.': 'Light interface.', 'Tá»‘i': 'Dark', 'Ná»n tá»‘i.': 'Dark interface.',
-        'NgÃ´n ngá»¯': 'Language', 'NgÃ´n ngá»¯ nÃ y Ã¡p dá»¥ng cho giao diá»‡n God Eyes App.': 'This language applies to the God Eyes App interface.',
-        'Tiáº¿ng Viá»‡t': 'Vietnamese', 'Giao diá»‡n tiáº¿ng Viá»‡t.': 'Vietnamese interface.', 'English': 'English', 'English interface.': 'English interface.',
-        'LÆ¯U CÃ€I Äáº¶T': 'SAVE SETTINGS', 'ÄÃ£ lÆ°u cÃ i Ä‘áº·t. God Eyes App sáº½ Ä‘á»“ng bá»™ theo tÃ i khoáº£n nÃ y.': 'Settings saved. God Eyes App will sync to this account.',
-        'Tá»•ng quan': 'Dashboard', 'Lá»›p há»c': 'Classes', 'Há»c sinh': 'Students', 'Lá»‹ch sá»­': 'History',
-        'á»¨ng dá»¥ng God Eyes': 'God Eyes App', 'God Eyes â€¢ Cá»•ng giÃ¡o viÃªn': 'God Eyes â€¢ Teacher Portal',
-        'Lá»›p há»c cá»§a tÃ´i': 'My Classes', 'Táº¡o lá»›p há»c': 'Create Class', 'Táº¡o lá»›p há»c má»›i': 'Create a new class',
-        'TÃªn lá»›p': 'Class name', 'MÃ´ táº£': 'Description', 'khÃ´ng báº¯t buá»™c': 'optional',
-        'Chá»‰nh sá»­a': 'Edit', 'XÃ³a': 'Delete', 'LÆ°u thay Ä‘á»•i': 'Save changes', 'Há»§y': 'Cancel',
-        'Há»c sinh trong lá»›p': 'Students in class', 'ThÃªm há»c sinh': 'Add student', 'Há» vÃ  tÃªn há»c sinh': 'Student name',
-        'MÃ£ há»c sinh': 'Student code', 'áº¢nh tham chiáº¿u': 'Reference photo', 'Tráº¡ng thÃ¡i Face ID': 'Face ID status',
-        'QuÃ©t Face ID': 'Scan Face ID', 'Lá»‹ch sá»­ hoáº¡t Ä‘á»™ng': 'Activity History',
-        'Má»Ÿ á»©ng dá»¥ng': 'Open app', 'Táº£i á»©ng dá»¥ng': 'Download app', 'Má»ž á»¨NG Dá»¤NG': 'OPEN APP', 'Táº¢I á»¨NG Dá»¤NG': 'DOWNLOAD APP',
-        'Chi tiáº¿t session': 'Session details', 'Observation theo ngÃ y': 'Daily observations', 'Quay láº¡i lá»‹ch sá»­': 'Back to history',
-        'Hoáº¡t Ä‘á»™ng quan sÃ¡t': 'Observed activity', 'áº¢nh minh chá»©ng vÃ  thÃ´ng tin cá»§a tá»«ng observation': 'Evidence images and details for each observation',
-        'CÃ³ evidence': 'Evidence available', 'KhÃ´ng cÃ³ evidence': 'No evidence', 'ThÃ´ng tin': 'Details',
-        'Confidence trung bÃ¬nh': 'Average confidence', 'Observation': 'Observations', 'Evidence': 'Evidence', 'Lá»›p': 'Classes',
-        'ÄÄƒng nháº­p': 'Sign in', 'ÄÄƒng xuáº¥t': 'Sign out', 'Äang hoáº¡t Ä‘á»™ng': 'Active',
-        'TÃ i khoáº£n Ä‘ang Ä‘Äƒng nháº­p': 'Signed-in account', 'Cá»•ng giÃ¡o viÃªn': 'Teacher Portal',
+        'Cài đặt': 'Settings', 'Cài đặt giáo viên': 'Teacher Settings',
+        'Các lựa chọn được lưu theo tài khoản giáo viên và đồng bộ sang God Eyes App.': 'These options are saved to your Teacher account and synced with God Eyes App.',
+        'Giao diện': 'Appearance', 'Chọn giao diện hiển thị cho God Eyes App.': 'Choose the God Eyes App appearance.',
+        'Chọn Light hoặc Dark. Thay đổi sẽ áp dụng ngay trên ứng dụng.': 'Choose Light or Dark. Changes apply immediately.',
+        'Sáng': 'Light', 'Nền trắng, giao diện mặc định.': 'Light interface.', 'Tối': 'Dark', 'Nền tối.': 'Dark interface.',
+        'Ngôn ngữ': 'Language', 'Ngôn ngữ này áp dụng cho giao diện God Eyes App.': 'This language applies to the God Eyes App interface.',
+        'Tiếng Việt': 'Vietnamese', 'Giao diện tiếng Việt.': 'Vietnamese interface.', 'English': 'English', 'English interface.': 'English interface.',
+        'LƯU CÀI ĐẶT': 'SAVE SETTINGS', 'Đã lưu cài đặt. God Eyes App sẽ đồng bộ theo tài khoản này.': 'Settings saved. God Eyes App will sync to this account.',
+        'Tổng quan': 'Dashboard', 'Lớp học': 'Classes', 'Học sinh': 'Students', 'Lịch sử': 'History',
+        'Ứng dụng God Eyes': 'God Eyes App', 'God Eyes • Cổng giáo viên': 'God Eyes • Teacher Portal',
+        'Lớp học của tôi': 'My Classes', 'Tạo lớp học': 'Create Class', 'Tạo lớp học mới': 'Create a new class',
+        'Tên lớp': 'Class name', 'Mô tả': 'Description', 'không bắt buộc': 'optional',
+        'Chỉnh sửa': 'Edit', 'Xóa': 'Delete', 'Lưu thay đổi': 'Save changes', 'Hủy': 'Cancel',
+        'Học sinh trong lớp': 'Students in class', 'Thêm học sinh': 'Add student', 'Họ và tên học sinh': 'Student name',
+        'Mã học sinh': 'Student code', 'Ảnh tham chiếu': 'Reference photo', 'Trạng thái Face ID': 'Face ID status',
+        'Quét Face ID': 'Scan Face ID', 'Lịch sử hoạt động': 'Activity History',
+        'Mở ứng dụng': 'Open app', 'Tải ứng dụng': 'Download app', 'MỞ ỨNG DỤNG': 'OPEN APP', 'TẢI ỨNG DỤNG': 'DOWNLOAD APP',
+        'Chi tiết session': 'Session details', 'Observation theo ngày': 'Daily observations', 'Quay lại lịch sử': 'Back to history',
+        'Hoạt động quan sát': 'Observed activity', 'Ảnh minh chứng và thông tin của từng observation': 'Evidence images and details for each observation',
+        'Có evidence': 'Evidence available', 'Không có evidence': 'No evidence', 'Thông tin': 'Details',
+        'Confidence trung bình': 'Average confidence', 'Observation': 'Observations', 'Evidence': 'Evidence', 'Lớp': 'Classes',
+        'Đăng nhập': 'Sign in', 'Đăng xuất': 'Sign out', 'Đang hoạt động': 'Active',
+        'Tài khoản đang đăng nhập': 'Signed-in account', 'Cổng giáo viên': 'Teacher Portal',
     }
     i18n_pairs.update(TEACHER_I18N_VI_EN)
     i18n_json = json.dumps(i18n_pairs, ensure_ascii=False)
@@ -6882,7 +6897,7 @@ def teacher_shell(title: str, content: str, section: str, full_name: str, teache
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="god-eyes-language" content="{lang_attr}">
     <meta name="god-eyes-theme" content="{theme_attr}">
-    <title>God Eyes - {"Teacher" if is_en else "GiÃ¡o viÃªn"}</title>
+    <title>God Eyes - {"Teacher" if is_en else "Giáo viên"}</title>
     <style>
         * {{ box-sizing: border-box; }}
         :root {{
@@ -7181,7 +7196,7 @@ def teacher_shell(title: str, content: str, section: str, full_name: str, teache
             background:#4a202a !important; color:#ffc0c8 !important; border-color:#9d5662 !important;
         }}
 
-        /* v24: student edit page â€” remove hard-coded light cards and strengthen text contrast. */
+        /* v24: student edit page — remove hard-coded light cards and strengthen text contrast. */
         body[data-theme="dark"] .teacher-main .student-edit-page,
         body[data-theme="dark"] .teacher-main .student-edit-page * {{
             color-scheme: dark;
@@ -7243,7 +7258,7 @@ def teacher_shell(title: str, content: str, section: str, full_name: str, teache
         <aside class="teacher-sidebar">
             <div class="brand">
                 <div class="brand-mark brand-logo"><img src="/brand/god-eyes-logo.png" alt="God Eyes"></div>
-                <div><div class="brand-title">God Eyes</div><div class="brand-subtitle">{"Teacher Portal" if is_en else "Cá»•ng giÃ¡o viÃªn"}</div></div>
+                <div><div class="brand-title">God Eyes</div><div class="brand-subtitle">{"Teacher Portal" if is_en else "Cổng giáo viên"}</div></div>
             </div>
             <nav>{nav_html}</nav>
             <div class="sidebar-bottom">
@@ -7257,7 +7272,7 @@ def teacher_shell(title: str, content: str, section: str, full_name: str, teache
         </aside>
         <main class="teacher-main">
             <div class="topbar">
-                <div><div class="welcome">GOD EYES â€¢ {"TEACHER PORTAL" if is_en else "Cá»”NG GIÃO VIÃŠN"}</div><h1>{escape(title if not (is_en and title == 'CÃ i Ä‘áº·t') else 'Settings')}</h1></div>
+                <div><div class="welcome">GOD EYES • {"TEACHER PORTAL" if is_en else "CỔNG GIÁO VIÊN"}</div><h1>{escape(title if not (is_en and title == 'Cài đặt') else 'Settings')}</h1></div>
                 <div class="top-account">{account_label} <strong>{first_name}</strong></div>
             </div>
             {content}
@@ -7317,7 +7332,7 @@ def teacher_classes_content(teacher_id: int) -> str:
         teacher_name = db.scalar(
             text("SELECT full_name FROM teacher_accounts WHERE id = :teacher_id LIMIT 1"),
             {"teacher_id": teacher_id},
-        ) or "GiÃ¡o viÃªn"
+        ) or "Giáo viên"
         rows = db.execute(
             text("""
                 SELECT id, name, code, description, created_at
@@ -7338,13 +7353,13 @@ def teacher_classes_content(teacher_id: int) -> str:
                     <div class="class-code">{escape(row['code'])}</div>
                 </div>
                 <h3>{escape(row['name'])}</h3>
-                <p>{escape(row['description']) if row['description'] else 'ChÆ°a cÃ³ mÃ´ táº£ cho lá»›p há»c nÃ y.'}</p>
-                <div class="class-meta">Táº¡o ngÃ y {escape(created) if created else '-'}</div>
+                <p>{escape(row['description']) if row['description'] else 'Chưa có mô tả cho lớp học này.'}</p>
+                <div class="class-meta">Tạo ngày {escape(created) if created else '-'}</div>
                 <div class="class-actions">
-                    <a class="secondary-button" href="/teacher/classes/edit?class_id={row['id']}">Chá»‰nh sá»­a</a>
-                    <form method="post" action="/teacher/classes/delete" onsubmit="return confirm('Báº¡n cÃ³ cháº¯c muá»‘n xÃ³a lá»›p há»c nÃ y khÃ´ng?');">
+                    <a class="secondary-button" href="/teacher/classes/edit?class_id={row['id']}">Chỉnh sửa</a>
+                    <form method="post" action="/teacher/classes/delete" onsubmit="return confirm('Bạn có chắc muốn xóa lớp học này không?');">
                         <input type="hidden" name="class_id" value="{row['id']}">
-                        <button class="danger-button" type="submit">XÃ³a</button>
+                        <button class="danger-button" type="submit">Xóa</button>
                     </form>
                 </div>
             </article>
@@ -7354,39 +7369,39 @@ def teacher_classes_content(teacher_id: int) -> str:
         cards = """
             <div class="classes-empty">
                 <div class="empty-big-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"></rect><path d="M8 9h8M8 13h5"></path></svg></div>
-                <h3>ChÆ°a cÃ³ lá»›p há»c</h3>
-                <p>Táº¡o lá»›p há»c Ä‘áº§u tiÃªn Ä‘á»ƒ báº¯t Ä‘áº§u thÃªm há»c sinh vÃ  sá»­ dá»¥ng God Eyes.</p>
-                <a class="primary-button" href="#tao-lop">+ Táº¡o lá»›p há»c</a>
+                <h3>Chưa có lớp học</h3>
+                <p>Tạo lớp học đầu tiên để bắt đầu thêm học sinh và sử dụng God Eyes.</p>
+                <a class="primary-button" href="#tao-lop">+ Tạo lớp học</a>
             </div>
         """
 
     return f"""
         <section class="class-page-head">
             <div>
-                <h2 class="page-section-title">Lá»›p há»c cá»§a tÃ´i</h2>
-                <p class="page-section-subtitle">Táº¡o vÃ  quáº£n lÃ½ cÃ¡c lá»›p há»c mÃ  báº¡n Ä‘ang phá»¥ trÃ¡ch.</p>
+                <h2 class="page-section-title">Lớp học của tôi</h2>
+                <p class="page-section-subtitle">Tạo và quản lý các lớp học mà bạn đang phụ trách.</p>
             </div>
-            <a class="primary-button" href="#tao-lop">+ Táº¡o lá»›p há»c</a>
+            <a class="primary-button" href="#tao-lop">+ Tạo lớp học</a>
         </section>
 
         <section class="panel create-panel" id="tao-lop">
             <div class="panel-head">
                 <div>
-                    <h2 class="panel-title">Táº¡o lá»›p há»c má»›i</h2>
-                    <div class="panel-subtitle">Nháº­p tÃªn lá»›p. Há»‡ thá»‘ng tá»± táº¡o má»™t mÃ£ lá»›p riÃªng.</div>
+                    <h2 class="panel-title">Tạo lớp học mới</h2>
+                    <div class="panel-subtitle">Nhập tên lớp. Hệ thống tự tạo một mã lớp riêng.</div>
                 </div>
             </div>
             <div class="form-body">
                 <form method="post" action="/teacher/classes/create" class="create-form">
                     <div class="form-field">
-                        <label for="new-class-name">TÃªn lá»›p</label>
-                        <input id="new-class-name" name="name" type="text" maxlength="120" placeholder="VÃ­ dá»¥: 9A1" required>
+                        <label for="new-class-name">Tên lớp</label>
+                        <input id="new-class-name" name="name" type="text" maxlength="120" placeholder="Ví dụ: 9A1" required>
                     </div>
                     <div class="form-field">
-                        <label for="new-class-teacher">TÃªn giÃ¡o viÃªn</label>
+                        <label for="new-class-teacher">Tên giáo viên</label>
                         <input id="new-class-teacher" type="text" value="{escape(str(teacher_name))}" readonly>
                     </div>
-                    <div class="create-form-actions"><button class="primary-button" type="submit">Táº¡o lá»›p há»c</button></div>
+                    <div class="create-form-actions"><button class="primary-button" type="submit">Tạo lớp học</button></div>
                 </form>
             </div>
         </section>
@@ -7553,7 +7568,7 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
         session_rows = db.execute(
             text("""
                 SELECT s.id, s.started_at,
-                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lá»›p Ä‘Ã£ xÃ³a') AS class_name
+                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name
                 FROM sessions s
                 LEFT JOIN classes c ON c.id = s.class_id
                 WHERE s.teacher_id = :teacher_id
@@ -7628,7 +7643,7 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
         except Exception:
             continue
 
-        class_name = str(row["class_name"] or "Lá»›p Ä‘Ã£ xÃ³a")
+        class_name = str(row["class_name"] or "Lớp đã xóa")
         all_class_counts[class_name] = all_class_counts.get(class_name, 0) + 1
 
         if session_date == today_vn:
@@ -7648,8 +7663,8 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
     busiest_day_count = week_counts[busiest_index] if busiest_index is not None else 0
     least_day_count = week_counts[least_index] if least_index is not None else 0
 
-    week_top_class = max(week_class_counts.items(), key=lambda item: item[1]) if week_class_counts else ("ChÆ°a cÃ³ dá»¯ liá»‡u", 0)
-    all_top_class = max(all_class_counts.items(), key=lambda item: item[1]) if all_class_counts else ("ChÆ°a cÃ³ dá»¯ liá»‡u", 0)
+    week_top_class = max(week_class_counts.items(), key=lambda item: item[1]) if week_class_counts else ("Chưa có dữ liệu", 0)
+    all_top_class = max(all_class_counts.items(), key=lambda item: item[1]) if all_class_counts else ("Chưa có dữ liệu", 0)
 
     chart_max = max(week_counts) if week_counts else 0
     chart_max_scale = max(1, chart_max)
@@ -7669,16 +7684,16 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
     ]
 
     stat_data = [
-        ("Lá»›p há»c", class_count, "Ä‘ang quáº£n lÃ½"),
-        ("Há»c sinh", student_count, "trong há»“ sÆ¡"),
-        ("Session", total_sessions, "Ä‘Ã£ ghi nháº­n"),
-        ("Observation", total_observations, "tá»•ng OB"),
+        ("Lớp học", class_count, "đang quản lý"),
+        ("Học sinh", student_count, "trong hồ sơ"),
+        ("Session", total_sessions, "đã ghi nhận"),
+        ("Observation", total_observations, "tổng OB"),
     ]
 
     top_students_html = ""
     for index, row in enumerate(top_students, start=1):
-        name = str(row["full_name"] or "Há»c sinh #" + str(row["student_id"]))
-        code = str(row["student_code"] or "â€”")
+        name = str(row["full_name"] or "Học sinh #" + str(row["student_id"]))
+        code = str(row["student_code"] or "—")
         ob_count = int(row["observation_count"] or 0)
         history_href = f"/teacher?section=history&q={url_quote(name)}"
         top_students_html += f"""
@@ -7693,7 +7708,7 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
             </a>
         """
     if not top_students_html:
-        top_students_html = '<div class="gdb-empty">ChÆ°a cÃ³ observation cÃ³ thá»ƒ xáº¿p háº¡ng há»c sinh.</div>'
+        top_students_html = '<div class="gdb-empty">Chưa có observation có thể xếp hạng học sinh.</div>'
 
     top_events_html = ""
     for row in top_events:
@@ -7707,7 +7722,7 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
             </div>
         """
     if not top_events_html:
-        top_events_html = '<div class="gdb-empty">ChÆ°a cÃ³ loáº¡i observation nÃ o Ä‘Æ°á»£c ghi nháº­n.</div>'
+        top_events_html = '<div class="gdb-empty">Chưa có loại observation nào được ghi nhận.</div>'
 
     bars_html = ""
     for index, item in enumerate(chart_data):
@@ -7717,7 +7732,7 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
             <div class="gdb-bar-column" style="--i:{index};">
                 <div class="gdb-tooltip">
                     <strong>{count}</strong>
-                    <span>session Â· {escape(item['date'])}</span>
+                    <span>session · {escape(item['date'])}</span>
                 </div>
                 <div class="gdb-bar-track">
                     <div class="gdb-bar-fill" style="--bar-height:{height:.2f}%"></div>
@@ -7728,15 +7743,15 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
 
     clock_seed_time = now_vn.strftime("%H:%M:%S")
     clock_seed_date = now_vn.strftime("%d/%m/%Y")
-    week_range = f"{week_start.strftime('%d/%m')} â†’ {week_end.strftime('%d/%m/%Y')}"
-    identity_name = escape(full_name or "GiÃ¡o viÃªn")
+    week_range = f"{week_start.strftime('%d/%m')} → {week_end.strftime('%d/%m/%Y')}"
+    identity_name = escape(full_name or "Giáo viên")
 
     return f"""
         <section class="gdb-topline">
             <div>
-                <div class="gdb-eyebrow">GOD EYES Â· TEACHER ANALYTICS</div>
-                <h2 class="gdb-title">Tá»•ng quan dá»¯ liá»‡u</h2>
-                <p class="gdb-subtitle">Theo dÃµi hoáº¡t Ä‘á»™ng Ä‘o, observation vÃ  nhá»¯ng Ä‘iá»ƒm cáº§n giÃ¡o viÃªn xem láº¡i tá»« dá»¯ liá»‡u Ä‘Ã£ lÆ°u trÃªn Server.</p>
+                <div class="gdb-eyebrow">GOD EYES · TEACHER ANALYTICS</div>
+                <h2 class="gdb-title">Tổng quan dữ liệu</h2>
+                <p class="gdb-subtitle">Theo dõi hoạt động đo, observation và những điểm cần giáo viên xem lại từ dữ liệu đã lưu trên Server.</p>
             </div>
             <div class="gdb-clock-card">
                 <div class="gdb-live-dot"></div>
@@ -7756,12 +7771,12 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
                 <div class="gdb-panel-head">
                     <div>
                         <div class="gdb-section-kicker">WEEKLY ACTIVITY</div>
-                        <h2 class="gdb-panel-title">Táº§n suáº¥t Ä‘o trong tuáº§n</h2>
-                        <p class="gdb-panel-subtitle">{escape(week_range)} Â· tá»± Ä‘á»™ng báº¯t Ä‘áº§u láº¡i chu ká»³ vÃ o thá»© Hai, khÃ´ng xÃ³a dá»¯ liá»‡u History.</p>
+                        <h2 class="gdb-panel-title">Tần suất đo trong tuần</h2>
+                        <p class="gdb-panel-subtitle">{escape(week_range)} · tự động bắt đầu lại chu kỳ vào thứ Hai, không xóa dữ liệu History.</p>
                     </div>
                     <div class="gdb-chart-summary">
                         <strong>{week_session_total}</strong>
-                        <span>session tuáº§n nÃ y</span>
+                        <span>session tuần này</span>
                     </div>
                 </div>
 
@@ -7777,9 +7792,9 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
                 </div>
 
                 <div class="gdb-chart-insights">
-                    <div class="gdb-insight"><span>NgÃ y nhiá»u nháº¥t</span><strong>{busiest_day if busiest_index is not None else 'ChÆ°a cÃ³ dá»¯ liá»‡u'}</strong><small>{busiest_day_count} session</small></div>
-                    <div class="gdb-insight"><span>NgÃ y Ã­t nháº¥t</span><strong>{least_day if least_index is not None else 'ChÆ°a cÃ³ dá»¯ liá»‡u'}</strong><small>{least_day_count} session</small></div>
-                    <div class="gdb-insight"><span>Lá»›p Ä‘o nhiá»u nháº¥t</span><strong>{escape(str(week_top_class[0]))}</strong><small>{int(week_top_class[1])} session tuáº§n nÃ y</small></div>
+                    <div class="gdb-insight"><span>Ngày nhiều nhất</span><strong>{busiest_day if busiest_index is not None else 'Chưa có dữ liệu'}</strong><small>{busiest_day_count} session</small></div>
+                    <div class="gdb-insight"><span>Ngày ít nhất</span><strong>{least_day if least_index is not None else 'Chưa có dữ liệu'}</strong><small>{least_day_count} session</small></div>
+                    <div class="gdb-insight"><span>Lớp đo nhiều nhất</span><strong>{escape(str(week_top_class[0]))}</strong><small>{int(week_top_class[1])} session tuần này</small></div>
                 </div>
             </section>
 
@@ -7787,20 +7802,20 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
                 <div class="gdb-panel-head">
                     <div>
                         <div class="gdb-section-kicker">LIVE SNAPSHOT</div>
-                        <h2 class="gdb-panel-title">HÃ´m nay</h2>
-                        <p class="gdb-panel-subtitle">TÃ i khoáº£n Ä‘ang xem: {identity_name}</p>
+                        <h2 class="gdb-panel-title">Hôm nay</h2>
+                        <p class="gdb-panel-subtitle">Tài khoản đang xem: {identity_name}</p>
                     </div>
                     <span class="gdb-status-pill">ACTIVE</span>
                 </div>
                 <div class="gdb-today-grid">
-                    <div class="gdb-mini-metric"><span>Session</span><strong>{today_sessions}</strong><small>hÃ´m nay</small></div>
-                    <div class="gdb-mini-metric"><span>Observation</span><strong>{today_observations}</strong><small>hÃ´m nay</small></div>
-                    <div class="gdb-mini-metric"><span>Há»c sinh Ä‘Ã£ Ä‘o</span><strong>{unique_measured_students}</strong><small>toÃ n lá»‹ch sá»­</small></div>
-                    <div class="gdb-mini-metric"><span>Evidence</span><strong>{total_evidence:,}</strong><small>Ä‘Ã£ lÆ°u</small></div>
+                    <div class="gdb-mini-metric"><span>Session</span><strong>{today_sessions}</strong><small>hôm nay</small></div>
+                    <div class="gdb-mini-metric"><span>Observation</span><strong>{today_observations}</strong><small>hôm nay</small></div>
+                    <div class="gdb-mini-metric"><span>Học sinh đã đo</span><strong>{unique_measured_students}</strong><small>toàn lịch sử</small></div>
+                    <div class="gdb-mini-metric"><span>Evidence</span><strong>{total_evidence:,}</strong><small>đã lưu</small></div>
                 </div>
                 <div class="gdb-today-note">
                     <span class="gdb-note-dot"></span>
-                    <div><b>Há»‡ thá»‘ng dá»¯ liá»‡u</b><p>Dashboard chá»‰ tá»•ng há»£p dá»¯ liá»‡u; session, observation vÃ  evidence gá»‘c váº«n Ä‘Æ°á»£c giá»¯ nguyÃªn.</p></div>
+                    <div><b>Hệ thống dữ liệu</b><p>Dashboard chỉ tổng hợp dữ liệu; session, observation và evidence gốc vẫn được giữ nguyên.</p></div>
                 </div>
             </section>
         </section>
@@ -7810,10 +7825,10 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
                 <div class="gdb-panel-head">
                     <div>
                         <div class="gdb-section-kicker">STUDENT RISK SIGNALS</div>
-                        <h2 class="gdb-panel-title">Há»c sinh cÃ³ nhiá»u OB nháº¥t</h2>
-                        <p class="gdb-panel-subtitle">Xáº¿p theo tá»•ng sá»‘ observation trong toÃ n bá»™ lá»‹ch sá»­ cá»§a giÃ¡o viÃªn.</p>
+                        <h2 class="gdb-panel-title">Học sinh có nhiều OB nhất</h2>
+                        <p class="gdb-panel-subtitle">Xếp theo tổng số observation trong toàn bộ lịch sử của giáo viên.</p>
                     </div>
-                    <div class="gdb-top-class-mini"><span>Lá»›p Ä‘o nhiá»u nháº¥t</span><b>{escape(str(all_top_class[0]))}</b><small>{int(all_top_class[1])} session</small></div>
+                    <div class="gdb-top-class-mini"><span>Lớp đo nhiều nhất</span><b>{escape(str(all_top_class[0]))}</b><small>{int(all_top_class[1])} session</small></div>
                 </div>
                 <div class="gdb-student-list">{top_students_html}</div>
             </section>
@@ -7822,12 +7837,12 @@ def teacher_dashboard_content(teacher_id: int, full_name: str) -> str:
                 <div class="gdb-panel-head">
                     <div>
                         <div class="gdb-section-kicker">OBSERVATION BREAKDOWN</div>
-                        <h2 class="gdb-panel-title">CÃ¡c loáº¡i OB thÆ°á»ng gáº·p</h2>
-                        <p class="gdb-panel-subtitle">Tá»•ng há»£p nhanh nhá»¯ng event_type Ä‘Æ°á»£c lÆ°u nhiá»u nháº¥t.</p>
+                        <h2 class="gdb-panel-title">Các loại OB thường gặp</h2>
+                        <p class="gdb-panel-subtitle">Tổng hợp nhanh những event_type được lưu nhiều nhất.</p>
                     </div>
                 </div>
                 <div class="gdb-event-list">{top_events_html}</div>
-                <a class="gdb-history-link" href="/teacher?section=history">Má»Ÿ History Ä‘á»ƒ xem session, observation vÃ  evidence â†’</a>
+                <a class="gdb-history-link" href="/teacher?section=history">Mở History để xem session, observation và evidence →</a>
             </section>
         </section>
 
@@ -8012,7 +8027,7 @@ def _history_daily_rows(teacher_id: int, search_query: str = ""):
                     s.duration_seconds,
                     s.status,
                     s.scan_date,
-                    COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lá»›p Ä‘Ã£ xÃ³a') AS class_name,
+                    COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                     COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
                     ss.student_id,
                     ss.student_code,
@@ -8073,7 +8088,7 @@ def _history_group_daily(rows):
             'ended_at': row.get('ended_at'),
             'duration_seconds': row.get('duration_seconds'),
             'status': row.get('status'),
-            'class_name': str(row.get('class_name') or 'Lá»›p Ä‘Ã£ xÃ³a'),
+            'class_name': str(row.get('class_name') or 'Lớp đã xóa'),
             'class_code': str(row.get('class_code') or ''),
         })
 
@@ -8082,7 +8097,7 @@ def _history_group_daily(rows):
             student = {
                 'student_id': sid,
                 'student_code': str(row.get('student_code') or ''),
-                'full_name': str(row.get('full_name') or f'Há»c sinh #{sid}'),
+                'full_name': str(row.get('full_name') or f'Học sinh #{sid}'),
                 'session_focuses': [],
                 'session_ids': [],
                 'session_obs': {},
@@ -8121,7 +8136,7 @@ def _history_group_daily(rows):
 def _history_weekday_label(date_str: str, language: str = 'vi') -> str:
     try:
         dt = datetime.strptime(str(date_str), '%Y-%m-%d')
-        vi = ['Thá»© Hai', 'Thá»© Ba', 'Thá»© TÆ°', 'Thá»© NÄƒm', 'Thá»© SÃ¡u', 'Thá»© Báº£y', 'Chá»§ Nháº­t']
+        vi = ['Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy', 'Chủ Nhật']
         en = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         return (en if language == 'en' else vi)[dt.weekday()]
     except Exception:
@@ -8131,10 +8146,10 @@ def _history_weekday_label(date_str: str, language: str = 'vi') -> str:
 def _history_focus_meta(focus: float, language: str = 'vi'):
     focus = float(focus or 0.0)
     if focus < 50.0:
-        return ('ALERT' if language == 'en' else 'BÃO Äá»˜NG', 'danger', 'Critical review' if language == 'en' else 'Cáº§n Æ°u tiÃªn xem láº¡i')
+        return ('ALERT' if language == 'en' else 'BÁO ĐỘNG', 'danger', 'Critical review' if language == 'en' else 'Cần ưu tiên xem lại')
     if focus < 80.0:
-        return ('ATTENTION', 'attention', 'Review context' if language == 'en' else 'ÄÃNG CHÃš Ã')
-    return ('SAFE', 'safe', 'Low priority' if language == 'en' else 'Má»©c Æ°u tiÃªn tháº¥p')
+        return ('ATTENTION', 'attention', 'Review context' if language == 'en' else 'ĐÁNG CHÚ Ý')
+    return ('SAFE', 'safe', 'Low priority' if language == 'en' else 'Mức ưu tiên thấp')
 
 
 def teacher_history_content(teacher_id: int, status_message: str = "", search_query: str = "") -> str:
@@ -8152,7 +8167,7 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
             continue
         group = class_groups.setdefault(class_id, {
             'class_id': class_id,
-            'class_name': str(row.get('class_name') or 'Lá»›p Ä‘Ã£ xÃ³a'),
+            'class_name': str(row.get('class_name') or 'Lớp đã xóa'),
             'class_code': str(row.get('class_code') or ''),
             'sessions': set(),
             'students': set(),
@@ -8169,35 +8184,35 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
             group['days'].add(day)
 
     labels = {
-        'title': 'History' if en else 'Lá»‹ch sá»­',
+        'title': 'History' if en else 'Lịch sử',
         'subtitle': ('Review recorded activity by class and day. Open a class to see the full timeline.'
-                     if en else 'Xem hoáº¡t Ä‘á»™ng Ä‘Ã£ ghi nháº­n theo lá»›p vÃ  theo ngÃ y. Má»Ÿ má»™t lá»›p Ä‘á»ƒ xem toÃ n bá»™ lá»‹ch sá»­.'),
-        'classes': 'classes' if en else 'lá»›p há»c',
-        'sessions': 'sessions' if en else 'buá»•i há»c',
-        'students': 'students' if en else 'há»c sinh',
+                     if en else 'Xem hoạt động đã ghi nhận theo lớp và theo ngày. Mở một lớp để xem toàn bộ lịch sử.'),
+        'classes': 'classes' if en else 'lớp học',
+        'sessions': 'sessions' if en else 'buổi học',
+        'students': 'students' if en else 'học sinh',
         'ob': 'OB', 'evidence': 'Evidence',
-        'search_placeholder': 'Search student name...' if en else 'TÃ¬m tÃªn há»c sinh...',
-        'search': 'Search' if en else 'TÃ¬m kiáº¿m',
-        'clear': 'Clear search' if en else 'XÃ³a tÃ¬m kiáº¿m',
-        'search_results': 'Search results' if en else 'Káº¿t quáº£ tÃ¬m kiáº¿m',
-        'days': 'days' if en else 'ngÃ y',
-        'no_history': 'No history on the Server yet.' if en else 'ChÆ°a cÃ³ lá»‹ch sá»­ trÃªn Server.',
+        'search_placeholder': 'Search student name...' if en else 'Tìm tên học sinh...',
+        'search': 'Search' if en else 'Tìm kiếm',
+        'clear': 'Clear search' if en else 'Xóa tìm kiếm',
+        'search_results': 'Search results' if en else 'Kết quả tìm kiếm',
+        'days': 'days' if en else 'ngày',
+        'no_history': 'No history on the Server yet.' if en else 'Chưa có lịch sử trên Server.',
     }
 
     notice = ''
     if status_message == 'deleted':
-        notice = '<div class="history-notice success">'+('The session was moved to Main Admin trash. Server data is still retained.' if en else 'Buá»•i há»c Ä‘Ã£ Ä‘Æ°á»£c Ä‘Æ°a vÃ o thÃ¹ng rÃ¡c cá»§a Main Admin. Dá»¯ liá»‡u trÃªn Server váº«n Ä‘Æ°á»£c giá»¯ láº¡i.')+'</div>'
+        notice = '<div class="history-notice success">'+('The session was moved to Main Admin trash. Server data is still retained.' if en else 'Buổi học đã được đưa vào thùng rác của Main Admin. Dữ liệu trên Server vẫn được giữ lại.')+'</div>'
     elif status_message == 'cannot_delete_running':
-        notice = '<div class="history-notice error">'+('A running session cannot be deleted. End the session first.' if en else 'KhÃ´ng thá»ƒ xÃ³a session Ä‘ang cháº¡y. HÃ£y káº¿t thÃºc session trÆ°á»›c.')+'</div>'
+        notice = '<div class="history-notice error">'+('A running session cannot be deleted. End the session first.' if en else 'Không thể xóa session đang chạy. Hãy kết thúc session trước.')+'</div>'
     elif status_message == 'class_deleted':
-        notice = '<div class="history-notice success">'+('The class and all recorded history were permanently deleted.' if en else 'Lá»›p há»c vÃ  toÃ n bá»™ lá»‹ch sá»­ Ä‘Ã£ ghi nháº­n Ä‘Ã£ Ä‘Æ°á»£c xÃ³a vÄ©nh viá»…n.')+'</div>'
+        notice = '<div class="history-notice success">'+('The class and all recorded history were permanently deleted.' if en else 'Lớp học và toàn bộ lịch sử đã ghi nhận đã được xóa vĩnh viễn.')+'</div>'
     elif status_message == 'class_running':
-        notice = '<div class="history-notice error">'+('Cannot delete a class while a session is running. End the session first.' if en else 'KhÃ´ng thá»ƒ xÃ³a lá»›p khi Ä‘ang cÃ³ buá»•i há»c Ä‘ang cháº¡y. HÃ£y káº¿t thÃºc buá»•i há»c trÆ°á»›c.')+'</div>'
+        notice = '<div class="history-notice error">'+('Cannot delete a class while a session is running. End the session first.' if en else 'Không thể xóa lớp khi đang có buổi học đang chạy. Hãy kết thúc buổi học trước.')+'</div>'
 
     class_cards = ''
     for class_id, item in class_groups.items():
-        delete_confirm = ('Permanently delete this class and all recorded sessions, observations and evidence?' if en else 'XÃ³a vÄ©nh viá»…n lá»›p nÃ y cÃ¹ng toÃ n bá»™ buá»•i há»c, Observation vÃ  Evidence Ä‘Ã£ ghi nháº­n?')
-        delete_label = 'Delete class' if en else 'XÃ³a lá»›p'
+        delete_confirm = ('Permanently delete this class and all recorded sessions, observations and evidence?' if en else 'Xóa vĩnh viễn lớp này cùng toàn bộ buổi học, Observation và Evidence đã ghi nhận?')
+        delete_label = 'Delete class' if en else 'Xóa lớp'
         class_cards += f'''            <div class="hx-class-card">
                 <a class="hx-class-main" href="/teacher/history/class/{class_id}">
                     <div class="hx-class-identity">
@@ -8205,7 +8220,7 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
                         <div class="hx-class-copy">
                             <div class="hx-class-code">{escape(item['class_code'] or 'NO CODE')}</div>
                             <h3>{escape(item['class_name'])}</h3>
-                            <p>{len(item['days'])} {labels['days']} <span>â€¢</span> {len(item['sessions'])} {labels['sessions']}</p>
+                            <p>{len(item['days'])} {labels['days']} <span>•</span> {len(item['sessions'])} {labels['sessions']}</p>
                         </div>
                     </div>
                     <div class="hx-class-stats">
@@ -8219,7 +8234,7 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
                     <input type="hidden" name="return_section" value="history">
                     <button type="submit" class="hx-class-delete">{escape(delete_label)}</button>
                 </form>
-                <a class="hx-open" href="/teacher/history/class/{class_id}" aria-label="Open class history"><span>â†’</span></a>
+                <a class="hx-open" href="/teacher/history/class/{class_id}" aria-label="Open class history"><span>→</span></a>
             </div>
         '''
 
@@ -8238,10 +8253,10 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
             search_cards += f'''                <a class="hx-search-row" href="/teacher/history/day/{url_quote(day)}?class_id={class_id}">
                     <div>
                         <strong>{escape(row.get('full_name') or '')}</strong>
-                        <span>{escape(row.get('student_code') or 'â€”')} Â· {escape(row.get('class_name') or 'â€”')} Â· {escape(_display_date(day))}</span>
+                        <span>{escape(row.get('student_code') or '—')} · {escape(row.get('class_name') or '—')} · {escape(_display_date(day))}</span>
                     </div>
                     <div class="hx-search-ob"><b>{int(row.get('observation_count') or 0)}</b><span>OB</span></div>
-                    <div class="hx-open small"><span>â†’</span></div>
+                    <div class="hx-open small"><span>→</span></div>
                 </a>
             '''
         search_html = (
@@ -8262,13 +8277,13 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
             {notice}
             <form class="hx-search-form" method="get" action="/teacher">
                 <input type="hidden" name="section" value="history">
-                <div class="hx-search-input"><span>âŒ•</span><input name="q" value="{escape(query)}" placeholder="{escape(labels['search_placeholder'])}" autocomplete="off"></div>
+                <div class="hx-search-input"><span>⌕</span><input name="q" value="{escape(query)}" placeholder="{escape(labels['search_placeholder'])}" autocomplete="off"></div>
                 <button type="submit">{escape(labels['search'])}</button>
                 {('<a href="/teacher?section=history">'+labels['clear']+'</a>') if query else ''}
             </form>
             {search_html}
             <div class="hx-section-head">
-                <div><span class="eyebrow-small">{('CLASSES' if en else 'CÃC Lá»šP Há»ŒC')}</span><h3>{('Choose a class' if en else 'Chá»n má»™t lá»›p')}</h3><p>{('Open a class to review its recorded days.' if en else 'Má»Ÿ má»™t lá»›p Ä‘á»ƒ xem cÃ¡c ngÃ y Ä‘Ã£ ghi nháº­n.')}</p></div>
+                <div><span class="eyebrow-small">{('CLASSES' if en else 'CÁC LỚP HỌC')}</span><h3>{('Choose a class' if en else 'Chọn một lớp')}</h3><p>{('Open a class to review its recorded days.' if en else 'Mở một lớp để xem các ngày đã ghi nhận.')}</p></div>
                 <div class="hx-rule"></div>
             </div>
             <div class="hx-class-list">{empty}</div>
@@ -8337,27 +8352,27 @@ def teacher_history_class_content(teacher_id: int, class_id: int) -> str | None:
     if not rows:
         return None
     days = _history_group_daily(rows)
-    class_name = str(rows[0].get('class_name') or 'Lá»›p Ä‘Ã£ xÃ³a')
+    class_name = str(rows[0].get('class_name') or 'Lớp đã xóa')
     class_code = str(rows[0].get('class_code') or '')
     day_cards = ''
     for index, (day, item) in enumerate(days.items(), start=1):
         day_cards += f'''            <a class="hc-day-card" href="/teacher/history/day/{url_quote(day)}?class_id={int(class_id)}">
                 <div class="hc-day-index">{index:02d}</div>
                 <div class="hc-day-date"><div class="hc-day-week">{escape(_history_weekday_label(day, language))}</div><div class="hc-day-number">{escape(_display_date(day))}</div></div>
-                <div class="hc-day-metric"><b>{item['session_count']}</b><span>{'sessions' if en else 'buá»•i há»c'}</span></div>
-                <div class="hc-day-metric"><b>{item['student_count']}</b><span>{'students' if en else 'há»c sinh'}</span></div>
+                <div class="hc-day-metric"><b>{item['session_count']}</b><span>{'sessions' if en else 'buổi học'}</span></div>
+                <div class="hc-day-metric"><b>{item['student_count']}</b><span>{'students' if en else 'học sinh'}</span></div>
                 <div class="hc-day-metric"><b>{item['total_ob']}</b><span>OB</span></div>
-                <div class="hc-day-metric focus"><b>{item['avg_focus']:.1f}%</b><span>{'Average focus' if en else 'Táº­p trung TB'}</span></div>
-                <div class="hc-arrow">â†’</div>
+                <div class="hc-day-metric focus"><b>{item['avg_focus']:.1f}%</b><span>{'Average focus' if en else 'Tập trung TB'}</span></div>
+                <div class="hc-arrow">→</div>
             </a>
         '''
     return f'''        <section class="panel history-panel hc-page">
-            <a class="hc-back" href="/teacher?section=history"><span>â†</span><div><b>{'Back to History' if en else 'Quay láº¡i Lá»‹ch sá»­'}</b><small>{'All classes' if en else 'Táº¥t cáº£ lá»›p há»c'}</small></div></a>
+            <a class="hc-back" href="/teacher?section=history"><span>←</span><div><b>{'Back to History' if en else 'Quay lại Lịch sử'}</b><small>{'All classes' if en else 'Tất cả lớp học'}</small></div></a>
             <div class="hc-hero">
-                <div><div class="eyebrow-small">{'CLASS HISTORY' if en else 'Lá»ŠCH Sá»¬ Lá»šP'}</div><h2>{escape(class_name)}</h2><p>{escape(class_code or 'â€”')} <span>â€¢</span> {'Open a day to review students, sessions and focus.' if en else 'Má»Ÿ má»™t ngÃ y Ä‘á»ƒ xem há»c sinh, session vÃ  má»©c táº­p trung.'}</p></div>
-                <div class="hc-day-count"><b>{len(days)}</b><span>{'recorded days' if en else 'ngÃ y ghi nháº­n'}</span></div>
+                <div><div class="eyebrow-small">{'CLASS HISTORY' if en else 'LỊCH SỬ LỚP'}</div><h2>{escape(class_name)}</h2><p>{escape(class_code or '—')} <span>•</span> {'Open a day to review students, sessions and focus.' if en else 'Mở một ngày để xem học sinh, session và mức tập trung.'}</p></div>
+                <div class="hc-day-count"><b>{len(days)}</b><span>{'recorded days' if en else 'ngày ghi nhận'}</span></div>
             </div>
-            <div class="hc-section-head"><div><span class="eyebrow-small">{'TIMELINE' if en else 'DÃ’NG THá»œI GIAN'}</span><h3>{'Recorded days' if en else 'CÃ¡c ngÃ y Ä‘Ã£ ghi nháº­n'}</h3><p>{'Open a day to continue into students and sessions.' if en else 'Chá»n má»™t ngÃ y Ä‘á»ƒ xem tiáº¿p há»c sinh vÃ  cÃ¡c session.'}</p></div><div class="hc-line"></div><div class="hc-week-pill">{'MON â†’ SUN' if en else 'THá»¨ HAI â†’ CN'}</div></div>
+            <div class="hc-section-head"><div><span class="eyebrow-small">{'TIMELINE' if en else 'DÒNG THỜI GIAN'}</span><h3>{'Recorded days' if en else 'Các ngày đã ghi nhận'}</h3><p>{'Open a day to continue into students and sessions.' if en else 'Chọn một ngày để xem tiếp học sinh và các session.'}</p></div><div class="hc-line"></div><div class="hc-week-pill">{'MON → SUN' if en else 'THỨ HAI → CN'}</div></div>
             <div class="hc-days">{day_cards}</div>
         </section>
         <style>
@@ -8397,13 +8412,13 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
         return None
     en = language == 'en'
     subtitle = ('All unique students measured on this day, with average focus across every session.'
-                if en else 'Táº¥t cáº£ há»c sinh duy nháº¥t Ä‘Æ°á»£c Ä‘o trong ngÃ y, vá»›i Ä‘iá»ƒm táº­p trung trung bÃ¬nh qua má»i session.')
-    student_label = 'students' if en else 'há»c sinh'
-    session_label = 'sessions' if en else 'buá»•i há»c'
-    focus_label = 'Average focus' if en else 'Táº­p trung TB ngÃ y'
+                if en else 'Tất cả học sinh duy nhất được đo trong ngày, với điểm tập trung trung bình qua mọi session.')
+    student_label = 'students' if en else 'học sinh'
+    session_label = 'sessions' if en else 'buổi học'
+    focus_label = 'Average focus' if en else 'Tập trung TB ngày'
     evidence_label = 'Evidence' if en else 'Evidence'
     back_href = f'/teacher/history/class/{int(class_id)}' if class_id is not None else '/teacher?section=history'
-    back = 'Back to Class' if en and class_id is not None else ('Quay láº¡i lá»›p' if class_id is not None else ('Back to History' if en else 'Quay láº¡i Lá»‹ch sá»­'))
+    back = 'Back to Class' if en and class_id is not None else ('Quay lại lớp' if class_id is not None else ('Back to History' if en else 'Quay lại Lịch sử'))
 
     student_cards = ''
     for index, student in enumerate(day_item['student_list'], start=1):
@@ -8414,13 +8429,13 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
                 <div class="history-student-avatar">{escape(student['full_name'][:1].upper())}</div>
                 <div class="history-student-main">
                     <strong>{escape(student['full_name'])}</strong>
-                    <span>{escape(student['student_code'] or 'â€”')} Â· {student['session_count']} {session_label}</span>
+                    <span>{escape(student['student_code'] or '—')} · {student['session_count']} {session_label}</span>
                 </div>
                 <div class="history-student-ob"><b>{student['observation_count']}</b><span>OB</span></div>
                 <div class="history-student-evidence"><b>{student['evidence_count']}</b><span>{evidence_label}</span></div>
                 <div class="history-student-focus"><b>{student['daily_focus']:.1f}%</b><span>{focus_label}</span></div>
                 <div class="history-student-status"><strong>{status_label}</strong><small>{status_note}</small></div>
-                <div class="history-day-arrow">â€º</div>
+                <div class="history-day-arrow">›</div>
             </a>
         '''
 
@@ -8428,7 +8443,7 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
         <section class="panel history-panel daily-detail-panel">
             <div class="daily-detail-head">
                 <div>
-                    <a class="v15-back" href="{back_href}">â† {back}</a>
+                    <a class="v15-back" href="{back_href}">← {back}</a>
                     <div class="eyebrow-small">{escape(_history_weekday_label(str(date_str), language))}</div>
                     <h2 class="history-title">{escape(_display_date(str(date_str)))}</h2>
                     <p class="history-subtitle">{subtitle}</p>
@@ -8441,8 +8456,8 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
                 <div><span>{focus_label}</span><b>{day_item['avg_focus']:.1f}%</b></div>
             </div>
             <div class="history-divider"></div>
-            <div class="history-section-title"><div><strong>{'Students' if en else 'Há»c sinh'}</strong><span>{'Click a student to see every session from this day.' if en else 'Báº¥m vÃ o há»c sinh Ä‘á»ƒ xem toÃ n bá»™ session cá»§a em trong ngÃ y.'}</span></div></div>
-            <div class="history-daily-student-list">{student_cards or '<div class="history-search-empty">'+('No measured students.' if en else 'KhÃ´ng cÃ³ há»c sinh Ä‘Æ°á»£c Ä‘o.')+'</div>'}</div>
+            <div class="history-section-title"><div><strong>{'Students' if en else 'Học sinh'}</strong><span>{'Click a student to see every session from this day.' if en else 'Bấm vào học sinh để xem toàn bộ session của em trong ngày.'}</span></div></div>
+            <div class="history-daily-student-list">{student_cards or '<div class="history-search-empty">'+('No measured students.' if en else 'Không có học sinh được đo.')+'</div>'}</div>
         </section>
         <style>
 
@@ -8509,8 +8524,8 @@ def teacher_history_day_student_content(teacher_id: int, date_str: str, student_
         return None
     en = language == 'en'
     back_href = f'/teacher/history/day/{url_quote(str(date_str))}' + (f'?class_id={int(class_id)}' if class_id is not None else '')
-    back = f'Back to {_display_date(str(date_str))}' if en else f'Quay láº¡i ngÃ y {_display_date(str(date_str))}'
-    session_label = 'sessions' if en else 'buá»•i há»c'
+    back = f'Back to {_display_date(str(date_str))}' if en else f'Quay lại ngày {_display_date(str(date_str))}'
+    session_label = 'sessions' if en else 'buổi học'
     session_cards = ''
     for sess_id in student['session_ids']:
         sess = day_item['sessions'].get(sess_id)
@@ -8522,31 +8537,31 @@ def teacher_history_day_student_content(teacher_id: int, date_str: str, student_
         session_cards += f'''
             <a class="history-session-card" href="/teacher/history/session/{sess_id}/student/{int(student_id)}">
                 <div class="history-session-id">#{sess_id}</div>
-                <div class="history-session-info"><strong>{escape(sess['class_name'])}</strong><span>{escape(format_server_dt(sess['started_at']))} Â· {escape(format_duration(sess['duration_seconds']))}</span></div>
+                <div class="history-session-info"><strong>{escape(sess['class_name'])}</strong><span>{escape(format_server_dt(sess['started_at']))} · {escape(format_duration(sess['duration_seconds']))}</span></div>
                 <div class="history-session-stat"><b>{obs_count}</b><span>OB</span></div>
                 <div class="history-session-stat"><b>{evidence_count}</b><span>Evidence</span></div>
                 <div class="history-session-focus"><b>{focus:.1f}%</b><span>Focus</span></div>
-                <div class="history-day-arrow">â€º</div>
+                <div class="history-day-arrow">›</div>
             </a>
         '''
     return f'''
         <section class="panel history-panel daily-student-panel">
-            <a class="v15-back" href="{back_href}">â† {back}</a>
+            <a class="v15-back" href="{back_href}">← {back}</a>
             <div class="eyebrow-small">{escape(_history_weekday_label(str(date_str), language))}</div>
             <div class="daily-student-hero">
                 <div class="history-student-avatar">{escape(student['full_name'][:1].upper())}</div>
-                <div><h2 class="history-title">{escape(student['full_name'])}</h2><p class="history-subtitle">{escape(student['student_code'] or 'â€”')} Â· {escape(_display_date(str(date_str)))}</p></div>
-                <div class="daily-student-focus"><b>{student['daily_focus']:.1f}%</b><span>{'Daily average focus' if en else 'Táº­p trung trung bÃ¬nh ngÃ y'}</span></div>
+                <div><h2 class="history-title">{escape(student['full_name'])}</h2><p class="history-subtitle">{escape(student['student_code'] or '—')} · {escape(_display_date(str(date_str)))}</p></div>
+                <div class="daily-student-focus"><b>{student['daily_focus']:.1f}%</b><span>{'Daily average focus' if en else 'Tập trung trung bình ngày'}</span></div>
             </div>
             <div class="daily-summary-grid">
                 <div><span>{session_label}</span><b>{student['session_count']}</b></div>
                 <div><span>OB</span><b>{student['observation_count']}</b></div>
                 <div><span>Evidence</span><b>{student['evidence_count']}</b></div>
-                <div><span>{'Session count' if en else 'Sá»‘ session'}</span><b>{len(student['session_ids'])}</b></div>
+                <div><span>{'Session count' if en else 'Số session'}</span><b>{len(student['session_ids'])}</b></div>
             </div>
             <div class="history-divider"></div>
-            <div class="history-section-title"><div><strong>{'Sessions' if en else 'CÃ¡c session'}</strong><span>{'Open a session to review Observation + Evidence.' if en else 'Má»Ÿ tá»«ng session Ä‘á»ƒ xem Observation + Evidence.'}</span></div></div>
-            <div class="history-session-list">{session_cards or '<div class="history-search-empty">'+('No session data.' if en else 'KhÃ´ng cÃ³ dá»¯ liá»‡u session.')+'</div>'}</div>
+            <div class="history-section-title"><div><strong>{'Sessions' if en else 'Các session'}</strong><span>{'Open a session to review Observation + Evidence.' if en else 'Mở từng session để xem Observation + Evidence.'}</span></div></div>
+            <div class="history-session-list">{session_cards or '<div class="history-search-empty">'+('No session data.' if en else 'Không có dữ liệu session.')+'</div>'}</div>
         </section>
         <style>
             .daily-student-panel {{
@@ -8575,7 +8590,7 @@ def teacher_history_day_student_content(teacher_id: int, date_str: str, student_
                 transition:.18s ease;
             }}
             .daily-student-panel .v15-back::before {{
-                content:'â†';
+                content:'←';
                 width:26px;
                 height:26px;
                 border-radius:8px;
@@ -8805,7 +8820,7 @@ def teacher_history_class_route(request: Request, class_id: int):
         title="Class History",
         content=content,
         section="history",
-        full_name=str(payload.get('username') or 'GiÃ¡o viÃªn'),
+        full_name=str(payload.get('username') or 'Giáo viên'),
         teacher_id=teacher_id,
     )
 
@@ -8827,7 +8842,7 @@ def teacher_history_day(request: Request, date_str: str):
         title="Daily History",
         content=content,
         section="history",
-        full_name=str(payload.get('username') or 'GiÃ¡o viÃªn'),
+        full_name=str(payload.get('username') or 'Giáo viên'),
         teacher_id=teacher_id,
     )
 
@@ -8849,7 +8864,7 @@ def teacher_history_day_student(request: Request, date_str: str, student_id: int
         title="Student Daily History",
         content=content,
         section="history",
-        full_name=str(payload.get('username') or 'GiÃ¡o viÃªn'),
+        full_name=str(payload.get('username') or 'Giáo viên'),
         teacher_id=teacher_id,
     )
 
@@ -8886,13 +8901,13 @@ def _frame_focus_score(event_type: str, details: str = "", explicit_score=None) 
     detail = str(details or "").strip().lower()
     if et in FOCUS_FRAME_DEFAULTS:
         return FOCUS_FRAME_DEFAULTS[et]
-    if "ob_sleep" in detail or "nghi ngá» ngá»§" in detail or "nghi ngo ngu" in detail or "ngá»§/gá»¥c" in detail:
+    if "ob_sleep" in detail or "nghi ngờ ngủ" in detail or "nghi ngo ngu" in detail or "ngủ/gục" in detail:
         return 25.0
-    if "cÃºi Ä‘áº§u" in detail or "cui dau" in detail or "head down" in detail:
+    if "cúi đầu" in detail or "cui dau" in detail or "head down" in detail:
         return 65.0
-    if "quay left" in detail or "quay trÃ¡i" in detail or "quay trai" in detail:
+    if "quay left" in detail or "quay trái" in detail or "quay trai" in detail:
         return 75.0
-    if "quay right" in detail or "quay pháº£i" in detail or "quay phai" in detail:
+    if "quay right" in detail or "quay phải" in detail or "quay phai" in detail:
         return 75.0
     if et == "OBSERVATION":
         return 75.0
@@ -8943,7 +8958,7 @@ def _student_focus_records(session_duration: float, observations: list[dict]) ->
         bucket = grouped.setdefault(sid, {
             "student_id": sid,
             "student_code": row.get("student_code") or "",
-            "full_name": row.get("full_name") or "Há»c sinh",
+            "full_name": row.get("full_name") or "Học sinh",
             "focus": 100.0,
             "ob_count": 0,
             "observation_count": 0,
@@ -8986,8 +9001,8 @@ def _student_focus_records(session_duration: float, observations: list[dict]) ->
 def _student_given_name_sort_key(full_name: str):
     """Sort Vietnamese student names by given name (last name token), accent-insensitive.
 
-    Example: ``Anh Kiá»‡t`` is sorted under ``K`` because ``Kiá»‡t`` is the given
-    name. ``Tráº§n Gia Huy`` is sorted under ``H`` because ``Huy`` is the given
+    Example: ``Anh Kiệt`` is sorted under ``K`` because ``Kiệt`` is the given
+    name. ``Trần Gia Huy`` is sorted under ``H`` because ``Huy`` is the given
     name. The full normalized name/code remain stable tie-breakers.
     """
     import unicodedata
@@ -9005,22 +9020,22 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
     # English technical labels into the Vietnamese interface.
     _prefs = get_teacher_preferences(int(teacher_id))
     _en = str(_prefs.get("language") or "vi").lower() == "en"
-    L_SESSION = "SESSION" if _en else "BUá»”I Há»ŒC"
-    L_FOCUS_OVERVIEW = "FOCUS OVERVIEW" if _en else "Tá»”NG QUAN Táº¬P TRUNG"
-    L_CLASS_OVERVIEW = "CLASS OVERVIEW" if _en else "Tá»”NG QUAN Lá»šP Há»ŒC"
-    L_FOCUS_SCORE = "FOCUS SCORE" if _en else "ÄIá»‚M Táº¬P TRUNG"
-    L_FOCUS = "FOCUS" if _en else "Táº¬P TRUNG"
-    L_OB = "OB" if _en else "Sá» OB"
-    L_DANGER = "DANGER" if _en else "NGHIÃŠM TRá»ŒNG"
-    L_ATTENTION = "ATTENTION" if _en else "CHÃš Ã"
-    L_OB_TIME = "OB TIME" if _en else "THá»œI GIAN OB"
-    L_OBSERVATIONS = "observations" if _en else "láº§n ghi nháº­n"
-    L_EVIDENCE = "evidence" if _en else "minh chá»©ng"
+    L_SESSION = "SESSION" if _en else "BUỔI HỌC"
+    L_FOCUS_OVERVIEW = "FOCUS OVERVIEW" if _en else "TỔNG QUAN TẬP TRUNG"
+    L_CLASS_OVERVIEW = "CLASS OVERVIEW" if _en else "TỔNG QUAN LỚP HỌC"
+    L_FOCUS_SCORE = "FOCUS SCORE" if _en else "ĐIỂM TẬP TRUNG"
+    L_FOCUS = "FOCUS" if _en else "TẬP TRUNG"
+    L_OB = "OB" if _en else "SỐ OB"
+    L_DANGER = "DANGER" if _en else "NGHIÊM TRỌNG"
+    L_ATTENTION = "ATTENTION" if _en else "CHÚ Ý"
+    L_OB_TIME = "OB TIME" if _en else "THỜI GIAN OB"
+    L_OBSERVATIONS = "observations" if _en else "lần ghi nhận"
+    L_EVIDENCE = "evidence" if _en else "minh chứng"
     with SessionLocal() as db:
         session = db.execute(
             text("""
                 SELECT s.id, s.teacher_id, s.class_id,
-                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lá»›p Ä‘Ã£ xÃ³a') AS class_name,
+                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                        COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
                        s.status, s.started_at, s.ended_at, s.duration_seconds,
                        (SELECT COUNT(*) FROM observations o WHERE o.session_id = s.id) AS observation_count,
@@ -9069,7 +9084,7 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
         summary = grouped.get(sid, {
             "student_id": sid,
             "student_code": row["student_code"] or "",
-            "full_name": row["full_name"] or "Há»c sinh",
+            "full_name": row["full_name"] or "Học sinh",
             "focus": 100.0,
             "observation_count": 0,
             "danger_count": 0,
@@ -9080,7 +9095,7 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
             "observations": [],
         })
         summary["student_code"] = row["student_code"] or summary["student_code"] or ""
-        summary["full_name"] = row["full_name"] or summary["full_name"] or "Há»c sinh"
+        summary["full_name"] = row["full_name"] or summary["full_name"] or "Học sinh"
         student_cards.append(summary)
 
     # Teacher-controlled ordering. Severity is the default so the most important
@@ -9149,7 +9164,7 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
                         <div class="student-list-name-wrap">
                             <div class="student-list-name">{escape(str(student['full_name']))}</div>
                             <div class="student-list-code">{escape(str(student['student_code'] or '-'))}</div>
-                            <div class="student-list-meta-line">{student['observation_count']} {L_OB} <span>â€¢</span> {('Láº§n gáº§n nháº¥t ' + escape(format_server_dt(student.get('last_observed_at') or ''))) if student.get('last_observed_at') else 'ChÆ°a cÃ³ OB'}</div>
+                            <div class="student-list-meta-line">{student['observation_count']} {L_OB} <span>•</span> {('Lần gần nhất ' + escape(format_server_dt(student.get('last_observed_at') or ''))) if student.get('last_observed_at') else 'Chưa có OB'}</div>
                         </div>
                     </div>
                 </div>
@@ -9178,15 +9193,15 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
                 </div>
                 <div class="student-list-status">
                     <span class="student-severity-indicator {sev_class}" title="{escape(severity)}" aria-label="{escape(severity)}"></span>
-                    <span class="student-list-arrow">â†’</span>
+                    <span class="student-list-arrow">→</span>
                 </div>
             </a>
         """
 
     delete_html = "" if session["status"] == "RUNNING" else f"""
-        <form method="post" action="/teacher/history/delete" onsubmit="return confirm('ÄÆ°a session nÃ y vÃ o thÃ¹ng rÃ¡c cá»§a Main Admin?');">
+        <form method="post" action="/teacher/history/delete" onsubmit="return confirm('Đưa session này vào thùng rác của Main Admin?');">
             <input type="hidden" name="session_id" value="{int(session['id'])}">
-            <button class="history-delete-button" type="submit">XÃ³a buá»•i há»c</button>
+            <button class="history-delete-button" type="submit">Xóa buổi học</button>
         </form>
     """
 
@@ -9194,10 +9209,10 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
         <section class="history-focus-page">
             <div class="history-focus-hero">
                 <div>
-                    <a class="back-link" href="/teacher?section=history">â† Quay láº¡i lá»‹ch sá»­</a>
+                    <a class="back-link" href="/teacher?section=history">← Quay lại lịch sử</a>
                     <div class="eyebrow-small">{L_SESSION} #{int(session['id'])}</div>
                     <h2>{escape(session['class_name'])}</h2>
-                    <p>{escape(session['class_code'])} <span>â€¢</span> {format_server_dt(session['started_at'])}</p>
+                    <p>{escape(session['class_code'])} <span>•</span> {format_server_dt(session['started_at'])}</p>
                 </div>
                 {delete_html}
             </div>
@@ -9206,61 +9221,61 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
                 <div class="overview-card overview-card-main">
                     <span>{L_FOCUS_OVERVIEW}</span>
                     <strong>{danger_students}</strong>
-                    <small>há»c sinh cáº§n xem láº¡i</small>
+                    <small>học sinh cần xem lại</small>
                 </div>
-                <div class="overview-card"><span>Há»ŒC SINH</span><strong>{len(student_cards)}</strong><small>Ä‘Æ°á»£c chá»n Ä‘á»ƒ quÃ©t</small></div>
-                <div class="overview-card"><span>{L_ATTENTION}</span><strong>{attention_students}</strong><small>há»c sinh cáº§n chÃº Ã½</small></div>
-                <div class="overview-card"><span>{"SAFE" if _en else "BÃŒNH THÆ¯á»œNG"}</span><strong>{safe_students}</strong><small>khÃ´ng cÃ³ tÃ­n hiá»‡u Ä‘Ã¡ng chÃº Ã½</small></div>
+                <div class="overview-card"><span>HỌC SINH</span><strong>{len(student_cards)}</strong><small>được chọn để quét</small></div>
+                <div class="overview-card"><span>{L_ATTENTION}</span><strong>{attention_students}</strong><small>học sinh cần chú ý</small></div>
+                <div class="overview-card"><span>{"SAFE" if _en else "BÌNH THƯỜNG"}</span><strong>{safe_students}</strong><small>không có tín hiệu đáng chú ý</small></div>
             </div>
 
             <div class="history-focus-section-head">
-                <div><div class="eyebrow-small">{L_CLASS_OVERVIEW}</div><h3>Há»c sinh trong buá»•i há»c</h3><p>Má»—i há»c sinh chá»‰ xuáº¥t hiá»‡n má»™t láº§n. Chá»n má»™t dÃ²ng Ä‘á»ƒ xem cÃ¡c frame quan trá»ng.</p></div>
-                <div class="session-meta-pill">{len(student_cards)} há»c sinh Â· {int(session['observation_count'] or 0)} {L_OBSERVATIONS} Â· {evidence_count} {L_EVIDENCE}</div>
+                <div><div class="eyebrow-small">{L_CLASS_OVERVIEW}</div><h3>Học sinh trong buổi học</h3><p>Mỗi học sinh chỉ xuất hiện một lần. Chọn một dòng để xem các frame quan trọng.</p></div>
+                <div class="session-meta-pill">{len(student_cards)} học sinh · {int(session['observation_count'] or 0)} {L_OBSERVATIONS} · {evidence_count} {L_EVIDENCE}</div>
             </div>
 
             <form class="student-roster-toolbar" method="get" action="/teacher/history/session/{int(session_id)}">
                 <div class="student-roster-search-wrap">
-                    <span class="student-roster-search-icon">âŒ•</span>
-                    <input name="q" value="{escape(student_search)}" placeholder="TÃ¬m há»c sinh theo tÃªn hoáº·c mÃ£..." autocomplete="off">
+                    <span class="student-roster-search-icon">⌕</span>
+                    <input name="q" value="{escape(student_search)}" placeholder="Tìm học sinh theo tên hoặc mã..." autocomplete="off">
                 </div>
                 <div class="student-roster-sort-wrap">
-                    <label for="student-sort">Sáº¯p xáº¿p</label>
+                    <label for="student-sort">Sắp xếp</label>
                     <select id="student-sort" name="sort">
-                        <option value="severity" {"selected" if student_sort == "severity" else ""}>Má»©c Ä‘á»™ â€¢ NghiÃªm trá»ng â†’ BÃ¬nh thÆ°á»ng</option>
-                        <option value="az" {"selected" if student_sort == "az" else ""}>TÃªn gá»i â€¢ A â†’ Z</option>
-                        <option value="za" {"selected" if student_sort == "za" else ""}>TÃªn gá»i â€¢ Z â†’ A</option>
+                        <option value="severity" {"selected" if student_sort == "severity" else ""}>Mức độ • Nghiêm trọng → Bình thường</option>
+                        <option value="az" {"selected" if student_sort == "az" else ""}>Tên gọi • A → Z</option>
+                        <option value="za" {"selected" if student_sort == "za" else ""}>Tên gọi • Z → A</option>
                     </select>
                 </div>
-                <button class="student-roster-search-button" type="submit">TÃ¬m há»c sinh</button>
-                {('<a class="student-roster-clear" href="/teacher/history/session/'+str(int(session_id))+'?sort='+url_quote(student_sort)+'">XÃ³a tÃ¬m kiáº¿m</a>' if student_search else '')}
-                <div class="student-roster-page-info">{total_visible if student_search else len(student_cards)} há»c sinh Â· Trang {student_page}/{total_pages}</div>
+                <button class="student-roster-search-button" type="submit">Tìm học sinh</button>
+                {('<a class="student-roster-clear" href="/teacher/history/session/'+str(int(session_id))+'?sort='+url_quote(student_sort)+'">Xóa tìm kiếm</a>' if student_search else '')}
+                <div class="student-roster-page-info">{total_visible if student_search else len(student_cards)} học sinh · Trang {student_page}/{total_pages}</div>
             </form>
 
             <div class="student-severity-legend">
-                <span><i class="student-severity-indicator safe"></i>BÃ¬nh thÆ°á»ng</span>
-                <span><i class="student-severity-indicator attention"></i>HÆ¡i nghiÃªm trá»ng</span>
-                <span><i class="student-severity-indicator danger"></i>NghiÃªm trá»ng</span>
+                <span><i class="student-severity-indicator safe"></i>Bình thường</span>
+                <span><i class="student-severity-indicator attention"></i>Hơi nghiêm trọng</span>
+                <span><i class="student-severity-indicator danger"></i>Nghiêm trọng</span>
             </div>
 
             <div class="student-focus-list-wrap">
                 <div class="student-focus-list-header">
-                    <div class="list-head student-head-student">Há»ŒC SINH</div>
+                    <div class="list-head student-head-student">HỌC SINH</div>
                     <div class="list-head student-head-focus">{L_FOCUS_SCORE}</div>
                     <div class="list-head">{L_OB}</div>
                     <div class="list-head">{L_DANGER}</div>
                     <div class="list-head">{L_ATTENTION}</div>
                     <div class="list-head">{L_OB_TIME}</div>
-                    <div class="list-head student-head-status" aria-label="Má»©c Ä‘á»™"></div>
+                    <div class="list-head student-head-status" aria-label="Mức độ"></div>
                 </div>
-                {list_rows_html if list_rows_html else ('<div class="focus-empty">KhÃ´ng tÃ¬m tháº¥y há»c sinh phÃ¹ há»£p.</div>' if student_search else '<div class="focus-empty">ChÆ°a cÃ³ há»c sinh trong roster cá»§a session.</div>')}
+                {list_rows_html if list_rows_html else ('<div class="focus-empty">Không tìm thấy học sinh phù hợp.</div>' if student_search else '<div class="focus-empty">Chưa có học sinh trong roster của session.</div>')}
             </div>
 
             <div class="student-pagination">
-                <div class="student-pagination-summary">Hiá»ƒn thá»‹ {((page_start + 1) if total_visible else 0)}â€“{min(page_start + students_per_page, total_visible)} / {total_visible}</div>
+                <div class="student-pagination-summary">Hiển thị {((page_start + 1) if total_visible else 0)}–{min(page_start + students_per_page, total_visible)} / {total_visible}</div>
                 <div class="student-pagination-buttons">
-                    {('<a class="page-button" href="/teacher/history/session/'+str(int(session_id))+'?q='+url_quote(student_search)+'&sort='+url_quote(student_sort)+'&page='+str(student_page-1)+'">â† TrÆ°á»›c</a>' if student_page > 1 else '<span class="page-button disabled">â† TrÆ°á»›c</span>')}
+                    {('<a class="page-button" href="/teacher/history/session/'+str(int(session_id))+'?q='+url_quote(student_search)+'&sort='+url_quote(student_sort)+'&page='+str(student_page-1)+'">← Trước</a>' if student_page > 1 else '<span class="page-button disabled">← Trước</span>')}
                     {''.join(f'<a class="page-button {"active" if page_num == student_page else ""}" href="/teacher/history/session/{int(session_id)}?q={url_quote(student_search)}&sort={url_quote(student_sort)}&page={page_num}">{page_num}</a>' for page_num in range(1, total_pages + 1))}
-                    {('<a class="page-button" href="/teacher/history/session/'+str(int(session_id))+'?q='+url_quote(student_search)+'&sort='+url_quote(student_sort)+'&page='+str(student_page+1)+'">Sau â†’</a>' if student_page < total_pages else '<span class="page-button disabled">Sau â†’</span>')}
+                    {('<a class="page-button" href="/teacher/history/session/'+str(int(session_id))+'?q='+url_quote(student_search)+'&sort='+url_quote(student_sort)+'&page='+str(student_page+1)+'">Sau →</a>' if student_page < total_pages else '<span class="page-button disabled">Sau →</span>')}
                 </div>
             </div>
         </section>
@@ -9385,7 +9400,7 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
         session = db.execute(
             text("""
                 SELECT s.id, s.class_id, s.scan_date,
-                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lá»›p Ä‘Ã£ xÃ³a') AS class_name,
+                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                        COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
                        s.started_at, s.ended_at, s.duration_seconds
                 FROM sessions s
@@ -9471,10 +9486,10 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
         for page_no in range(1, evidence_total_pages + 1):
             active = ' active' if page_no == evidence_page else ''
             page_links += f'<a class="observation-page-number{active}" href="?page={page_no}">{page_no}</a>'
-        prev_html = f'<a class="observation-page-btn" href="?page={max(1, evidence_page - 1)}">â€¹</a>' if evidence_page > 1 else '<span class="observation-page-btn disabled">â€¹</span>'
-        next_html = f'<a class="observation-page-btn" href="?page={min(evidence_total_pages, evidence_page + 1)}">â€º</a>' if evidence_page < evidence_total_pages else '<span class="observation-page-btn disabled">â€º</span>'
+        prev_html = f'<a class="observation-page-btn" href="?page={max(1, evidence_page - 1)}">‹</a>' if evidence_page > 1 else '<span class="observation-page-btn disabled">‹</span>'
+        next_html = f'<a class="observation-page-btn" href="?page={min(evidence_total_pages, evidence_page + 1)}">›</a>' if evidence_page < evidence_total_pages else '<span class="observation-page-btn disabled">›</span>'
         pagination_html = f'<div class="observation-pagination">'
-        pagination_html += f'<div class="observation-pagination-left">{("Showing" if not is_vi else "Hiá»ƒn thá»‹")} {evidence_start + 1 if evidence_total else 0}â€“{min(evidence_start + evidence_page_size, evidence_total)} / {evidence_total} {("frames" if not is_vi else "khung hÃ¬nh")}</div>'
+        pagination_html += f'<div class="observation-pagination-left">{("Showing" if not is_vi else "Hiển thị")} {evidence_start + 1 if evidence_total else 0}–{min(evidence_start + evidence_page_size, evidence_total)} / {evidence_total} {("frames" if not is_vi else "khung hình")}</div>'
         pagination_html += f'<div class="observation-pagination-controls">{prev_html}{page_links}{next_html}</div></div>'
 
     groups = {"DANGER": [], "NOT REALLY DANGER": [], "SAFE": []}
@@ -9483,18 +9498,18 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
 
     is_vi = language == 'vi'
     ui = {
-        'page_title': 'ÄÃ¡nh giÃ¡ má»©c Ä‘á»™ táº­p trung' if is_vi else 'Student Focus Review',
-        'back_title': 'Quay láº¡i lá»‹ch sá»­' if is_vi else 'Back to History',
-        'back_sub': 'Danh sÃ¡ch cÃ¡c buá»•i há»c' if is_vi else 'Session history',
-        'review_kicker': 'Táº¬P TRUNG Â· BUá»”I Há»ŒC' if is_vi else 'FOCUS REVIEW Â· SESSION',
-        'score': 'ÄIá»‚M Táº¬P TRUNG' if is_vi else 'FOCUS SCORE',
-        'monitoring': 'THEO DÃ•I' if is_vi else 'MONITORING',
-        'ob_events': 'Sá» OB' if is_vi else 'OB EVENTS',
-        'danger': 'NGHIÃŠM TRá»ŒNG' if is_vi else 'DANGER',
-        'evidence': 'MINH CHá»¨NG' if is_vi else 'EVIDENCE',
-        'review_note_title': 'GiÃ¡o viÃªn xem xÃ©t' if is_vi else 'Teacher Review',
-        'review_note_text': ('God Eyes ghi nháº­n cÃ¡c quan sÃ¡t vÃ  minh chá»©ng Ä‘á»ƒ giÃ¡o viÃªn xem xÃ©t. Äiá»ƒm táº­p trung lÃ  chá»‰ sá»‘ há»— trá»£ xem láº¡i, khÃ´ng pháº£i káº¿t luáº­n cuá»‘i cÃ¹ng vá» há»c sinh.' if is_vi else 'God Eyes records observations and evidence for teacher review. Focus Score is a review signal, not a final judgment about the student.'),
-        'empty': 'ChÆ°a cÃ³ quan sÃ¡t nÃ o Ä‘Æ°á»£c ghi nháº­n trong buá»•i há»c nÃ y.' if is_vi else 'No observations were recorded for this student in this session.',
+        'page_title': 'Đánh giá mức độ tập trung' if is_vi else 'Student Focus Review',
+        'back_title': 'Quay lại lịch sử' if is_vi else 'Back to History',
+        'back_sub': 'Danh sách các buổi học' if is_vi else 'Session history',
+        'review_kicker': 'TẬP TRUNG · BUỔI HỌC' if is_vi else 'FOCUS REVIEW · SESSION',
+        'score': 'ĐIỂM TẬP TRUNG' if is_vi else 'FOCUS SCORE',
+        'monitoring': 'THEO DÕI' if is_vi else 'MONITORING',
+        'ob_events': 'SỐ OB' if is_vi else 'OB EVENTS',
+        'danger': 'NGHIÊM TRỌNG' if is_vi else 'DANGER',
+        'evidence': 'MINH CHỨNG' if is_vi else 'EVIDENCE',
+        'review_note_title': 'Giáo viên xem xét' if is_vi else 'Teacher Review',
+        'review_note_text': ('God Eyes ghi nhận các quan sát và minh chứng để giáo viên xem xét. Điểm tập trung là chỉ số hỗ trợ xem lại, không phải kết luận cuối cùng về học sinh.' if is_vi else 'God Eyes records observations and evidence for teacher review. Focus Score is a review signal, not a final judgment about the student.'),
+        'empty': 'Chưa có quan sát nào được ghi nhận trong buổi học này.' if is_vi else 'No observations were recorded for this student in this session.',
     }
 
     def render_observation_card(row: dict, number: int) -> str:
@@ -9503,29 +9518,29 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
             visual = f"""
                 <a class=\"observation-frame-link\" href=\"/teacher/history/evidence/{evidence_id}\" target=\"_blank\">
                     <img src=\"/api/v1/evidence/{evidence_id}\" alt=\"Evidence {evidence_id}\" loading=\"lazy\">
-                    <span>{'Má»Ÿ áº£nh lá»›n â†—' if is_vi else 'Open full image â†—'}</span>
+                    <span>{'Mở ảnh lớn ↗' if is_vi else 'Open full image ↗'}</span>
                 </a>
             """
         else:
-            visual = f'<div class="observation-frame-empty"><b>GE</b><span>{"KhÃ´ng cÃ³ áº£nh minh chá»©ng" if is_vi else "No evidence frame"}</span></div>'
+            visual = f'<div class="observation-frame-empty"><b>GE</b><span>{"Không có ảnh minh chứng" if is_vi else "No evidence frame"}</span></div>'
         severity = str(row["severity"])
         sev_class = str(row["severity_class"])
         event_type = escape(str(row.get("event_type") or "OBSERVATION").replace("_", " "))
         focus_at = max(0, min(100, round(float(row["focus_after"]))))
         confidence = max(0, min(100, round(float(row.get("confidence") or 0.0) * 100)))
-        duration = _format_clock_seconds(float(row.get("duration_seconds") or 0)) if float(row.get("duration_seconds") or 0) > 0 else "â€”"
+        duration = _format_clock_seconds(float(row.get("duration_seconds") or 0)) if float(row.get("duration_seconds") or 0) > 0 else "—"
         return f"""
             <article class="observation-focus-card {sev_class}">
                 <div class="observation-frame">{visual}<div class="frame-number">#{number:02d}</div></div>
                 <div class="observation-card-content">
                     <div class="observation-card-header"><div><div class="observation-time">{escape(format_server_dt(row['observed_at']))}</div><h4>{event_type}</h4></div><span class="severity-badge {sev_class}">{escape(severity)}</span></div>
-                    <div class="observation-focus-highlight"><span>{'Táº¬P TRUNG Táº I KHUNG HÃŒNH' if is_vi else 'FOCUS AT FRAME'}</span><strong>{focus_at}%</strong></div>
+                    <div class="observation-focus-highlight"><span>{'TẬP TRUNG TẠI KHUNG HÌNH' if is_vi else 'FOCUS AT FRAME'}</span><strong>{focus_at}%</strong></div>
                     <div class="observation-data-grid">
-                        <div><span>{'THá»œI GIAN OB' if is_vi else 'OB TIME'}</span><strong>{escape(duration)}</strong></div>
-                        <div><span>{'Äá»˜ TIN Cáº¬Y' if is_vi else 'CONFIDENCE'}</span><strong>{confidence}%</strong></div>
+                        <div><span>{'THỜI GIAN OB' if is_vi else 'OB TIME'}</span><strong>{escape(duration)}</strong></div>
+                        <div><span>{'ĐỘ TIN CẬY' if is_vi else 'CONFIDENCE'}</span><strong>{confidence}%</strong></div>
                     </div>
                     <div class="observation-details">{escape(str(row.get('details') or 'Observation recorded for teacher review.'))}</div>
-                    <div class="observation-footer"><span>Evidence {('available' if evidence_id else 'not available')}</span><span>{'Táº­p trung táº¡i khung hÃ¬nh' if is_vi else 'Frame focus'} {focus_at}%</span></div>
+                    <div class="observation-footer"><span>Evidence {('available' if evidence_id else 'not available')}</span><span>{'Tập trung tại khung hình' if is_vi else 'Frame focus'} {focus_at}%</span></div>
                 </div>
             </article>
         """
@@ -9533,16 +9548,16 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
     html_sections = ""
     card_number = evidence_start
     section_meta = ([
-        ('NGHIÃŠM TRá»ŒNG','danger','CÃ¡c khung hÃ¬nh quan trá»ng cáº§n giÃ¡o viÃªn xem xÃ©t.'),
-        ('HÆ I NGHIÃŠM TRá»ŒNG','attention','CÃ¡c tÃ­n hiá»‡u Ã­t kháº©n cáº¥p hÆ¡n nhÆ°ng váº«n nÃªn xem láº¡i.'),
-        ('BÃŒNH THÆ¯á»œNG','safe','CÃ¡c khung hÃ¬nh khÃ´ng cÃ³ tÃ­n hiá»‡u Ä‘Ã¡ng chÃº Ã½.')
+        ('NGHIÊM TRỌNG','danger','Các khung hình quan trọng cần giáo viên xem xét.'),
+        ('HƠI NGHIÊM TRỌNG','attention','Các tín hiệu ít khẩn cấp hơn nhưng vẫn nên xem lại.'),
+        ('BÌNH THƯỜNG','safe','Các khung hình không có tín hiệu đáng chú ý.')
     ] if is_vi else [
         ('DANGER','danger','Important frames that deserve the teacher\'s attention.'),
         ('ATTENTION','attention','Signals that are less urgent but worth reviewing.'),
         ('SAFE','safe','Frames with no notable signal.')
     ])
     for label, cls, help_text in section_meta:
-        group_key = {'NGHIÃŠM TRá»ŒNG':'DANGER','HÆ I NGHIÃŠM TRá»ŒNG':'NOT REALLY DANGER','BÃŒNH THÆ¯á»œNG':'SAFE'}.get(label, label)
+        group_key = {'NGHIÊM TRỌNG':'DANGER','HƠI NGHIÊM TRỌNG':'NOT REALLY DANGER','BÌNH THƯỜNG':'SAFE'}.get(label, label)
         items = groups.setdefault(group_key, [])
         if not items:
             continue
@@ -9552,7 +9567,7 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
             cards += render_observation_card(row, card_number)
         html_sections += f"""
             <section class="observation-section">
-                <div class="observation-section-head"><div><div class="section-tag {cls}">{escape(label)}</div><h3>{len(items)} {'khung hÃ¬nh' if is_vi else ('frame' if len(items)==1 else 'frames')}</h3><p>{escape(help_text)}</p></div></div>
+                <div class="observation-section-head"><div><div class="section-tag {cls}">{escape(label)}</div><h3>{len(items)} {'khung hình' if is_vi else ('frame' if len(items)==1 else 'frames')}</h3><p>{escape(help_text)}</p></div></div>
                 <div class="observation-focus-grid">{cards}</div>
             </section>
         """
@@ -9565,7 +9580,7 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
                 <div class="student-detail-hero">
                     <div>
                         <a class="student-detail-back-button" href="/teacher/history/day/{url_quote(str(session.get('scan_date') or _local_date_from_timestamp(session['started_at'])))}/student/{int(student_id)}">
-                            <span class="student-detail-back-icon">â†</span>
+                            <span class="student-detail-back-icon">←</span>
                             <span>
                                 <b>{ui["back_title"]}</b>
                                 <small>{ui["back_sub"]}</small>
@@ -9573,7 +9588,7 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
                         </a>
                         <div class="eyebrow-small">{ui["review_kicker"]} #{session_id}</div>
                         <h2>{escape(str(roster['full_name']))}</h2>
-                        <p>{escape(str(roster['student_code'] or '-'))} <span>â€¢</span> {escape(str(session['class_code'] or session['class_name']))} <span>â€¢</span> {format_server_dt(session['started_at'])}</p>
+                        <p>{escape(str(roster['student_code'] or '-'))} <span>•</span> {escape(str(session['class_code'] or session['class_name']))} <span>•</span> {format_server_dt(session['started_at'])}</p>
                     </div>
                     <div class="focus-hero-score"><span>{ui["score"]}</span><strong>{focus}%</strong><div class="hero-meter"><span style="width:{focus}%"></span></div></div>
                 </div>
@@ -9660,7 +9675,7 @@ def teacher_history_session_student(request: Request, session_id: int, student_i
             </style>
         """,
         section="history",
-        full_name=str(payload.get("username") or "GiÃ¡o viÃªn"),
+        full_name=str(payload.get("username") or "Giáo viên"),
         teacher_id=teacher_id,
     )
 
@@ -9674,7 +9689,7 @@ def teacher_history_evidence_page(request: Request, evidence_id: int):
     language = 'en' if get_teacher_preferences(teacher_id).get('language') == 'en' else 'vi'
     with SessionLocal() as db:
         row = db.execute(
-            text("SELECT e.id, e.student_id, e.student_code, e.full_name, e.captured_at, e.event_type, e.confidence, s.id AS session_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lá»›p Ä‘Ã£ xÃ³a') AS class_name, COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code FROM evidence e JOIN sessions s ON s.id=e.session_id LEFT JOIN classes c ON c.id=s.class_id WHERE e.id=:evidence_id AND s.teacher_id=:teacher_id AND COALESCE(s.deleted_at, '')='' LIMIT 1"),
+            text("SELECT e.id, e.student_id, e.student_code, e.full_name, e.captured_at, e.event_type, e.confidence, s.id AS session_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name, COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code FROM evidence e JOIN sessions s ON s.id=e.session_id LEFT JOIN classes c ON c.id=s.class_id WHERE e.id=:evidence_id AND s.teacher_id=:teacher_id AND COALESCE(s.deleted_at, '')='' LIMIT 1"),
             {'evidence_id': evidence_id, 'teacher_id': teacher_id}
         ).mappings().first()
     if row is None:
@@ -9682,17 +9697,17 @@ def teacher_history_evidence_page(request: Request, evidence_id: int):
     en = language == 'en'
     back_url = f"/teacher/history/session/{int(row['session_id'])}/student/{int(row['student_id'])}"
     return teacher_shell(
-        title='Evidence Viewer' if en else 'Xem minh chá»©ng',
+        title='Evidence Viewer' if en else 'Xem minh chứng',
         content=f'''
             <section class="evidence-viewer-page">
-                <a class="evidence-back-button" href="{back_url}"><span>â†</span><b>{'Back to Student Focus Review' if en else 'Quay láº¡i Ä‘Ã¡nh giÃ¡ há»c sinh'}</b></a>
+                <a class="evidence-back-button" href="{back_url}"><span>←</span><b>{'Back to Student Focus Review' if en else 'Quay lại đánh giá học sinh'}</b></a>
                 <div class="evidence-viewer-head">
                     <div>
-                        <div class="eyebrow-small">{'EVIDENCE VIEWER' if en else 'TRÃŒNH XEM MINH CHá»¨NG'}</div>
+                        <div class="eyebrow-small">{'EVIDENCE VIEWER' if en else 'TRÌNH XEM MINH CHỨNG'}</div>
                         <h2>{escape(str(row['full_name'] or 'Student'))}</h2>
-                        <p>{escape(str(row['student_code'] or 'â€”'))} Â· {escape(str(row['class_code'] or row['class_name']))} Â· {escape(format_server_dt(row['captured_at']))}</p>
+                        <p>{escape(str(row['student_code'] or '—'))} · {escape(str(row['class_code'] or row['class_name']))} · {escape(format_server_dt(row['captured_at']))}</p>
                     </div>
-                    <div class="evidence-viewer-meta"><span>{escape(str(row['event_type'] or 'OBSERVATION').replace('_',' '))}</span><strong>{float(row['confidence'] or 0.0)*100:.0f}%</strong><small>{'Confidence' if en else 'Äá»™ tin cáº­y'}</small></div>
+                    <div class="evidence-viewer-meta"><span>{escape(str(row['event_type'] or 'OBSERVATION').replace('_',' '))}</span><strong>{float(row['confidence'] or 0.0)*100:.0f}%</strong><small>{'Confidence' if en else 'Độ tin cậy'}</small></div>
                 </div>
                 <div class="evidence-large-card"><img src="/api/v1/evidence/{int(evidence_id)}" alt="Evidence {int(evidence_id)}"></div>
             </section>
@@ -9715,7 +9730,7 @@ def teacher_history_evidence_page(request: Request, evidence_id: int):
             </style>
         ''',
         section='history',
-        full_name=str(payload.get('username') or 'GiÃ¡o viÃªn'),
+        full_name=str(payload.get('username') or 'Giáo viên'),
         teacher_id=teacher_id,
     )
 
@@ -9834,7 +9849,7 @@ def teacher_history_student_day(request: Request, student_id: int, date: str):
             text("""
                 SELECT o.id, o.student_id, o.student_code, o.full_name, o.observed_at,
                        o.event_type, o.confidence, o.assessment, o.details, o.evidence_id,
-                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lá»›p Ä‘Ã£ xÃ³a') AS class_name
+                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name
                 FROM observations o
                 JOIN sessions s ON s.id = o.session_id
                 LEFT JOIN classes c ON c.id = s.class_id
@@ -9855,7 +9870,7 @@ def teacher_history_student_day(request: Request, student_id: int, date: str):
         back = f"/teacher?section=history&q={escape(search_query)}" if search_query else "/teacher?section=history"
         return RedirectResponse(url=back, status_code=303)
 
-    student_name = filtered[0]["full_name"] or f"Há»c sinh #{student_id}"
+    student_name = filtered[0]["full_name"] or f"Học sinh #{student_id}"
     student_code = filtered[0]["student_code"] or "-"
     class_names = sorted({str(row["class_name"]) for row in filtered if row["class_name"]})
     confidence_values = [float(row["confidence"] or 0.0) for row in filtered]
@@ -9867,21 +9882,21 @@ def teacher_history_student_day(request: Request, student_id: int, date: str):
         evidence_id = int(row["evidence_id"]) if row["evidence_id"] else 0
         if evidence_id:
             evidence_html = f"""
-                <a class="observation-image-link" href="/api/v1/evidence/{evidence_id}" target="_blank" title="Má»Ÿ áº£nh evidence">
+                <a class="observation-image-link" href="/api/v1/evidence/{evidence_id}" target="_blank" title="Mở ảnh evidence">
                     <img class="observation-image" src="/api/v1/evidence/{evidence_id}" alt="Evidence observation {evidence_id}" loading="lazy">
-                    <span class="image-overlay">Xem áº£nh</span>
+                    <span class="image-overlay">Xem ảnh</span>
                 </a>
             """
         else:
             evidence_html = """
                 <div class="observation-image-fallback">
                     <div class="fallback-icon">GE</div>
-                    <div class="fallback-text">KhÃ´ng cÃ³ áº£nh minh chá»©ng</div>
+                    <div class="fallback-text">Không có ảnh minh chứng</div>
                 </div>
             """
 
         raw_details = str(row["details"] or "").strip()
-        details = raw_details if raw_details else "Observation Ä‘Æ°á»£c ghi nháº­n trong phiÃªn há»c."
+        details = raw_details if raw_details else "Observation được ghi nhận trong phiên học."
         confidence = float(row["confidence"] or 0.0)
         assessment = str(row["assessment"] or "OBSERVATION").replace("_", " ").title()
         event_type = "Observation"
@@ -9907,11 +9922,11 @@ def teacher_history_student_day(request: Request, student_id: int, date: str):
                         <span class="meta-chip">{escape(class_name)}</span>
                         <span class="meta-chip">{escape(assessment)}</span>
                     </div>
-                    <div class="observation-detail-label">ThÃ´ng tin</div>
+                    <div class="observation-detail-label">Thông tin</div>
                     <p class="observation-details">{escape(details)}</p>
                     <div class="observation-footer">
                         <span>Confidence {confidence * 100:.0f}%</span>
-                        <span>{"CÃ³ evidence" if evidence_id else "KhÃ´ng cÃ³ evidence"}</span>
+                        <span>{"Có evidence" if evidence_id else "Không có evidence"}</span>
                     </div>
                 </div>
             </article>
@@ -9921,15 +9936,15 @@ def teacher_history_student_day(request: Request, student_id: int, date: str):
     classes_text = ", ".join(class_names) if class_names else "-"
 
     return teacher_shell(
-        title="Observation theo ngÃ y",
+        title="Observation theo ngày",
         content=f"""
             <section class="panel history-panel student-day-panel">
                 <div class="student-day-top">
                     <div>
-                        <a class="back-link" href="{back}">â† Quay láº¡i lá»‹ch sá»­</a>
+                        <a class="back-link" href="{back}">← Quay lại lịch sử</a>
                         <div class="eyebrow-small">STUDENT HISTORY</div>
                         <h2 class="history-title">{escape(student_name)}</h2>
-                        <p class="history-subtitle">{escape(student_code)} Â· NgÃ y {escape(_display_date(selected_date.strftime('%Y-%m-%d')))} Â· {escape(classes_text)}</p>
+                        <p class="history-subtitle">{escape(student_code)} · Ngày {escape(_display_date(selected_date.strftime('%Y-%m-%d')))} · {escape(classes_text)}</p>
                     </div>
                     <div class="student-day-hero-badge">{len(filtered)} observations</div>
                 </div>
@@ -9938,28 +9953,28 @@ def teacher_history_student_day(request: Request, student_id: int, date: str):
                     <div class="student-avatar">{escape(student_name[:1].upper())}</div>
                     <div class="student-profile-main">
                         <div class="student-profile-name">{escape(student_name)}</div>
-                        <div class="student-profile-meta">MÃ£ há»c sinh {escape(student_code)} Â· {escape(classes_text)}</div>
+                        <div class="student-profile-meta">Mã học sinh {escape(student_code)} · {escape(classes_text)}</div>
                     </div>
                     <div class="student-profile-side">
-                        <span>Confidence trung bÃ¬nh</span>
+                        <span>Confidence trung bình</span>
                         <strong>{avg_confidence * 100:.0f}%</strong>
                     </div>
                 </div>
 
                 <div class="student-day-metrics">
-                    <div><span>NgÃ y</span><strong>{escape(_display_date(selected_date.strftime('%Y-%m-%d')))}</strong></div>
+                    <div><span>Ngày</span><strong>{escape(_display_date(selected_date.strftime('%Y-%m-%d')))}</strong></div>
                     <div><span>Observation</span><strong>{len(filtered)}</strong></div>
                     <div><span>Evidence</span><strong>{evidence_count}</strong></div>
-                    <div><span>Lá»›p</span><strong>{len(class_names)}</strong></div>
+                    <div><span>Lớp</span><strong>{len(class_names)}</strong></div>
                 </div>
 
                 <div class="detail-section">
                     <div class="detail-section-head">
                         <div>
-                            <h3>Hoáº¡t Ä‘á»™ng quan sÃ¡t</h3>
-                            <span>áº¢nh minh chá»©ng vÃ  thÃ´ng tin cá»§a tá»«ng observation</span>
+                            <h3>Hoạt động quan sát</h3>
+                            <span>Ảnh minh chứng và thông tin của từng observation</span>
                         </div>
-                        <span>{len(filtered)} báº£n ghi</span>
+                        <span>{len(filtered)} bản ghi</span>
                     </div>
                     <div class="observation-grid">
                         {observation_cards}
@@ -10016,7 +10031,7 @@ def teacher_history_student_day(request: Request, student_id: int, date: str):
 </style>
         """,
         section="history",
-        full_name=str(payload.get("username") or "GiÃ¡o viÃªn"),
+        full_name=str(payload.get("username") or "Giáo viên"),
         teacher_id=int(payload["sub"])
     )
 
@@ -10039,10 +10054,10 @@ def teacher_history_session(request: Request, session_id: int):
         return RedirectResponse(url="/teacher?section=history", status_code=303)
 
     return teacher_shell(
-        title="Chi tiáº¿t session",
+        title="Chi tiết session",
         content=content,
         section="history",
-        full_name=str(payload.get("username") or "GiÃ¡o viÃªn"),
+        full_name=str(payload.get("username") or "Giáo viên"),
         teacher_id=teacher_id
     )
 
@@ -10053,7 +10068,7 @@ def admin_history_content(view: str = "history") -> str:
         if view == "trash":
             rows = db.execute(
                 text("""
-                    SELECT s.id, s.class_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lá»›p Ä‘Ã£ xÃ³a') AS class_name,
+                    SELECT s.id, s.class_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                            COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
                            s.teacher_id, COALESCE(t.full_name, t.username, '') AS teacher_name,
                            s.status, s.started_at, s.ended_at, s.duration_seconds,
@@ -10070,7 +10085,7 @@ def admin_history_content(view: str = "history") -> str:
         else:
             rows = db.execute(
                 text("""
-                    SELECT s.id, s.class_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lá»›p Ä‘Ã£ xÃ³a') AS class_name,
+                    SELECT s.id, s.class_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                            COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
                            s.teacher_id, COALESCE(t.full_name, t.username, '') AS teacher_name,
                            s.status, s.started_at, s.ended_at, s.duration_seconds,
@@ -10085,36 +10100,36 @@ def admin_history_content(view: str = "history") -> str:
             ).mappings().all()
 
     tabs = []
-    tabs.append('<a class="data-tab active" href="/admin?section=data&view=history">Lá»‹ch sá»­</a>' if view == "history" else '<a class="data-tab" href="/admin?section=data&view=history">Lá»‹ch sá»­</a>')
-    tabs.append('<a class="data-tab active" href="/admin?section=data&view=trash">ThÃ¹ng rÃ¡c</a>' if view == "trash" else '<a class="data-tab" href="/admin?section=data&view=trash">ThÃ¹ng rÃ¡c</a>')
+    tabs.append('<a class="data-tab active" href="/admin?section=data&view=history">Lịch sử</a>' if view == "history" else '<a class="data-tab" href="/admin?section=data&view=history">Lịch sử</a>')
+    tabs.append('<a class="data-tab active" href="/admin?section=data&view=trash">Thùng rác</a>' if view == "trash" else '<a class="data-tab" href="/admin?section=data&view=trash">Thùng rác</a>')
 
     rows_html = ""
     for row in rows:
-        status_label = "Äang cháº¡y" if row["status"] == "RUNNING" else "HoÃ n táº¥t"
+        status_label = "Đang chạy" if row["status"] == "RUNNING" else "Hoàn tất"
         status_class = "running" if row["status"] == "RUNNING" else "completed"
         teacher_name = row["teacher_name"] or f"Teacher #{int(row['teacher_id'])}"
         if view == "trash":
             actions = f"""
                 <a class="admin-history-button" href="/admin/data/history/session/{int(row['id'])}">Xem</a>
-                <form method="post" action="/admin/data/history/restore" class="admin-history-inline" onsubmit="return confirm('KhÃ´i phá»¥c session nÃ y vá» lá»‹ch sá»­ cá»§a giÃ¡o viÃªn?');">
+                <form method="post" action="/admin/data/history/restore" class="admin-history-inline" onsubmit="return confirm('Khôi phục session này về lịch sử của giáo viên?');">
                     <input type="hidden" name="session_id" value="{int(row['id'])}">
-                    <button class="admin-history-button" type="submit">KhÃ´i phá»¥c</button>
+                    <button class="admin-history-button" type="submit">Khôi phục</button>
                 </form>
-                <form method="post" action="/admin/data/history/permanent-delete" class="admin-history-inline" onsubmit="return confirm('XÃ“A VÄ¨NH VIá»„N session nÃ y cÃ¹ng toÃ n bá»™ observation, evidence vÃ  file áº£nh? KhÃ´ng thá»ƒ hoÃ n tÃ¡c.');">
+                <form method="post" action="/admin/data/history/permanent-delete" class="admin-history-inline" onsubmit="return confirm('XÓA VĨNH VIỄN session này cùng toàn bộ observation, evidence và file ảnh? Không thể hoàn tác.');">
                     <input type="hidden" name="session_id" value="{int(row['id'])}">
-                    <button class="admin-history-button danger" type="submit">XÃ³a vÄ©nh viá»…n</button>
+                    <button class="admin-history-button danger" type="submit">Xóa vĩnh viễn</button>
                 </form>
             """
         else:
             delete_html = "" if row["status"] == "RUNNING" else f"""
-                <form method="post" action="/admin/data/history/trash" class="admin-history-inline" onsubmit="return confirm('ÄÆ°a session nÃ y vÃ o thÃ¹ng rÃ¡c Main Admin? Dá»¯ liá»‡u váº«n Ä‘Æ°á»£c giá»¯ láº¡i.');">
+                <form method="post" action="/admin/data/history/trash" class="admin-history-inline" onsubmit="return confirm('Đưa session này vào thùng rác Main Admin? Dữ liệu vẫn được giữ lại.');">
                     <input type="hidden" name="session_id" value="{int(row['id'])}">
-                    <button class="admin-history-button danger" type="submit">XÃ³a</button>
+                    <button class="admin-history-button danger" type="submit">Xóa</button>
                 </form>
             """
             actions = f"""<a class="admin-history-button" href="/admin/data/history/session/{int(row['id'])}">Xem</a>{delete_html}"""
 
-        extra = f"<div class='admin-history-secondary'>XÃ³a lÃºc: {format_server_dt(row['deleted_at'])} â€¢ bá»Ÿi {escape(row['deleted_by_username'] or '-')}</div>" if view == "trash" else ""
+        extra = f"<div class='admin-history-secondary'>Xóa lúc: {format_server_dt(row['deleted_at'])} • bởi {escape(row['deleted_by_username'] or '-')}</div>" if view == "trash" else ""
         rows_html += f"""
             <tr>
                 <td><strong>#{int(row['id'])}</strong></td>
@@ -10129,21 +10144,21 @@ def admin_history_content(view: str = "history") -> str:
             </tr>
         """
 
-    body = rows_html if rows_html else '<tr><td colspan="9"><div class="admin-history-empty">KhÃ´ng cÃ³ session.</div></td></tr>'
-    title = "ThÃ¹ng rÃ¡c" if view == "trash" else "Lá»‹ch sá»­ server"
-    subtitle = "CÃ¡c session Ä‘Ã£ bá»‹ Ä‘Æ°a vÃ o thÃ¹ng rÃ¡c. Chá»‰ Main Admin má»›i cÃ³ thá»ƒ xÃ³a vÄ©nh viá»…n." if view == "trash" else "ToÃ n bá»™ session trÃªn server. KhÃ´ng cÃ³ tá»± Ä‘á»™ng xÃ³a dá»¯ liá»‡u."
+    body = rows_html if rows_html else '<tr><td colspan="9"><div class="admin-history-empty">Không có session.</div></td></tr>'
+    title = "Thùng rác" if view == "trash" else "Lịch sử server"
+    subtitle = "Các session đã bị đưa vào thùng rác. Chỉ Main Admin mới có thể xóa vĩnh viễn." if view == "trash" else "Toàn bộ session trên server. Không có tự động xóa dữ liệu."
 
     bulk_action = ""
     if view == "history":
         bulk_action = f"""
-            <form method="post" action="/admin/data/history/delete-all" class="admin-history-bulk-form" onsubmit="return confirm('ÄÆ°a toÃ n bá»™ session Ä‘Ã£ hoÃ n táº¥t vÃ o ThÃ¹ng rÃ¡c Main Admin? Dá»¯ liá»‡u váº«n Ä‘Æ°á»£c giá»¯ láº¡i.');">
-                <button class="admin-history-button danger bulk" type="submit">XÃ³a táº¥t cáº£</button>
+            <form method="post" action="/admin/data/history/delete-all" class="admin-history-bulk-form" onsubmit="return confirm('Đưa toàn bộ session đã hoàn tất vào Thùng rác Main Admin? Dữ liệu vẫn được giữ lại.');">
+                <button class="admin-history-button danger bulk" type="submit">Xóa tất cả</button>
             </form>
         """
     else:
         bulk_action = f"""
-            <form method="post" action="/admin/data/history/permanent-delete-all" class="admin-history-bulk-form" onsubmit="return confirm('XÃ“A VÄ¨NH VIá»„N Táº¤T Cáº¢ session trong ThÃ¹ng rÃ¡c cÃ¹ng toÃ n bá»™ observation, evidence vÃ  file áº£nh? KhÃ´ng thá»ƒ hoÃ n tÃ¡c.');">
-                <button class="admin-history-button danger bulk" type="submit">XÃ³a táº¥t cáº£ vÄ©nh viá»…n</button>
+            <form method="post" action="/admin/data/history/permanent-delete-all" class="admin-history-bulk-form" onsubmit="return confirm('XÓA VĨNH VIỄN TẤT CẢ session trong Thùng rác cùng toàn bộ observation, evidence và file ảnh? Không thể hoàn tác.');">
+                <button class="admin-history-button danger bulk" type="submit">Xóa tất cả vĩnh viễn</button>
             </form>
         """
 
@@ -10159,7 +10174,7 @@ def admin_history_content(view: str = "history") -> str:
             <div class="admin-history-tabs">{"".join(tabs)}</div>
             <div class="admin-history-table-wrap">
                 <table class="admin-history-table">
-                    <thead><tr><th>Session</th><th>Lá»›p</th><th>GiÃ¡o viÃªn</th><th>Báº¯t Ä‘áº§u</th><th>Thá»i lÆ°á»£ng</th><th>OB</th><th>Evidence</th><th>Tráº¡ng thÃ¡i</th><th>Thao tÃ¡c</th></tr></thead>
+                    <thead><tr><th>Session</th><th>Lớp</th><th>Giáo viên</th><th>Bắt đầu</th><th>Thời lượng</th><th>OB</th><th>Evidence</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
                     <tbody>{body}</tbody>
                 </table>
             </div>
@@ -10201,7 +10216,7 @@ def admin_history_detail_content(session_id: int) -> str | None:
     with SessionLocal() as db:
         session = db.execute(
             text("""
-                SELECT s.id, s.teacher_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lá»›p Ä‘Ã£ xÃ³a') AS class_name,
+                SELECT s.id, s.teacher_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                        COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
                        COALESCE(t.full_name, t.username, '') AS teacher_name,
                        s.status, s.started_at, s.ended_at, s.duration_seconds,
@@ -10230,10 +10245,10 @@ def admin_history_detail_content(session_id: int) -> str | None:
 
     obs_html = ""
     for row in observations:
-        link = f'<a class="admin-history-link" href="/api/v1/evidence/{int(row["evidence_id"])}" target="_blank">Xem áº£nh</a>' if row["evidence_id"] else "-"
-        obs_html += f"<tr><td>{format_server_dt(row['observed_at'])}</td><td><strong>{escape(row['full_name'] or 'KhÃ´ng xÃ¡c Ä‘á»‹nh')}</strong><div class='admin-history-secondary'>{escape(row['student_code'] or '-')}</div></td><td>OBSERVATION</td><td>{float(row['confidence'] or 0.0)*100:.0f}%</td><td>{escape(row['details'] or '-')}</td><td>{link}</td></tr>"
+        link = f'<a class="admin-history-link" href="/api/v1/evidence/{int(row["evidence_id"])}" target="_blank">Xem ảnh</a>' if row["evidence_id"] else "-"
+        obs_html += f"<tr><td>{format_server_dt(row['observed_at'])}</td><td><strong>{escape(row['full_name'] or 'Không xác định')}</strong><div class='admin-history-secondary'>{escape(row['student_code'] or '-')}</div></td><td>OBSERVATION</td><td>{float(row['confidence'] or 0.0)*100:.0f}%</td><td>{escape(row['details'] or '-')}</td><td>{link}</td></tr>"
     evidence_html = "".join(
-        f"<a class='admin-evidence-card' href='/api/v1/evidence/{int(row['id'])}' target='_blank'><img src='/api/v1/evidence/{int(row['id'])}' alt='Evidence {int(row['id'])}'><div><strong>{escape(row['full_name'] or 'KhÃ´ng xÃ¡c Ä‘á»‹nh')}</strong><span>{format_server_dt(row['captured_at'])}</span></div></a>"
+        f"<a class='admin-evidence-card' href='/api/v1/evidence/{int(row['id'])}' target='_blank'><img src='/api/v1/evidence/{int(row['id'])}' alt='Evidence {int(row['id'])}'><div><strong>{escape(row['full_name'] or 'Không xác định')}</strong><span>{format_server_dt(row['captured_at'])}</span></div></a>"
         for row in evidence
     )
     roster_html = "".join(
@@ -10242,30 +10257,30 @@ def admin_history_detail_content(session_id: int) -> str | None:
 
     if session["deleted_at"]:
         action_html = f"""
-            <form method="post" action="/admin/data/history/restore"><input type="hidden" name="session_id" value="{int(session['id'])}"><button class="admin-history-button" type="submit">KhÃ´i phá»¥c</button></form>
-            <form method="post" action="/admin/data/history/permanent-delete" onsubmit="return confirm('XÃ“A VÄ¨NH VIá»„N session nÃ y cÃ¹ng toÃ n bá»™ observation, evidence vÃ  file áº£nh? KhÃ´ng thá»ƒ hoÃ n tÃ¡c.');"><input type="hidden" name="session_id" value="{int(session['id'])}"><button class="admin-history-button danger" type="submit">XÃ³a vÄ©nh viá»…n</button></form>
+            <form method="post" action="/admin/data/history/restore"><input type="hidden" name="session_id" value="{int(session['id'])}"><button class="admin-history-button" type="submit">Khôi phục</button></form>
+            <form method="post" action="/admin/data/history/permanent-delete" onsubmit="return confirm('XÓA VĨNH VIỄN session này cùng toàn bộ observation, evidence và file ảnh? Không thể hoàn tác.');"><input type="hidden" name="session_id" value="{int(session['id'])}"><button class="admin-history-button danger" type="submit">Xóa vĩnh viễn</button></form>
         """
     elif session["status"] == "RUNNING":
         action_html = ""
     else:
         action_html = f"""
-            <form method="post" action="/admin/data/history/trash"><input type="hidden" name="session_id" value="{int(session['id'])}"><button class="admin-history-button danger" type="submit">XÃ³a</button></form>
+            <form method="post" action="/admin/data/history/trash"><input type="hidden" name="session_id" value="{int(session['id'])}"><button class="admin-history-button danger" type="submit">Xóa</button></form>
         """
 
-    trash_notice = f"<div class='admin-trash-notice'>ÄÃ£ vÃ o thÃ¹ng rÃ¡c lÃºc {format_server_dt(session['deleted_at'])} bá»Ÿi {escape(session['deleted_by_username'] or '-')}.</div>" if session["deleted_at"] else ""
+    trash_notice = f"<div class='admin-trash-notice'>Đã vào thùng rác lúc {format_server_dt(session['deleted_at'])} bởi {escape(session['deleted_by_username'] or '-')}.</div>" if session["deleted_at"] else ""
     back_view = "trash" if session["deleted_at"] else "history"
 
     return f"""
         <section class="card section-card admin-history-detail">
             <div class="admin-history-detail-top">
-                <div><a class="admin-back-link" href="/admin?section=data&view={back_view}">â† Quay láº¡i</a><div class="admin-history-eyebrow">SESSION #{int(session['id'])}</div><h2>{escape(session['class_name'])}</h2><p>{escape(session['class_code'])} â€¢ GiÃ¡o viÃªn: {escape(session['teacher_name'] or f'Teacher #{int(session['teacher_id'])}')} â€¢ {format_server_dt(session['started_at'])}</p></div>
+                <div><a class="admin-back-link" href="/admin?section=data&view={back_view}">← Quay lại</a><div class="admin-history-eyebrow">SESSION #{int(session['id'])}</div><h2>{escape(session['class_name'])}</h2><p>{escape(session['class_code'])} • Giáo viên: {escape(session['teacher_name'] or f'Teacher #{int(session['teacher_id'])}')} • {format_server_dt(session['started_at'])}</p></div>
                 <div class="admin-history-actions">{action_html}</div>
             </div>
             {trash_notice}
-            <div class="admin-detail-metrics"><div><span>Thá»i lÆ°á»£ng</span><strong>{format_duration(session['duration_seconds'])}</strong></div><div><span>Há»c sinh</span><strong>{len(roster)}</strong></div><div><span>Observation</span><strong>{int(session['observation_count'] or 0)}</strong></div><div><span>Evidence</span><strong>{int(session['evidence_count'] or 0)}</strong></div></div>
-            <div class="admin-detail-section"><div class="admin-detail-head"><h3>Danh sÃ¡ch trong session</h3><span>{len(roster)} há»c sinh</span></div><div class="admin-roster-grid">{roster_html or '<div class="admin-history-empty">KhÃ´ng cÃ³ dá»¯ liá»‡u.</div>'}</div></div>
-            <div class="admin-detail-section"><div class="admin-detail-head"><h3>Observation</h3><span>{len(observations)} báº£n ghi</span></div><div class="admin-history-table-wrap"><table class="admin-history-table"><thead><tr><th>Thá»i gian</th><th>Há»c sinh</th><th>Loáº¡i</th><th>Confidence</th><th>Chi tiáº¿t</th><th>Evidence</th></tr></thead><tbody>{obs_html if obs_html else '<tr><td colspan="6"><div class="admin-history-empty">ChÆ°a cÃ³ observation.</div></td></tr>'}</tbody></table></div></div>
-            <div class="admin-detail-section"><div class="admin-detail-head"><h3>Evidence</h3><span>{len(evidence)} áº£nh</span></div><div class="admin-evidence-grid">{evidence_html if evidence_html else '<div class="admin-history-empty">ChÆ°a cÃ³ evidence.</div>'}</div></div>
+            <div class="admin-detail-metrics"><div><span>Thời lượng</span><strong>{format_duration(session['duration_seconds'])}</strong></div><div><span>Học sinh</span><strong>{len(roster)}</strong></div><div><span>Observation</span><strong>{int(session['observation_count'] or 0)}</strong></div><div><span>Evidence</span><strong>{int(session['evidence_count'] or 0)}</strong></div></div>
+            <div class="admin-detail-section"><div class="admin-detail-head"><h3>Danh sách trong session</h3><span>{len(roster)} học sinh</span></div><div class="admin-roster-grid">{roster_html or '<div class="admin-history-empty">Không có dữ liệu.</div>'}</div></div>
+            <div class="admin-detail-section"><div class="admin-detail-head"><h3>Observation</h3><span>{len(observations)} bản ghi</span></div><div class="admin-history-table-wrap"><table class="admin-history-table"><thead><tr><th>Thời gian</th><th>Học sinh</th><th>Loại</th><th>Confidence</th><th>Chi tiết</th><th>Evidence</th></tr></thead><tbody>{obs_html if obs_html else '<tr><td colspan="6"><div class="admin-history-empty">Chưa có observation.</div></td></tr>'}</tbody></table></div></div>
+            <div class="admin-detail-section"><div class="admin-detail-head"><h3>Evidence</h3><span>{len(evidence)} ảnh</span></div><div class="admin-evidence-grid">{evidence_html if evidence_html else '<div class="admin-history-empty">Chưa có evidence.</div>'}</div></div>
         </section>
         <style>
             .admin-history-detail {{ padding:22px; }}
@@ -10412,7 +10427,7 @@ def admin_history_session(request: Request, session_id: int):
     content = admin_history_detail_content(session_id)
     if content is None:
         return RedirectResponse(url="/admin?section=data&view=history", status_code=303)
-    return admin_shell("Chi tiáº¿t session", content, "data")
+    return admin_shell("Chi tiết session", content, "data")
 
 
 def _find_god_eyes_exe():
@@ -10473,16 +10488,16 @@ def teacher_app_scan_prepare(request: Request):
     with SessionLocal() as db:
         classes = db.execute(text("SELECT id, name, code FROM classes WHERE teacher_id=:teacher_id ORDER BY LOWER(name), id"), {'teacher_id': teacher_id}).mappings().all()
     en = language == 'en'
-    options = ''.join(f'<option value="{int(row["id"])}">{escape(str(row["name"] or "Lá»›p"))} Â· {escape(str(row["code"] or ""))}</option>' for row in classes)
+    options = ''.join(f'<option value="{int(row["id"])}">{escape(str(row["name"] or "Lớp"))} · {escape(str(row["code"] or ""))}</option>' for row in classes)
     return teacher_shell(
-        title='Prepare Scan' if en else 'Chuáº©n bá»‹ quÃ©t',
+        title='Prepare Scan' if en else 'Chuẩn bị quét',
         content=f'''
             <section class="scan-prepare-page">
-                <div class="scan-prepare-hero"><div class="scan-prepare-icon">GE</div><div><div class="eyebrow-small">GOD EYES SCAN</div><h2>{'Prepare a classroom scan' if en else 'Chuáº©n bá»‹ buá»•i quÃ©t'}</h2><p>{'Choose the recording date and class before God Eyes starts the scan.' if en else 'Chá»n ngÃ y ghi nháº­n vÃ  lá»›p trÆ°á»›c khi God Eyes báº¯t Ä‘áº§u quÃ©t.'}</p></div></div>
+                <div class="scan-prepare-hero"><div class="scan-prepare-icon">GE</div><div><div class="eyebrow-small">GOD EYES SCAN</div><h2>{'Prepare a classroom scan' if en else 'Chuẩn bị buổi quét'}</h2><p>{'Choose the recording date and class before God Eyes starts the scan.' if en else 'Chọn ngày ghi nhận và lớp trước khi God Eyes bắt đầu quét.'}</p></div></div>
                 <form method="post" action="/teacher/app/open" class="scan-prepare-form">
-                    <div class="scan-field"><label>{'Scan date' if en else 'NgÃ y quÃ©t'}</label><input type="date" name="scan_date" value="{today}" required></div>
-                    <div class="scan-field"><label>{'Class' if en else 'Lá»›p há»c'}</label><select name="class_id" required>{options or '<option value="">'+('No class yet' if en else 'ChÆ°a cÃ³ lá»›p')+'</option>'}</select></div>
-                    <div class="scan-actions"><button class="scan-primary" type="submit" {'disabled' if not classes else ''}>{'START SCAN â†’' if en else 'Báº®T Äáº¦U QUÃ‰T â†’'}</button><a class="scan-secondary" href="/teacher?section=app">{'Back to God Eyes App' if en else 'Quay láº¡i God Eyes App'}</a></div>
+                    <div class="scan-field"><label>{'Scan date' if en else 'Ngày quét'}</label><input type="date" name="scan_date" value="{today}" required></div>
+                    <div class="scan-field"><label>{'Class' if en else 'Lớp học'}</label><select name="class_id" required>{options or '<option value="">'+('No class yet' if en else 'Chưa có lớp')+'</option>'}</select></div>
+                    <div class="scan-actions"><button class="scan-primary" type="submit" {'disabled' if not classes else ''}>{'START SCAN →' if en else 'BẮT ĐẦU QUÉT →'}</button><a class="scan-secondary" href="/teacher?section=app">{'Back to God Eyes App' if en else 'Quay lại God Eyes App'}</a></div>
                 </form>
             </section>
             <style>
@@ -10507,7 +10522,7 @@ def teacher_app_scan_prepare(request: Request):
             </style>
         ''',
         section='app',
-        full_name=str(payload.get('username') or 'GiÃ¡o viÃªn'),
+        full_name=str(payload.get('username') or 'Giáo viên'),
         teacher_id=teacher_id,
     )
 
@@ -10518,17 +10533,17 @@ def teacher_app_content(teacher_id: int, status: str = '') -> str:
     app_ready = True
     status_html = ''
     messages = {
-        'launch_started': ('success', 'God Eyes Ä‘ang Ä‘Æ°á»£c má»Ÿ báº±ng tÃ i khoáº£n Teacher hiá»‡n táº¡i.'),
-        'app_missing': ('error', 'ChÆ°a tÃ¬m tháº¥y GodEyes.exe trÃªn mÃ¡y Server. HÃ£y build á»©ng dá»¥ng trÆ°á»›c.'),
-        'launch_error': ('error', 'KhÃ´ng thá»ƒ má»Ÿ God Eyes trÃªn mÃ¡y Server.'),
-        'download_missing': ('error', 'ChÆ°a cÃ³ GodEyes.exe Ä‘á»ƒ táº£i xuá»‘ng.'),
+        'launch_started': ('success', 'God Eyes đang được mở bằng tài khoản Teacher hiện tại.'),
+        'app_missing': ('error', 'Chưa tìm thấy GodEyes.exe trên máy Server. Hãy build ứng dụng trước.'),
+        'launch_error': ('error', 'Không thể mở God Eyes trên máy Server.'),
+        'download_missing': ('error', 'Chưa có GodEyes.exe để tải xuống.'),
     }
     if status in messages:
         cls, msg = messages[status]
         status_html = f'<div class="app-notice {cls}">{escape(msg)}</div>'
 
     open_disabled = 'disabled'
-    open_text = 'Má»ž á»¨NG Dá»¤NG'
+    open_text = 'MỞ ỨNG DỤNG'
     version_text = escape(DESKTOP_APP_VERSION)
     exe_name = 'GodEyes.exe'
 
@@ -10538,8 +10553,8 @@ def teacher_app_content(teacher_id: int, status: str = '') -> str:
         <div class="app-hero-icon">{ICON_EYE}</div>
         <div>
             <div class="app-eyebrow">GOD EYES DESKTOP</div>
-            <h2>á»¨ng dá»¥ng God Eyes</h2>
-            <p>Táº£i duy nháº¥t má»™t tá»‡p GodEyes.exe Ä‘á»ƒ sá»­ dá»¥ng trÃªn Windows.</p>
+            <h2>Ứng dụng God Eyes</h2>
+            <p>Tải duy nhất một tệp GodEyes.exe để sử dụng trên Windows.</p>
         </div>
         <div class="app-version">v{version_text}</div>
     </div>
@@ -10548,33 +10563,33 @@ def teacher_app_content(teacher_id: int, status: str = '') -> str:
 
     <div class="app-grid">
         <article class="app-card primary-card">
-            <div class="app-card-icon">â†—</div>
-            <h3>Má»Ÿ á»©ng dá»¥ng</h3>
-            <p>Má»Ÿ God Eyes trá»±c tiáº¿p trÃªn mÃ¡y nÃ y vÃ  tá»± Ä‘Äƒng nháº­p báº±ng Ä‘Ãºng tÃ i khoáº£n Teacher Ä‘ang sá»­ dá»¥ng trÃªn Server.</p>
+            <div class="app-card-icon">↗</div>
+            <h3>Mở ứng dụng</h3>
+            <p>Mở God Eyes trực tiếp trên máy này và tự đăng nhập bằng đúng tài khoản Teacher đang sử dụng trên Server.</p>
             <div class="app-flow">
-                <span>TÃ i khoáº£n hiá»‡n táº¡i</span><b>â†’</b><span>God Eyes</span>
+                <span>Tài khoản hiện tại</span><b>→</b><span>God Eyes</span>
             </div>
-            <a class="app-primary" href="/teacher/app/scan" style="margin-top:20px;">Báº®T Äáº¦U QUÃ‰T</a>
-            <div class="app-note">Chá»n ngÃ y vÃ  lá»›p trÆ°á»›c khi báº¯t Ä‘áº§u quÃ©t. Dá»¯ liá»‡u quÃ©t sáº½ Ä‘Æ°á»£c gáº¯n vá»›i buá»•i há»c tÆ°Æ¡ng á»©ng.</div>
+            <a class="app-primary" href="/teacher/app/scan" style="margin-top:20px;">BẮT ĐẦU QUÉT</a>
+            <div class="app-note">Chọn ngày và lớp trước khi bắt đầu quét. Dữ liệu quét sẽ được gắn với buổi học tương ứng.</div>
         </article>
 
         <article class="app-card">
-            <div class="app-card-icon">â†“</div>
-            <h3>Táº£i á»©ng dá»¥ng</h3>
-            <p>Táº£i phiÃªn báº£n desktop hiá»‡n táº¡i vá» mÃ¡y Windows Ä‘á»ƒ cÃ i Ä‘áº·t vÃ  sá»­ dá»¥ng khi cáº§n.</p>
+            <div class="app-card-icon">↓</div>
+            <h3>Tải ứng dụng</h3>
+            <p>Tải phiên bản desktop hiện tại về máy Windows để cài đặt và sử dụng khi cần.</p>
             <div class="app-file">
-                <div><strong>{exe_name}</strong><span>PhiÃªn báº£n v{version_text}</span></div>
+                <div><strong>{exe_name}</strong><span>Phiên bản v{version_text}</span></div>
                 <span class="app-badge">WINDOWS</span>
             </div>
-            <a class="app-secondary" href="{firebase_app_url}" target="_blank" rel="noopener">Táº¢I á»¨NG Dá»¤NG</a>
-            <div class="app-note">á»¨ng dá»¥ng desktop Ä‘Æ°á»£c xá»­ lÃ½ cá»¥c bá»™.</div>
+            <a class="app-secondary" href="{firebase_app_url}" target="_blank" rel="noopener">TẢI ỨNG DỤNG</a>
+            <div class="app-note">Ứng dụng desktop được xử lý cục bộ.</div>
         </article>
     </div>
 
     <div class="app-info-grid">
-        <div><strong>PhiÃªn báº£n</strong><span>v{version_text}</span></div>
-        <div><strong>Tá»‡p</strong><span>{exe_name}</span></div>
-        <div><strong>Tráº¡ng thÃ¡i</strong><span>{'Sáºµn sÃ ng' if app_ready else 'ChÆ°a build'}</span></div>
+        <div><strong>Phiên bản</strong><span>v{version_text}</span></div>
+        <div><strong>Tệp</strong><span>{exe_name}</span></div>
+        <div><strong>Trạng thái</strong><span>{'Sẵn sàng' if app_ready else 'Chưa build'}</span></div>
     </div>
 </section>
 
@@ -10640,8 +10655,8 @@ def local_launch_app(server_url: str = "https://godeyes-server.onrender.com"):
     app_path = _find_god_eyes_app()
     if app_path is None:
         return HTMLResponse(
-            "<h3>KhÃ´ng tÃ¬m tháº¥y GodEyes.exe trÃªn mÃ¡y nÃ y.</h3>"
-            "<p>HÃ£y cÃ i God Eyes trÆ°á»›c rá»“i thá»­ láº¡i.</p>",
+            "<h3>Không tìm thấy GodEyes.exe trên máy này.</h3>"
+            "<p>Hãy cài God Eyes trước rồi thử lại.</p>",
             status_code=404,
         )
 
@@ -10656,7 +10671,7 @@ def local_launch_app(server_url: str = "https://godeyes-server.onrender.com"):
         )
     except Exception as exc:
         return HTMLResponse(
-            f"<h3>KhÃ´ng thá»ƒ má»Ÿ God Eyes.</h3><p>{escape(str(exc))}</p>",
+            f"<h3>Không thể mở God Eyes.</h3><p>{escape(str(exc))}</p>",
             status_code=500,
         )
 
@@ -10685,12 +10700,12 @@ def teacher_open_app_web(request: Request):
 <!doctype html>
 <html lang="vi">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Má»Ÿ God Eyes</title></head>
+<title>Mở God Eyes</title></head>
 <body style="font-family:Segoe UI,Arial,sans-serif;padding:40px;text-align:center;background:#f6f8fc;color:#203247">
-<h2>Äang má»Ÿ God Eyesâ€¦</h2>
-<p>Windows sáº½ má»Ÿ á»©ng dá»¥ng God Eyes trÃªn mÃ¡y nÃ y.</p>
-<p style="margin:0 0 12px;"><a href="{safe_launch_url}" style="display:inline-block;padding:12px 18px;border-radius:10px;background:#2b78c5;color:#fff;text-decoration:none;font-weight:700">Má»ž GOD EYES</a></p>
-<p style="margin:0;"><a href="/teacher" style="display:inline-block;padding:10px 16px;border-radius:10px;border:1px solid #cfd8e3;background:#fff;color:#294762;text-decoration:none;font-weight:700">QUAY Vá»€ HOME</a></p>
+<h2>Đang mở God Eyes…</h2>
+<p>Windows sẽ mở ứng dụng God Eyes trên máy này.</p>
+<p style="margin:0 0 12px;"><a href="{safe_launch_url}" style="display:inline-block;padding:12px 18px;border-radius:10px;background:#2b78c5;color:#fff;text-decoration:none;font-weight:700">MỞ GOD EYES</a></p>
+<p style="margin:0;"><a href="/teacher" style="display:inline-block;padding:10px 16px;border-radius:10px;border:1px solid #cfd8e3;background:#fff;color:#294762;text-decoration:none;font-weight:700">QUAY VỀ HOME</a></p>
 <script>window.location.href = {json.dumps(launch_url)};</script>
 </body></html>
 """)
@@ -10816,20 +10831,20 @@ def teacher_settings_content(teacher_id: int, status: str = '') -> str:
         save = 'SAVE SETTINGS'; saved = 'Settings saved.'
         account_note = 'The camera password is never stored on the Server. It stays on the Windows computer running God Eyes.'
     else:
-        title = 'CÃ i Ä‘áº·t giÃ¡o viÃªn'
-        intro = 'CÃ¡c thiáº¿t láº­p Ä‘Æ°á»£c dÃ¹ng chung giá»¯a Cá»•ng giÃ¡o viÃªn vÃ  God Eyes Desktop.'
-        appearance = 'Giao diá»‡n'; appearance_desc = 'Chá»n giao diá»‡n hiá»ƒn thá»‹.'
-        light = 'SÃ¡ng'; dark = 'Tá»‘i'; light_desc = 'Giao diá»‡n sÃ¡ng.'; dark_desc = 'Giao diá»‡n tá»‘i.'
-        language_label = 'NgÃ´n ngá»¯'; language_desc = 'Chá»n má»™t ngÃ´n ngá»¯ cho toÃ n bá»™ giao diá»‡n God Eyes.'
-        vi = 'Tiáº¿ng Viá»‡t'; en = 'Tiáº¿ng Anh'
-        camera = 'Camera'; camera_desc = 'Chá»n camera God Eyes sá»­ dá»¥ng cho giÃ¡m sÃ¡t lá»›p há»c.'
-        source = 'Nguá»“n camera'; built = 'Camera tÃ­ch há»£p trÃªn mÃ¡y tÃ­nh'; usb = 'Webcam USB rá»i'; wifi = 'Camera Wi-Fi'
-        brand = 'HÃ£ng camera'; tapo = 'Tapo'
-        connection = 'Káº¿t ná»‘i'; connection_desc = 'Káº¿t ná»‘i báº±ng tÃ i khoáº£n cá»§a camera. God Eyes sáº½ tá»± tÃ¬m camera trong máº¡ng ná»™i bá»™.'
-        connect = 'Káº¾T Ná»I CAMERA'; connected = 'Camera Ä‘Ã£ káº¿t ná»‘i'; not_connected = 'ChÆ°a káº¿t ná»‘i'
-        stream = 'Cháº¥t lÆ°á»£ng luá»“ng'; high = 'Cháº¥t lÆ°á»£ng cao'; standard = 'Cháº¥t lÆ°á»£ng tiÃªu chuáº©n'
-        save = 'LÆ¯U CÃ€I Äáº¶T'; saved = 'ÄÃ£ lÆ°u cÃ i Ä‘áº·t.'
-        account_note = 'Máº­t kháº©u camera khÃ´ng Ä‘Æ°á»£c lÆ°u trÃªn Server. Máº­t kháº©u chá»‰ náº±m trÃªn mÃ¡y Windows cháº¡y God Eyes.'
+        title = 'Cài đặt giáo viên'
+        intro = 'Các thiết lập được dùng chung giữa Cổng giáo viên và God Eyes Desktop.'
+        appearance = 'Giao diện'; appearance_desc = 'Chọn giao diện hiển thị.'
+        light = 'Sáng'; dark = 'Tối'; light_desc = 'Giao diện sáng.'; dark_desc = 'Giao diện tối.'
+        language_label = 'Ngôn ngữ'; language_desc = 'Chọn một ngôn ngữ cho toàn bộ giao diện God Eyes.'
+        vi = 'Tiếng Việt'; en = 'Tiếng Anh'
+        camera = 'Camera'; camera_desc = 'Chọn camera God Eyes sử dụng cho giám sát lớp học.'
+        source = 'Nguồn camera'; built = 'Camera tích hợp trên máy tính'; usb = 'Webcam USB rời'; wifi = 'Camera Wi-Fi'
+        brand = 'Hãng camera'; tapo = 'Tapo'
+        connection = 'Kết nối'; connection_desc = 'Kết nối bằng tài khoản của camera. God Eyes sẽ tự tìm camera trong mạng nội bộ.'
+        connect = 'KẾT NỐI CAMERA'; connected = 'Camera đã kết nối'; not_connected = 'Chưa kết nối'
+        stream = 'Chất lượng luồng'; high = 'Chất lượng cao'; standard = 'Chất lượng tiêu chuẩn'
+        save = 'LƯU CÀI ĐẶT'; saved = 'Đã lưu cài đặt.'
+        account_note = 'Mật khẩu camera không được lưu trên Server. Mật khẩu chỉ nằm trên máy Windows chạy God Eyes.'
 
     source = prefs.get('camera_source', 'webcam')
     brand_value = prefs.get('camera_brand', 'tapo') or 'tapo'
@@ -10985,7 +11000,7 @@ def teacher_placeholder_content(title: str, description: str) -> str:
                 <h2>{escape(title)}</h2>
                 <p>{escape(description)}</p>
                 <div class="empty" style="margin-top:20px;">
-                    Chá»©c nÄƒng nÃ y sáº½ Ä‘Æ°á»£c káº¿t ná»‘i vá»›i dá»¯ liá»‡u tháº­t á»Ÿ bÆ°á»›c tiáº¿p theo.
+                    Chức năng này sẽ được kết nối với dữ liệu thật ở bước tiếp theo.
                 </div>
             </div>
         </section>
@@ -12209,7 +12224,7 @@ def api_history(request: Request, limit: int = 50):
     with SessionLocal() as db:
         rows = db.execute(
             text("""
-                SELECT s.id, s.class_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lá»›p Ä‘Ã£ xÃ³a') AS class_name,
+                SELECT s.id, s.class_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                        COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
                        s.status, s.started_at, s.ended_at, s.duration_seconds,
                        s.client_version, s.camera_type,
@@ -12294,7 +12309,7 @@ def api_history_student_day(request: Request, student_id: int, date: str):
             text("""
                 SELECT o.id, o.student_id, o.student_code, o.full_name, o.observed_at,
                        o.event_type, o.confidence, o.assessment, o.details, o.evidence_id,
-                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lá»›p Ä‘Ã£ xÃ³a') AS class_name
+                       COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name
                 FROM observations o
                 JOIN sessions s ON s.id = o.session_id
                 LEFT JOIN classes c ON c.id = s.class_id
@@ -12544,7 +12559,7 @@ def _web_observation_once(session_id, teacher_id, match, last_seen):
                 "full_name": roster_row["full_name"],
                 "observed_at": utc_now_iso(),
                 "confidence": float(match["confidence"]),
-                "details": "Nháº­n diá»‡n tá»« Web Camera",
+                "details": "Nhận diện từ Web Camera",
             },
         )
         db.commit()
@@ -12558,10 +12573,10 @@ def _web_camera_page_content() -> str:
   <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;">
     <div>
       <div style="font-size:11px;font-weight:800;letter-spacing:.08em;color:#2b78c5;text-transform:uppercase;">GOD EYES WEB CAMERA</div>
-      <h2 style="margin:5px 0 4px;">Camera trá»±c tiáº¿p</h2>
-      <p style="margin:0;color:#6d7e90;">Camera trÃ¬nh duyá»‡t â†’ God Eyes â†’ YuNet + SFace.</p>
+      <h2 style="margin:5px 0 4px;">Camera trực tiếp</h2>
+      <p style="margin:0;color:#6d7e90;">Camera trình duyệt → God Eyes → YuNet + SFace.</p>
     </div>
-    <div id="wcStatus" style="padding:8px 12px;border-radius:999px;background:#f2f6fa;color:#587089;font-weight:800;font-size:12px;">Sáºµn sÃ ng</div>
+    <div id="wcStatus" style="padding:8px 12px;border-radius:999px;background:#f2f6fa;color:#587089;font-weight:800;font-size:12px;">Sẵn sàng</div>
   </div>
 
   <div style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;margin-top:18px;">
@@ -12569,31 +12584,31 @@ def _web_camera_page_content() -> str:
       <div style="background:#07111d;border-radius:18px;overflow:hidden;position:relative;aspect-ratio:16/9;">
         <video id="wcVideo" playsinline autoplay muted style="width:100%;height:100%;object-fit:cover;display:block;"></video>
         <canvas id="wcOverlay" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;"></canvas>
-        <div id="wcEmpty" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#b9c8d7;font-weight:800;">Camera chÆ°a báº­t</div>
+        <div id="wcEmpty" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#b9c8d7;font-weight:800;">Camera chưa bật</div>
       </div>
 
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
-        <button id="wcStart" class="app-primary" type="button">Báº®T Äáº¦U CAMERA</button>
-        <button id="wcStop" class="row-button" type="button" disabled>Dá»ªNG</button>
+        <button id="wcStart" class="app-primary" type="button">BẮT ĐẦU CAMERA</button>
+        <button id="wcStop" class="row-button" type="button" disabled>DỪNG</button>
       </div>
     </div>
 
     <aside style="border:1px solid #e7edf3;border-radius:16px;padding:16px;background:#fff;">
-      <div style="font-size:12px;font-weight:800;color:#6d7e90;text-transform:uppercase;letter-spacing:.06em;">Buá»•i nháº­n diá»‡n</div>
+      <div style="font-size:12px;font-weight:800;color:#6d7e90;text-transform:uppercase;letter-spacing:.06em;">Buổi nhận diện</div>
 
-      <label style="display:block;margin-top:10px;font-weight:800;font-size:13px;">Lá»›p há»c</label>
+      <label style="display:block;margin-top:10px;font-weight:800;font-size:13px;">Lớp học</label>
       <select id="wcClass" style="width:100%;margin-top:6px;padding:11px;border:1px solid #d7e1ea;border-radius:10px;background:#fff;">
-        <option value="">Äang táº£i lá»›p...</option>
+        <option value="">Đang tải lớp...</option>
       </select>
 
       <div style="margin-top:18px;padding:14px;border-radius:12px;background:#f6f9fc;">
-        <div style="font-size:11px;color:#7f90a1;font-weight:800;text-transform:uppercase;">Nháº­n diá»‡n gáº§n nháº¥t</div>
-        <div id="wcPerson" style="font-size:22px;font-weight:900;margin-top:6px;color:#203247;">ChÆ°a cÃ³</div>
+        <div style="font-size:11px;color:#7f90a1;font-weight:800;text-transform:uppercase;">Nhận diện gần nhất</div>
+        <div id="wcPerson" style="font-size:22px;font-weight:900;margin-top:6px;color:#203247;">Chưa có</div>
         <div id="wcConfidence" style="margin-top:4px;color:#6f8090;font-size:12px;">-</div>
       </div>
 
       <div style="margin-top:14px;font-size:12px;color:#7a8c9e;line-height:1.55;">
-        DÃ¹ng Chrome/Edge vÃ  cho phÃ©p Camera. Web pháº£i Ä‘Æ°á»£c má»Ÿ báº±ng HTTPS.
+        Dùng Chrome/Edge và cho phép Camera. Web phải được mở bằng HTTPS.
       </div>
     </aside>
   </div>
@@ -12631,7 +12646,7 @@ def _web_camera_page_content() -> str:
     try {
       const r = await fetch('/api/v1/classes', {credentials:'same-origin'});
       const data = await r.json();
-      cls.innerHTML = '<option value="">-- Chá»n lá»›p --</option>';
+      cls.innerHTML = '<option value="">-- Chọn lớp --</option>';
       for (const item of (data.items || [])) {
         const o = document.createElement('option');
         o.value = item.id;
@@ -12639,7 +12654,7 @@ def _web_camera_page_content() -> str:
         cls.appendChild(o);
       }
     } catch (e) {
-      cls.innerHTML = '<option value="">KhÃ´ng táº£i Ä‘Æ°á»£c lá»›p</option>';
+      cls.innerHTML = '<option value="">Không tải được lớp</option>';
     }
   }
 
@@ -12664,7 +12679,7 @@ def _web_camera_page_content() -> str:
 
       if (f.full_name) {
         ctx.fillStyle = 'rgba(7,17,29,.78)';
-        const label = `${f.full_name} â€¢ ${(f.confidence*100).toFixed(0)}%`;
+        const label = `${f.full_name} • ${(f.confidence*100).toFixed(0)}%`;
         ctx.font = '700 14px Arial';
         const tw = ctx.measureText(label).width + 14;
         ctx.fillRect(x, Math.max(0,y-26), tw, 24);
@@ -12679,12 +12694,12 @@ def _web_camera_page_content() -> str:
 
     const classId = Number(cls.value || 0);
     if (!classId) {
-      alert('Vui lÃ²ng chá»n lá»›p há»c.');
+      alert('Vui lòng chọn lớp học.');
       return;
     }
 
     startBtn.disabled = true;
-    setStatus('Äang má»Ÿ camera...', 'wait');
+    setStatus('Đang mở camera...', 'wait');
 
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -12708,7 +12723,7 @@ def _web_camera_page_content() -> str:
       });
 
       const sessionData = await sessionResponse.json();
-      if (!sessionResponse.ok) throw new Error(sessionData.detail || 'KhÃ´ng táº¡o Ä‘Æ°á»£c session.');
+      if (!sessionResponse.ok) throw new Error(sessionData.detail || 'Không tạo được session.');
       sessionId = Number(sessionData.session_id || 0);
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -12718,7 +12733,7 @@ def _web_camera_page_content() -> str:
       ws.onopen = () => {
         ws.send(JSON.stringify({session_id:sessionId, class_id:classId}));
         running = true;
-        setStatus('Camera Ä‘ang hoáº¡t Ä‘á»™ng', 'ok');
+        setStatus('Camera đang hoạt động', 'ok');
         stopBtn.disabled = false;
 
         heartbeat = setInterval(() => {
@@ -12739,19 +12754,19 @@ def _web_camera_page_content() -> str:
           const found = (data.faces || []).find(x => x.full_name);
           if (found) {
             person.textContent = found.full_name;
-            confidence.textContent = `${found.student_code} â€¢ Äá»™ tin cáº­y ${(found.confidence*100).toFixed(1)}%`;
+            confidence.textContent = `${found.student_code} • Độ tin cậy ${(found.confidence*100).toFixed(1)}%`;
           }
         } catch (_) {}
       };
 
-      ws.onerror = () => setStatus('WebSocket lá»—i', 'bad');
+      ws.onerror = () => setStatus('WebSocket lỗi', 'bad');
 
       ws.onclose = () => {
-        if (running) setStatus('Máº¥t káº¿t ná»‘i camera server', 'bad');
+        if (running) setStatus('Mất kết nối camera server', 'bad');
       };
     } catch (e) {
       console.error(e);
-      setStatus('KhÃ´ng thá»ƒ khá»Ÿi Ä‘á»™ng camera', 'bad');
+      setStatus('Không thể khởi động camera', 'bad');
       stopBtn.disabled = true;
       startBtn.disabled = false;
 
@@ -12802,7 +12817,7 @@ def _web_camera_page_content() -> str:
 
     stopBtn.disabled = true;
     startBtn.disabled = false;
-    setStatus('ÄÃ£ dá»«ng', 'wait');
+    setStatus('Đã dừng', 'wait');
 
     if (oldSession) {
       await fetch(`/api/v1/sessions/${oldSession}/finish`, {
@@ -12836,7 +12851,7 @@ def teacher_web_camera(request: Request):
         title="Camera Web",
         content=_web_camera_page_content(),
         section="app",
-        full_name=str(payload.get("username") or "GiÃ¡o viÃªn"),
+        full_name=str(payload.get("username") or "Giáo viên"),
         teacher_id=int(payload["sub"]),
     )
 
@@ -12870,7 +12885,7 @@ async def ws_web_camera(websocket: WebSocket):
         with SessionLocal() as db:
             session = get_session_for_teacher(db, teacher_id, session_id)
             if session is None or int(session["class_id"]) != class_id or session["status"] != "RUNNING":
-                await websocket.send_text(json.dumps({"error":"session khÃ´ng há»£p lá»‡"}))
+                await websocket.send_text(json.dumps({"error":"session không hợp lệ"}))
                 await websocket.close(code=4403)
                 return
 
