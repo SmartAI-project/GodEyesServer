@@ -57,6 +57,17 @@ app = FastAPI(
     version="1.3.0"
 )
 
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+
+if STATIC_DIR.exists():
+    app.mount(
+        "/static",
+        StaticFiles(directory=str(STATIC_DIR)),
+        name="static",
+    )
+
+
 app.include_router(auth_router)
 app.include_router(teacher_admin_router)
 
@@ -1731,7 +1742,6 @@ def home():
     if landing_file.exists():
         return FileResponse(str(landing_file))
 
-    # Fallback: nếu Landing Page chưa tồn tại thì vẫn mở Login cũ.
     return LOGIN_PAGE
 
 
