@@ -25,6 +25,7 @@ import numpy as np
 
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
 from auth.security import create_access_token, decode_access_token, hash_password
@@ -91,8 +92,8 @@ def ensure_class_table():
                 name TEXT NOT NULL,
                 code TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (teacher_id, code)
             )
         """))
@@ -193,8 +194,8 @@ def ensure_main_camera_profiles_table():
                 password_enc TEXT NOT NULL DEFAULT '',
                 is_active INTEGER NOT NULL DEFAULT 1,
                 last_verified_at TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_main_camera_profiles_owner ON main_camera_profiles(main_account_id, is_active, id DESC)"))
@@ -256,8 +257,8 @@ def ensure_app_device_table():
                 token_hash TEXT NOT NULL UNIQUE,
                 device_label TEXT NOT NULL DEFAULT 'God Eyes Desktop',
                 app_version TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
-                last_used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 revoked_at TEXT NOT NULL DEFAULT ''
             )
         """))
@@ -284,7 +285,7 @@ def ensure_teacher_preferences_table():
                 camera_port INTEGER NOT NULL DEFAULT 554,
                 camera_stream TEXT NOT NULL DEFAULT 'stream1',
                 camera_username TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """))
         columns = _table_columns(db, "teacher_preferences")
@@ -887,8 +888,8 @@ def ensure_student_tables():
                 full_name TEXT NOT NULL,
                 photo_path TEXT NOT NULL DEFAULT '',
                 face_status TEXT NOT NULL DEFAULT 'NO_DATA',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """))
         db.execute(text("""
@@ -896,7 +897,7 @@ def ensure_student_tables():
                 id BIGSERIAL PRIMARY KEY,
                 class_id INTEGER NOT NULL,
                 student_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (class_id, student_id)
             )
         """))
@@ -1725,6 +1726,17 @@ def placeholder_content(title_text: str, description: str):
 
 @app.get("/", response_class=HTMLResponse)
 def home():
+    landing_file = BASE_DIR / "templates" / "landing.html"
+
+    if landing_file.exists():
+        return FileResponse(str(landing_file))
+
+    # Fallback: nếu Landing Page chưa tồn tại thì vẫn mở Login cũ.
+    return LOGIN_PAGE
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page():
     return LOGIN_PAGE
 
 
@@ -7709,7 +7721,7 @@ def ensure_session_tables():
                 deleted_by_teacher_id INTEGER NOT NULL DEFAULT 0,
                 deleted_by_username TEXT NOT NULL DEFAULT '',
                 deleted_from TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """))
         db.execute(text("""
@@ -7719,7 +7731,7 @@ def ensure_session_tables():
                 student_id INTEGER NOT NULL,
                 student_code TEXT NOT NULL,
                 full_name TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(session_id, student_id)
             )
         """))
@@ -7736,7 +7748,7 @@ def ensure_session_tables():
                 assessment TEXT NOT NULL DEFAULT 'OBSERVATION',
                 details TEXT NOT NULL DEFAULT '',
                 evidence_id INTEGER,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """))
         db.execute(text("""
@@ -7754,7 +7766,7 @@ def ensure_session_tables():
                 mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
                 width INTEGER NOT NULL DEFAULT 0,
                 height INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """))
 
