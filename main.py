@@ -5041,31 +5041,74 @@ def teacher_shared_class_session_view(request: Request, session_id: int):
     """
     return teacher_shell(title="Chi tiết buổi học chia sẻ", content=content, section="classes", full_name=full_name, teacher_id=teacher_id)
 
+@app.post("/teacher/profile/update-name")
+def update_teacher_profile_name(request: Request, teacher_name: str = Form(...)):
+    payload = get_teacher_payload(request)
+    if payload is None:
+        return RedirectResponse(url="/", status_code=303)
+
+    teacher_id = int(payload["sub"])
+    teacher_name = str(teacher_name or "").strip()
+    if not teacher_name:
+        return RedirectResponse(url="/teacher?section=classes", status_code=303)
+
+    with SessionLocal() as db:
+        db.execute(
+            text("UPDATE teacher_accounts SET full_name = :full_name WHERE id = :teacher_id"),
+            {"full_name": teacher_name, "teacher_id": teacher_id},
+        )
+        db.commit()
+
+    return RedirectResponse(url="/teacher?section=classes&name_updated=1", status_code=303)
+
+
 @app.post("/teacher/classes/create")
-def create_class(request: Request, name: str = Form(...), description: str = Form("")):
+def create_class(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    teacher_name: str = Form(""),
+    school_name: str = Form(""),
+    province: str = Form(""),
+    district: str = Form(""),
+):
     payload = get_teacher_payload(request)
     if payload is None:
         return RedirectResponse(url="/", status_code=303)
 
     name = name.strip()
     description = description.strip()
+    teacher_name = teacher_name.strip()
+    school_name = school_name.strip()
+    province = province.strip()
+    district = district.strip()
     if not name:
         return RedirectResponse(url="/teacher?section=classes", status_code=303)
 
     teacher_id = int(payload["sub"])
     with SessionLocal() as db:
+        if teacher_name:
+            db.execute(
+                text("UPDATE teacher_accounts SET full_name = :full_name WHERE id = :teacher_id"),
+                {"full_name": teacher_name, "teacher_id": teacher_id},
+            )
         code = generate_class_code(db)
         db.execute(
             text("""
-                INSERT INTO classes (teacher_id, owner_type, owner_id, name, code, description)
-                VALUES (:teacher_id, 'TEACHER', :owner_id, :name, :code, :description)
+                INSERT INTO classes
+                    (teacher_id, owner_type, owner_id, name, code, description, school_name, province, district)
+                VALUES
+                    (:teacher_id, 'TEACHER', :owner_id, :name, :code, :description, :school_name, :province, :district)
             """),
             {
                 "teacher_id": teacher_id,
                 "owner_id": teacher_id,
                 "name": name,
                 "code": code,
-                "description": description
+                "description": description,
+                "school_name": school_name,
+                "province": province,
+                "district": district,
             }
         )
         db.commit()
@@ -5084,7 +5127,7 @@ def edit_class_page(request: Request, class_id: int):
         teacher_account = db.get(TeacherAccount, teacher_id)
         row = db.execute(
             text("""
-                SELECT id, name, code, description
+                SELECT id, name, code, description, school_name, province, district, ward
                 FROM classes
                 WHERE id = :class_id AND teacher_id = :teacher_id
             """),
@@ -5118,12 +5161,27 @@ def edit_class_page(request: Request, class_id: int):
                 <div class="teacher-code-status"><span></span>Đang hoạt động</div>
             </div>
 
-            <form method="post" action="/teacher/classes/edit" class="teacher-edit-form">
+            <form method="post" action="/teacher/classes/edit" class="teacher-edit-form teacher-location-form" data-school-map="{escape(json.dumps(_godeyes_teacher_school_rows(), ensure_ascii=False), quote=True)}">
                 <input type="hidden" name="class_id" value="{class_id}">
                 <div class="teacher-edit-field">
                     <label for="teacher-edit-name">Tên lớp</label>
                     <input id="teacher-edit-name" name="name" type="text" value="{escape(row['name'])}" maxlength="120" required autofocus>
                     <small>Tên lớp sẽ được hiển thị trong danh sách lớp học của bạn.</small>
+                </div>
+                <div class="teacher-edit-field">
+                    <label for="teacher-edit-province">Tỉnh/Thành phố</label>
+                    <select id="teacher-edit-province" name="province" data-current-value="{escape(str(row['province'] or ''), quote=True)}"><option value="">Đang tải danh sách tỉnh/thành phố...</option></select>
+                </div>
+                <div class="teacher-edit-field">
+                    <label for="teacher-edit-district">Quận/Huyện</label>
+                    <select id="teacher-edit-district" name="district" data-current-value="{escape(str(row['district'] or ''), quote=True)}" disabled><option value="">Chọn tỉnh/thành phố trước</option></select>
+                    <small>Danh mục quận/huyện là địa danh tham khảo trước ngày 01/07/2025.</small>
+                </div>
+                <div class="teacher-edit-field">
+                    <label for="teacher-edit-school-select">Trường học</label>
+                    <select id="teacher-edit-school-select" data-current-value="{escape(str(row['school_name'] or ''), quote=True)}" disabled><option value="">Chọn quận/huyện trước</option></select>
+                    <input id="teacher-edit-school-value" name="school_name" type="text" maxlength="180" value="{escape(str(row['school_name'] or ''), quote=True)}" hidden>
+                    <small>Danh sách gợi ý lấy từ các trường đã lưu trong GodEyes; có thể nhập trường mới.</small>
                 </div>
                 <div class="teacher-edit-field">
                     <label for="teacher-edit-description">Mô tả <span>(không bắt buộc)</span></label>
@@ -5157,10 +5215,10 @@ def edit_class_page(request: Request, class_id: int):
             .teacher-edit-field + .teacher-edit-field {{ margin-top:20px; }}
             .teacher-edit-field label {{ display:block; margin-bottom:8px; color:#304356; font-size:13px; font-weight:780; }}
             .teacher-edit-field label span {{ color:#8a99a8; font-weight:500; }}
-            .teacher-edit-field input, .teacher-edit-field textarea {{ width:100%; border:1px solid #d3dfe9; border-radius:11px; background:#fff; color:#25384b; font:inherit; font-size:14px; padding:12px 13px; outline:none; transition:border-color .15s, box-shadow .15s; }}
-            .teacher-edit-field input {{ height:49px; }}
+            .teacher-edit-field input, .teacher-edit-field select, .teacher-edit-field textarea {{ width:100%; border:1px solid #d3dfe9; border-radius:11px; background:#fff; color:#25384b; font:inherit; font-size:14px; padding:12px 13px; outline:none; transition:border-color .15s, box-shadow .15s; }}
+            .teacher-edit-field input, .teacher-edit-field select {{ height:49px; }}
             .teacher-edit-field textarea {{ min-height:130px; resize:vertical; line-height:1.55; }}
-            .teacher-edit-field input:focus, .teacher-edit-field textarea:focus {{ border-color:#8fb9d9; box-shadow:0 0 0 3px rgba(43,120,197,.10); }}
+            .teacher-edit-field input:focus, .teacher-edit-field select:focus, .teacher-edit-field textarea:focus {{ border-color:#8fb9d9; box-shadow:0 0 0 3px rgba(43,120,197,.10); }}
             .teacher-edit-field small {{ display:block; margin-top:7px; color:#8a99a8; font-size:11px; line-height:1.45; }}
             .teacher-edit-actions {{ display:flex; justify-content:flex-end; gap:10px; margin-top:24px; padding-top:20px; border-top:1px solid #edf2f6; }}
             .teacher-cancel-button, .teacher-save-button {{ min-height:45px; padding:0 17px; border-radius:10px; font:inherit; font-size:13px; font-weight:760; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; text-decoration:none; }}
@@ -5172,17 +5230,29 @@ def edit_class_page(request: Request, class_id: int):
         </style>
     """
 
+    content += _GODEYES_TEACHER_CLASS_LOCATION_SCRIPT
     return teacher_shell("Chỉnh sửa lớp học", content, "classes", full_name, teacher_id=teacher_id)
 
 
 @app.post("/teacher/classes/edit")
-def edit_class(request: Request, class_id: int = Form(...), name: str = Form(...), description: str = Form("")):
+def edit_class(
+    request: Request,
+    class_id: int = Form(...),
+    name: str = Form(...),
+    description: str = Form(""),
+    school_name: str = Form(""),
+    province: str = Form(""),
+    district: str = Form(""),
+):
     payload = get_teacher_payload(request)
     if payload is None:
         return RedirectResponse(url="/", status_code=303)
 
     name = name.strip()
     description = description.strip()
+    school_name = school_name.strip()
+    province = province.strip()
+    district = district.strip()
     teacher_id = int(payload["sub"])
     if not name:
         return RedirectResponse(url=f"/teacher/classes/edit?class_id={class_id}", status_code=303)
@@ -5191,10 +5261,23 @@ def edit_class(request: Request, class_id: int = Form(...), name: str = Form(...
         db.execute(
             text("""
                 UPDATE classes
-                SET name = :name, description = :description, updated_at = CURRENT_TIMESTAMP
+                SET name = :name,
+                    description = :description,
+                    school_name = :school_name,
+                    province = :province,
+                    district = :district,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = :class_id AND teacher_id = :teacher_id
             """),
-            {"name": name, "description": description, "class_id": class_id, "teacher_id": teacher_id}
+            {
+                "name": name,
+                "description": description,
+                "school_name": school_name,
+                "province": province,
+                "district": district,
+                "class_id": class_id,
+                "teacher_id": teacher_id,
+            }
         )
         db.commit()
 
@@ -7974,6 +8057,252 @@ def teacher_shell(title: str, content: str, section: str, full_name: str, teache
 </html>'''
 
 
+def _godeyes_teacher_school_rows() -> list[dict[str, str]]:
+    """Return the school names already used by classes, grouped by saved location in the UI."""
+    with SessionLocal() as db:
+        rows = db.execute(text("""
+            SELECT DISTINCT school_name, province, district
+            FROM classes
+            WHERE TRIM(COALESCE(school_name, '')) <> ''
+            ORDER BY province, district, school_name
+            LIMIT 5000
+        """)).mappings().all()
+    result = []
+    for row in rows:
+        school = str(row["school_name"] or "").strip()
+        if not school:
+            continue
+        result.append({
+            "school": school,
+            "province": str(row["province"] or "").strip(),
+            "district": str(row["district"] or "").strip(),
+        })
+    return result
+
+
+_GODEYES_TEACHER_CLASS_LOCATION_SCRIPT = r"""
+<script id="godeyes-teacher-class-location-cascade">
+(() => {
+    const forms = Array.from(document.querySelectorAll("form.teacher-location-form"));
+    if (!forms.length) return;
+
+    const currentProvinceUrl = "https://provinces.open-api.vn/api/v2/";
+    const legacyDistrictUrl = "https://provinces.open-api.vn/api/v1/?depth=2";
+    const legacyGroups = {
+        "ha noi": ["ha noi"],
+        "cao bang": ["cao bang"],
+        "tuyen quang": ["tuyen quang", "ha giang"],
+        "dien bien": ["dien bien"],
+        "lai chau": ["lai chau"],
+        "son la": ["son la"],
+        "lang son": ["lang son"],
+        "quang ninh": ["quang ninh"],
+        "thai nguyen": ["thai nguyen", "bac kan"],
+        "lao cai": ["lao cai", "yen bai"],
+        "phu tho": ["phu tho", "vinh phuc", "hoa binh"],
+        "bac ninh": ["bac ninh", "bac giang"],
+        "hung yen": ["hung yen", "thai binh"],
+        "hai phong": ["hai phong", "hai duong"],
+        "ninh binh": ["ninh binh", "ha nam", "nam dinh"],
+        "thanh hoa": ["thanh hoa"],
+        "nghe an": ["nghe an"],
+        "ha tinh": ["ha tinh"],
+        "quang tri": ["quang binh", "quang tri"],
+        "hue": ["thua thien hue", "hue"],
+        "da nang": ["da nang", "quang nam"],
+        "quang ngai": ["quang ngai", "kon tum"],
+        "gia lai": ["gia lai", "binh dinh"],
+        "khanh hoa": ["khanh hoa", "ninh thuan"],
+        "dak lak": ["dak lak", "phu yen"],
+        "lam dong": ["lam dong", "dak nong", "binh thuan"],
+        "dong nai": ["dong nai", "binh phuoc"],
+        "ho chi minh": ["ho chi minh", "binh duong", "ba ria vung tau"],
+        "tay ninh": ["tay ninh", "long an"],
+        "dong thap": ["dong thap", "tien giang"],
+        "vinh long": ["vinh long", "ben tre", "tra vinh"],
+        "can tho": ["can tho", "hau giang", "soc trang"],
+        "an giang": ["an giang", "kien giang"],
+        "ca mau": ["ca mau", "bac lieu"]
+    };
+
+    function norm(value) {
+        return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase()
+            .replace(/^(tinh|thanh pho|tp|province|city)\s+/, "")
+            .replace(/^(quan|huyen|thi xa|thi tran)\s+/, "")
+            .replace(/\bcity\b/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+    }
+
+    const provinceToCurrent = new Map();
+    Object.entries(legacyGroups).forEach(([current, legacyNames]) => {
+        legacyNames.forEach(name => provinceToCurrent.set(norm(name), norm(current)));
+    });
+    const canonicalProvince = value => provinceToCurrent.get(norm(value)) || norm(value);
+    const makeOption = (value, label) => new Option(label, value);
+
+    function fallbackToText(select, placeholder) {
+        if (!select || !select.isConnected) return null;
+        const input = document.createElement("input");
+        input.type = "text";
+        input.id = select.id;
+        input.name = select.name;
+        input.maxLength = 180;
+        input.placeholder = placeholder;
+        input.value = select.dataset.currentValue || "";
+        input.className = select.className;
+        input.required = select.required;
+        select.replaceWith(input);
+        return input;
+    }
+
+    function getSchoolRows(form) {
+        try {
+            return JSON.parse(form.dataset.schoolMap || "[]");
+        } catch (_) {
+            return [];
+        }
+    }
+
+    function matchingProvince(provinces, saved) {
+        if (!saved) return "";
+        const match = provinces.find(item => norm(item.name) === norm(saved));
+        return match ? match.name : saved;
+    }
+
+    function initForm(form, provinces, legacyProvinces) {
+        const province = form.querySelector('select[name="province"]');
+        const district = form.querySelector('select[name="district"]');
+        const schoolSelect = form.querySelector("select[id$='school-select']");
+        const schoolInput = form.querySelector('input[name="school_name"]');
+        if (!province || !district || !schoolSelect || !schoolInput) return;
+
+        const schoolRows = getSchoolRows(form);
+        const savedProvince = province.dataset.currentValue || "";
+        const savedDistrict = district.dataset.currentValue || "";
+        const savedSchool = schoolSelect.dataset.currentValue || schoolInput.value || "";
+
+        province.replaceChildren(makeOption("", "Chọn tỉnh/thành phố"));
+        provinces.forEach(item => {
+            if (item && item.name) province.appendChild(makeOption(item.name, item.name));
+        });
+        if (savedProvince && !Array.from(province.options).some(item => norm(item.value) === norm(savedProvince))) {
+            province.appendChild(makeOption(savedProvince, savedProvince + " (địa chỉ đã lưu)"));
+        }
+        province.value = matchingProvince(provinces, savedProvince) || savedProvince || "";
+
+        function populateDistricts(keepSaved) {
+            const provinceValue = province.value;
+            const wantedLegacyNames = legacyGroups[norm(provinceValue)] || [norm(provinceValue)];
+            const currentDistrictOptions = [];
+            legacyProvinces.forEach(oldProvince => {
+                if (!wantedLegacyNames.includes(norm(oldProvince.name))) return;
+                (oldProvince.districts || []).forEach(item => {
+                    const name = String(item.name || "").trim();
+                    if (!name) return;
+                    if (!currentDistrictOptions.some(entry => norm(entry.value) === norm(name))) {
+                        currentDistrictOptions.push({value: name, label: name});
+                    }
+                });
+            });
+            district.replaceChildren(makeOption("", provinceValue ? "Chọn quận/huyện" : "Chọn tỉnh/thành phố trước"));
+            currentDistrictOptions.sort((a, b) => a.label.localeCompare(b.label, "vi"));
+            currentDistrictOptions.forEach(item => district.appendChild(makeOption(item.value, item.label)));
+            if (keepSaved && savedDistrict && !Array.from(district.options).some(item => norm(item.value) === norm(savedDistrict))) {
+                district.appendChild(makeOption(savedDistrict, savedDistrict + " (địa chỉ đã lưu)"));
+            }
+            const match = keepSaved && savedDistrict && Array.from(district.options).find(item => norm(item.value) === norm(savedDistrict));
+            district.value = match ? match.value : (keepSaved ? savedDistrict : "");
+            district.disabled = !provinceValue;
+            populateSchools(keepSaved);
+        }
+
+        function populateSchools(keepSaved) {
+            const provinceValue = province.value;
+            const districtValue = district.value;
+            schoolSelect.replaceChildren(makeOption("", districtValue ? "Chọn trường học" : "Chọn quận/huyện trước"));
+            const schools = schoolRows.filter(item =>
+                canonicalProvince(item.province) === canonicalProvince(provinceValue) &&
+                norm(item.district) === norm(districtValue) &&
+                String(item.school || "").trim()
+            ).map(item => String(item.school).trim());
+            const uniqueSchools = Array.from(new Set(schools)).sort((a, b) => a.localeCompare(b, "vi"));
+            uniqueSchools.forEach(item => schoolSelect.appendChild(makeOption(item, item)));
+            if (keepSaved && savedSchool && !uniqueSchools.some(item => norm(item) === norm(savedSchool))) {
+                schoolSelect.appendChild(makeOption(savedSchool, savedSchool + " (địa chỉ đã lưu)"));
+            }
+            schoolSelect.appendChild(makeOption("__custom__", "+ Nhập trường mới…"));
+            schoolSelect.disabled = !districtValue;
+            const savedOption = keepSaved && savedSchool && Array.from(schoolSelect.options).find(item => norm(item.value) === norm(savedSchool));
+            if (savedOption) {
+                schoolSelect.value = savedOption.value;
+                schoolInput.value = savedSchool;
+                schoolInput.hidden = true;
+            } else {
+                schoolSelect.value = "";
+                schoolInput.value = "";
+                schoolInput.hidden = true;
+            }
+        }
+
+        schoolSelect.addEventListener("change", () => {
+            if (schoolSelect.value === "__custom__") {
+                schoolInput.value = "";
+                schoolInput.hidden = false;
+                schoolInput.focus();
+            } else {
+                schoolInput.value = schoolSelect.value;
+                schoolInput.hidden = true;
+            }
+        });
+        schoolInput.addEventListener("input", () => {
+            if (!schoolInput.hidden) schoolSelect.value = "__custom__";
+        });
+        province.addEventListener("change", () => {
+            district.dataset.currentValue = "";
+            schoolSelect.dataset.currentValue = "";
+            populateDistricts(false);
+        });
+        district.addEventListener("change", () => {
+            schoolSelect.dataset.currentValue = "";
+            populateSchools(false);
+        });
+        populateDistricts(true);
+    }
+
+    async function start() {
+        try {
+            const [provinceResponse, districtResponse] = await Promise.all([
+                fetch(currentProvinceUrl, {headers: {Accept: "application/json"}, cache: "force-cache"}),
+                fetch(legacyDistrictUrl, {headers: {Accept: "application/json"}, cache: "force-cache"})
+            ]);
+            if (!provinceResponse.ok || !districtResponse.ok) throw new Error("Không tải được danh mục địa điểm");
+            const provinces = await provinceResponse.json();
+            const legacyProvinces = await districtResponse.json();
+            if (!Array.isArray(provinces) || provinces.length !== 34 || !Array.isArray(legacyProvinces)) {
+                throw new Error("Dữ liệu tỉnh/thành phố không đúng định dạng dự kiến");
+            }
+            forms.forEach(form => initForm(form, provinces, legacyProvinces));
+        } catch (error) {
+            console.warn("GodEyes class location lists unavailable; using manual entry.", error);
+            forms.forEach(form => {
+                const province = form.querySelector('select[name="province"]');
+                const district = form.querySelector('select[name="district"]');
+                const schoolSelect = form.querySelector("select[id$='school-select']");
+                const schoolInput = form.querySelector('input[name="school_name"]');
+                fallbackToText(province, "Nhập tỉnh/thành phố");
+                fallbackToText(district, "Nhập quận/huyện");
+                if (schoolSelect) schoolSelect.hidden = true;
+                if (schoolInput) schoolInput.hidden = false;
+            });
+        }
+    }
+
+    start();
+})();
+</script>
+"""
+
+
 def teacher_classes_content(teacher_id: int) -> str:
     with SessionLocal() as db:
         teacher_name = db.scalar(
@@ -8067,17 +8396,34 @@ def teacher_classes_content(teacher_id: int) -> str:
                 </div>
             </div>
             <div class="form-body">
-                <form method="post" action="/teacher/classes/create" class="create-form">
+                <form method="post" action="/teacher/classes/create" class="create-form teacher-location-form" data-school-map="{escape(json.dumps(_godeyes_teacher_school_rows(), ensure_ascii=False), quote=True)}">
                     <div class="form-field">
                         <label for="new-class-name">Tên lớp</label>
                         <input id="new-class-name" name="name" type="text" maxlength="120" placeholder="Ví dụ: 9A1" required>
                     </div>
                     <div class="form-field">
                         <label for="new-class-teacher">Tên giáo viên</label>
-                        <input id="new-class-teacher" type="text" value="{escape(str(teacher_name))}" readonly>
+                        <input id="new-class-teacher" name="teacher_name" type="text" maxlength="180" value="{escape(str(teacher_name), quote=True)}" required>
+                        <button class="secondary-button teacher-name-save" type="submit" formaction="/teacher/profile/update-name" formnovalidate>Lưu tên giáo viên</button>
+                    </div>
+                    <div class="form-field">
+                        <label for="teacher-class-province">Tỉnh/Thành phố</label>
+                        <select id="teacher-class-province" name="province"><option value="">Đang tải danh sách tỉnh/thành phố...</option></select>
+                    </div>
+                    <div class="form-field">
+                        <label for="teacher-class-district">Quận/Huyện</label>
+                        <select id="teacher-class-district" name="district" disabled><option value="">Chọn tỉnh/thành phố trước</option></select>
+                        <small>Danh mục địa danh quận/huyện tham khảo trước ngày 01/07/2025.</small>
+                    </div>
+                    <div class="form-field">
+                        <label for="teacher-class-school-select">Trường học</label>
+                        <select id="teacher-class-school-select" disabled><option value="">Chọn quận/huyện trước</option></select>
+                        <input id="teacher-class-school-value" name="school_name" type="text" maxlength="180" placeholder="Nhập tên trường mới" hidden>
+                        <small>Gợi ý từ các trường đã lưu trong GodEyes; chọn “Nhập trường mới” nếu chưa có.</small>
                     </div>
                     <div class="create-form-actions"><button class="primary-button" type="submit">Tạo lớp học</button></div>
                 </form>
+                {_GODEYES_TEACHER_CLASS_LOCATION_SCRIPT}
             </div>
         </section>
 
@@ -8096,12 +8442,14 @@ def teacher_classes_content(teacher_id: int) -> str:
             .danger-button:hover {{ background:#fff5f5; }}
             .create-panel {{ margin-bottom:18px; }}
             .form-body {{ padding:0 22px 22px; }}
-            .create-form {{ display:grid; grid-template-columns:1fr 1.4fr auto; gap:14px; align-items:end; }}
+            .create-form {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; align-items:end; }}
             .form-field label {{ display:block; margin-bottom:7px; font-size:13px; font-weight:750; }}
             .form-field label span {{ color:var(--muted); font-weight:500; }}
-            .form-field input, .form-field textarea {{ width:100%; border:1px solid #d5e2ec; border-radius:11px; padding:11px 12px; background:#fff; color:var(--text); outline:none; font-size:14px; resize:vertical; }}
-            .form-field input {{ height:45px; }}
-            .form-field input:focus, .form-field textarea:focus {{ border-color:#8fb7d8; box-shadow:0 0 0 3px rgba(43,120,197,.10); }}
+            .form-field input, .form-field select, .form-field textarea {{ width:100%; border:1px solid #d5e2ec; border-radius:11px; padding:11px 12px; background:#fff; color:var(--text); outline:none; font-size:14px; resize:vertical; }}
+            .form-field input, .form-field select {{ height:45px; }}
+            .form-field input:focus, .form-field select:focus, .form-field textarea:focus {{ border-color:#8fb7d8; box-shadow:0 0 0 3px rgba(43,120,197,.10); }}
+            .teacher-name-save {{ margin-top:7px; min-height:35px; width:100%; }}
+            .form-field select:disabled {{ background:#f5f7f9; color:#8593a0; cursor:not-allowed; }}
             .create-form-actions {{ display:flex; align-items:flex-end; }}
             .classes-grid {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }}
             .class-card {{ background:#fff; border:1px solid var(--line); border-radius:17px; padding:19px; box-shadow:0 8px 24px rgba(43,95,142,.05); }}
@@ -8144,7 +8492,7 @@ def teacher_classes_content(teacher_id: int) -> str:
                 border: 1px solid #f1d4d8;
                 color: #b4232d;
             }}
-            @media (max-width:1050px) {{ .classes-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} .create-form {{ grid-template-columns:1fr 1fr; }} .create-form-actions {{ grid-column:1/-1; }} }}
+            @media (max-width:1050px) {{ .classes-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} .create-form {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} .create-form-actions {{ grid-column:1/-1; }} }}
             @media (max-width:760px) {{ .class-page-head {{ align-items:flex-start; flex-direction:column; }} .create-form {{ grid-template-columns:1fr; }} .create-form-actions {{ grid-column:auto; }} .classes-grid {{ grid-template-columns:1fr; }} }}
         </style>
     """
