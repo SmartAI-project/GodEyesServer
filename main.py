@@ -416,7 +416,7 @@ def ensure_class_table():
 
         # Main Account location metadata. Existing classes receive empty defaults;
         # this does not alter their owner, student links, sessions, or class codes.
-        for column in ("school_name", "province", "district", "ward"):
+        for column in ("school_name", "province", "district", "ward", "teacher_name"):
             if column not in columns:
                 db.execute(text(f"ALTER TABLE classes ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"))
 
@@ -468,6 +468,44 @@ def ensure_class_shares_table():
         db.commit()
 
 ensure_class_shares_table()
+
+
+def ensure_teacher_history_shares_table():
+    """Create a read-only share relation for a teacher's full Server history."""
+    with SessionLocal() as db:
+        dialect = getattr(getattr(db, "bind", None), "dialect", None)
+        dialect_name = str(getattr(dialect, "name", "") or "").lower()
+        if dialect_name == "postgresql":
+            db.execute(text("""
+                CREATE TABLE IF NOT EXISTS teacher_history_shares (
+                    id BIGSERIAL PRIMARY KEY,
+                    owner_teacher_id INTEGER NOT NULL,
+                    shared_with_teacher_id INTEGER NOT NULL,
+                    created_by_main_id INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+                    UNIQUE (owner_teacher_id, shared_with_teacher_id)
+                )
+            """))
+            db.execute(text(
+                "ALTER TABLE teacher_history_shares ALTER COLUMN created_at SET DEFAULT (CURRENT_TIMESTAMP)"
+            ))
+        else:
+            db.execute(text("""
+                CREATE TABLE IF NOT EXISTS teacher_history_shares (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_teacher_id INTEGER NOT NULL,
+                    shared_with_teacher_id INTEGER NOT NULL,
+                    created_by_main_id INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (owner_teacher_id, shared_with_teacher_id)
+                )
+            """))
+        db.execute(text("CREATE INDEX IF NOT EXISTS idx_teacher_history_shares_recipient ON teacher_history_shares(shared_with_teacher_id)"))
+        db.execute(text("CREATE INDEX IF NOT EXISTS idx_teacher_history_shares_owner ON teacher_history_shares(owner_teacher_id)"))
+        db.commit()
+
+
+ensure_teacher_history_shares_table()
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -2713,7 +2751,7 @@ def admin(request: Request, section: str = "dashboard"):
         content = teachers_content()
     elif normalized == "classes":
         title = "Lớp học"
-        content = admin_classes_content(admin_id)
+        content = admin_classes_content(admin_id, request)
     elif normalized == "students":
         title = "Học sinh"
         content = admin_students_content(
@@ -2768,12 +2806,14 @@ def admin_teacher_detail(request: Request, teacher_id: int):
         """), {"teacher_id": teacher_id}).mappings().first()
         if teacher is None:
             return RedirectResponse(url="/admin?section=teachers&error=teacher_not_found", status_code=303)
+
         classes = db.execute(text("""
-            SELECT id, name, code, description, school_name, province, district, ward, created_at
+            SELECT id, name, code, description, teacher_name, school_name, province, district, ward, created_at
             FROM classes
             WHERE teacher_id = :teacher_id AND COALESCE(owner_type, 'TEACHER') = 'TEACHER'
             ORDER BY id DESC
         """), {"teacher_id": teacher_id}).mappings().all()
+
         shares = db.execute(text("""
             SELECT sh.id AS share_id, sh.class_id, c.name AS class_name,
                    t.id AS recipient_id, COALESCE(NULLIF(t.full_name, ''), t.username) AS recipient_name,
@@ -2784,6 +2824,17 @@ def admin_teacher_detail(request: Request, teacher_id: int):
             WHERE sh.owner_teacher_id = :teacher_id
             ORDER BY c.name, recipient_name
         """), {"teacher_id": teacher_id}).mappings().all()
+
+        history_shares = db.execute(text("""
+            SELECT hs.id AS share_id, t.id AS recipient_id,
+                   COALESCE(NULLIF(t.full_name, ''), t.username) AS recipient_name,
+                   t.username AS recipient_username, hs.created_at
+            FROM teacher_history_shares hs
+            JOIN teacher_accounts t ON t.id = hs.shared_with_teacher_id
+            WHERE hs.owner_teacher_id = :teacher_id
+            ORDER BY recipient_name
+        """), {"teacher_id": teacher_id}).mappings().all()
+
         obs_count = int(db.scalar(text("""
             SELECT COUNT(o.id) FROM observations o JOIN sessions s ON s.id = o.session_id
             WHERE s.teacher_id = :teacher_id AND COALESCE(s.deleted_at, '') = ''
@@ -2791,14 +2842,31 @@ def admin_teacher_detail(request: Request, teacher_id: int):
         session_count = int(db.scalar(text("""
             SELECT COUNT(*) FROM sessions WHERE teacher_id = :teacher_id AND COALESCE(deleted_at, '') = ''
         """), {"teacher_id": teacher_id}) or 0)
+        history_sessions = db.execute(text("""
+            SELECT s.id, s.class_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
+                   COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
+                   s.started_at, s.status, s.duration_seconds,
+                   (SELECT COUNT(*) FROM observations o WHERE o.session_id = s.id) AS observation_count,
+                   (SELECT COUNT(*) FROM evidence e WHERE e.session_id = s.id) AS evidence_count
+            FROM sessions s LEFT JOIN classes c ON c.id = s.class_id
+            WHERE s.teacher_id = :teacher_id AND COALESCE(s.deleted_at, '') = ''
+            ORDER BY s.started_at DESC, s.id DESC
+            LIMIT 100
+        """), {"teacher_id": teacher_id}).mappings().all()
 
-    active = bool(teacher["is_active"])
+    active = str(teacher["is_active"]).strip().lower() in {"1", "true", "t", "yes", "y"}
     status = "Đang hoạt động" if active else "Đã khóa"
     teacher_title = str(teacher["full_name"] or teacher["username"])
     recipients = [x for x in teacher_rows() if int(x.id) != teacher_id and bool(x.is_active)]
     shares_by_class = {}
     for share in shares:
         shares_by_class.setdefault(int(share["class_id"]), []).append(share)
+
+    existing_history_recipient_ids = {int(row["recipient_id"]) for row in history_shares}
+    history_recipient_options = ''.join(
+        f'<option value="{int(recipient.id)}">{escape(str(recipient.full_name or recipient.username))} ({escape(str(recipient.username))})</option>'
+        for recipient in recipients if int(recipient.id) not in existing_history_recipient_ids
+    ) or '<option value="" disabled>Không còn giáo viên khả dụng</option>'
 
     class_cards = ""
     for row in classes:
@@ -2808,18 +2876,18 @@ def admin_teacher_detail(request: Request, teacher_id: int):
             for recipient in recipients if int(recipient.id) not in recipient_ids
         ) or '<option value="" disabled>Không còn giáo viên khả dụng</option>'
         recipients_html = ''.join(
-            f"""<div class="admin-share-recipient"><span>{escape(str(share['recipient_name']))} · {escape(str(share['recipient_username']))}</span><form method="post" action="/admin/class-shares/delete"><input type="hidden" name="share_id" value="{int(share['share_id'])}"><input type="hidden" name="return_teacher_id" value="{teacher_id}"><button class="admin-danger" type="submit">Gỡ chia sẻ</button></form></div>"""
+            f"""<div class="admin-share-recipient"><span>{escape(str(share['recipient_name']))} · {escape(str(share['recipient_username']))}</span><form method="post" action="/admin/class-shares/delete"><input type="hidden" name="share_id" value="{int(share['share_id'])}"><input type="hidden" name="return_teacher_id" value="{teacher_id}"><button class="admin-danger" type="submit">Gỡ chia sẻ lớp</button></form></div>"""
             for share in shares_by_class.get(int(row["id"]), [])
         ) or '<div class="admin-student-muted">Chưa chia sẻ lớp này.</div>'
-        location = ' · '.join(str(row[k] or '').strip() for k in ('school_name','province','district','ward') if str(row[k] or '').strip())
+        location = ' · '.join(str(row[k] or '').strip() for k in ('school_name', 'province', 'district', 'ward') if str(row[k] or '').strip())
         class_cards += f"""
             <article class="admin-class-card admin-detail-panel">
                 <div class="admin-class-top"><span class="owner-badge teacher-owner">{escape(str(row['code']))}</span><span class="admin-student-muted">Tạo {escape(format_godeyes_datetime(row['created_at']))}</span></div>
                 <h3>{escape(str(row['name']))}</h3>
                 <p>{escape(str(row['description'] or 'Chưa có mô tả'))}</p>
-                <div class="admin-class-meta">{escape(location or 'Chưa khai báo địa điểm')}</div>
+                <div class="admin-class-meta">Giáo viên phụ trách: {escape(str(row['teacher_name'] or 'Chưa nhập'))}<br>{escape(location or 'Chưa khai báo địa điểm')}</div>
                 <div class="admin-class-actions"><a class="admin-secondary" href="/admin/class/{int(row['id'])}">Mở lớp · học sinh · buổi học</a></div>
-                <div class="admin-share-panel"><strong>Chia sẻ chỉ xem</strong>
+                <div class="admin-share-panel"><strong>Chia sẻ lớp ở chế độ chỉ xem</strong>
                     <form class="admin-share-form" method="post" action="/admin/class-shares/create">
                         <input type="hidden" name="class_id" value="{int(row['id'])}"><input type="hidden" name="return_teacher_id" value="{teacher_id}">
                         <select name="shared_with_teacher_id" required>{recipient_options}</select><button class="admin-primary" type="submit">Chia sẻ lớp</button>
@@ -2831,20 +2899,53 @@ def admin_teacher_detail(request: Request, teacher_id: int):
     if not class_cards:
         class_cards = '<div class="admin-empty-classes"><h3>Giáo viên chưa có lớp</h3><p>Khi giáo viên tạo lớp, lớp sẽ xuất hiện tại đây.</p></div>'
 
+    history_shares_html = ''.join(
+        f"""<div class="admin-share-recipient"><span>{escape(str(row['recipient_name']))} · {escape(str(row['recipient_username']))}</span><form method="post" action="/admin/teacher-history-shares/delete"><input type="hidden" name="share_id" value="{int(row['share_id'])}"><input type="hidden" name="return_teacher_id" value="{teacher_id}"><button class="admin-danger" type="submit">Thu hồi quyền xem</button></form></div>"""
+        for row in history_shares
+    ) or '<div class="admin-student-muted">Chưa chia sẻ lịch sử OB cho giáo viên nào.</div>'
+
+    history_rows = ''.join(
+        f"""<tr><td><a href="/admin/data/history/session/{int(row['id'])}">#{int(row['id'])}</a></td><td>{escape(str(row['class_name']))}<div class="admin-history-secondary">{escape(str(row['class_code'] or ''))}</div></td><td>{escape(format_godeyes_datetime(row['started_at']))}</td><td>{escape(str(row['status'] or ''))}</td><td>{int(row['observation_count'] or 0)}</td><td>{int(row['evidence_count'] or 0)}</td></tr>"""
+        for row in history_sessions
+    ) or '<tr><td colspan="6"><div class="admin-history-empty">Chưa có lịch sử buổi học.</div></td></tr>'
+
+    notice = ''
+    if request.query_params.get('history_shared') == '1':
+        notice = '<div class="admin-notice-success">Đã chia sẻ lịch sử OB ở chế độ chỉ xem.</div>'
+    elif request.query_params.get('history_unshared') == '1':
+        notice = '<div class="admin-notice-success">Đã thu hồi quyền xem lịch sử OB.</div>'
+
     content = f"""
+        {notice}
         <section class="admin-profile-panel card section-card">
             <div class="admin-profile-head"><div><div class="admin-breadcrumb">HỒ SƠ GIÁO VIÊN</div><h2>{escape(teacher_title)}</h2><p>Tài khoản: {escape(str(teacher['username']))} · Trạng thái: {status}</p></div><a class="admin-secondary" href="/admin?section=teachers">Quay lại giáo viên</a></div>
             <form class="admin-teacher-edit-form" method="post" action="/admin/teachers/edit">
                 <input type="hidden" name="teacher_id" value="{teacher_id}">
-                <div class="admin-field"><label for="admin-teacher-full-name">Tên giáo viên</label><input id="admin-teacher-full-name" name="full_name" type="text" maxlength="180" value="{escape(str(teacher['full_name'] or ''))}" required></div>
-                <button class="admin-primary" type="submit">Lưu tên giáo viên</button>
+                <div class="admin-field"><label for="admin-teacher-full-name">Tên tài khoản giáo viên</label><input id="admin-teacher-full-name" name="full_name" type="text" maxlength="180" value="{escape(str(teacher['full_name'] or ''))}" required></div>
+                <button class="admin-primary" type="submit">Lưu tên tài khoản</button>
             </form>
             <div class="admin-profile-metrics"><div class="admin-stat"><span>Lớp đang sở hữu</span><strong>{len(classes)}</strong></div><div class="admin-stat"><span>Buổi học</span><strong>{session_count}</strong></div><div class="admin-stat"><span>Observation</span><strong>{obs_count}</strong></div></div>
         </section>
-        <section class="admin-page-title"><div><div class="admin-breadcrumb">QUẢN LÝ LỚP</div><h2>Lớp của {escape(teacher_title)}</h2><p>Mở lớp để xem học sinh và các buổi học; chia sẻ cho giáo viên khác ở chế độ chỉ xem.</p></div></section>
+
+        <section class="card section-card admin-detail-panel">
+            <div class="section-head"><div><h2>Chia sẻ toàn bộ lịch sử OB</h2><span>Người nhận có thể xem các buổi học và Observation của giáo viên này, không thể sửa hoặc xóa dữ liệu.</span></div></div>
+            <form class="admin-share-form" method="post" action="/admin/teacher-history-shares/create">
+                <input type="hidden" name="owner_teacher_id" value="{teacher_id}"><input type="hidden" name="return_teacher_id" value="{teacher_id}">
+                <select name="shared_with_teacher_id" required>{history_recipient_options}</select><button class="admin-primary" type="submit">Chia sẻ lịch sử OB</button>
+            </form>
+            <div class="admin-share-list">{history_shares_html}</div>
+        </section>
+
+        <section class="admin-page-title"><div><div class="admin-breadcrumb">QUẢN LÝ LỚP</div><h2>Lớp của {escape(teacher_title)}</h2><p>Mở lớp để xem học sinh và các buổi học; việc chia sẻ lớp riêng không giống chia sẻ toàn bộ lịch sử OB.</p></div></section>
         <section class="admin-classes-grid">{class_cards}</section>
+
+        <section class="card section-card admin-detail-panel">
+            <div class="section-head"><div><h2>Lịch sử buổi học và Observation</h2><span>Hiển thị {len(history_sessions)} buổi gần nhất; tổng cộng {session_count} buổi và {obs_count} Observation đang lưu.</span></div></div>
+            <div class="table-wrap"><table class="admin-teacher-history-table"><thead><tr><th>Session</th><th>Lớp</th><th>Ngày giờ</th><th>Trạng thái</th><th>Observation</th><th>Evidence</th></tr></thead><tbody>{history_rows}</tbody></table></div>
+        </section>
         <style>
             .admin-profile-panel {{ margin-bottom:22px; }}
+            .admin-detail-panel {{ margin-bottom:18px; }}
             .admin-profile-head {{ display:flex; justify-content:space-between; gap:15px; align-items:flex-start; }}
             .admin-profile-head h2 {{ margin:0; font-size:23px; }} .admin-profile-head p {{ color:#8fa0b3; margin:7px 0 0; font-size:13px; }}
             .admin-teacher-edit-form {{ display:flex; gap:12px; align-items:end; max-width:720px; margin-top:18px; }}
@@ -2852,12 +2953,17 @@ def admin_teacher_detail(request: Request, teacher_id: int):
             .admin-profile-metrics {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-top:22px; }}
             .admin-share-panel {{ border-top:1px solid #273544; margin-top:16px; padding-top:14px; }}
             .admin-share-panel strong {{ font-size:12px; }}
-            .admin-share-form {{ display:flex; gap:8px; margin-top:10px; }} .admin-share-form select {{ min-width:0; flex:1; border-radius:9px; padding:9px; }}
+            .admin-share-form {{ display:flex; gap:8px; margin-top:10px; }} .admin-share-form select {{ min-width:0; flex:1; border:1px solid #d7dee6; border-radius:9px; padding:9px; background:#fff; color:#263441; }}
             .admin-share-list {{ display:grid; gap:7px; margin-top:10px; }}
-            .admin-share-recipient {{ display:flex; align-items:center; justify-content:space-between; gap:12px; border:1px solid #2a3b4c; border-radius:9px; padding:8px 10px; font-size:11px; }}
+            .admin-share-recipient {{ display:flex; align-items:center; justify-content:space-between; gap:12px; border:1px solid #e0e5ea; border-radius:9px; padding:8px 10px; font-size:11px; }}
             .admin-share-recipient form {{ margin:0; }} .admin-share-recipient button {{ min-height:29px; font-size:10px; }}
-            .admin-student-muted {{ color:#94a5b8; font-size:11px; }}
-            @media(max-width:760px) {{ .admin-profile-head, .admin-teacher-edit-form {{ flex-direction:column; align-items:stretch; }} .admin-profile-metrics {{ grid-template-columns:1fr; }} .admin-share-form {{ flex-direction:column; }} }}
+            .admin-student-muted {{ color:#7b8996; font-size:11px; }}
+            .admin-notice-success {{ padding:12px 15px; margin-bottom:14px; border:1px solid #cfe8d5; border-radius:10px; background:#f1fbf3; color:#236b35; font-size:12px; font-weight:700; }}
+            .admin-history-secondary {{ margin-top:3px; color:#82909d; font-size:10px; }}
+            .admin-teacher-history-table {{ width:100%; border-collapse:collapse; min-width:690px; }}
+            .admin-teacher-history-table th,.admin-teacher-history-table td {{ padding:10px 12px; border-bottom:1px solid #e8edf2; text-align:left; font-size:12px; }}
+            .admin-teacher-history-table a {{ color:#276da4; font-weight:750; text-decoration:none; }}
+            @media(max-width:760px) {{ .admin-profile-head, .admin-teacher-edit-form, .admin-share-form {{ flex-direction:column; align-items:stretch; }} .admin-profile-metrics {{ grid-template-columns:1fr; }} }}
         </style>
     """
     return admin_shell("Hồ sơ giáo viên", content, "teachers")
@@ -2925,13 +3031,75 @@ def admin_delete_class_share(request: Request, share_id: int = Form(...), return
     return RedirectResponse(url="/admin?section=classes", status_code=303)
 
 
+@app.post("/admin/teacher-history-shares/create")
+def admin_create_teacher_history_share(
+    request: Request,
+    owner_teacher_id: int = Form(...),
+    shared_with_teacher_id: int = Form(...),
+    return_teacher_id: int = Form(0),
+):
+    payload = get_admin_payload(request)
+    if payload is None:
+        return RedirectResponse(url="/", status_code=303)
+    if owner_teacher_id == shared_with_teacher_id:
+        return RedirectResponse(url=f"/admin/teacher/{owner_teacher_id}", status_code=303)
+
+    with SessionLocal() as db:
+        owner = db.execute(text(
+            "SELECT id FROM teacher_accounts WHERE id = :id LIMIT 1"
+        ), {"id": owner_teacher_id}).first()
+        recipient = db.execute(text(
+            "SELECT id, is_active FROM teacher_accounts WHERE id = :id LIMIT 1"
+        ), {"id": shared_with_teacher_id}).mappings().first()
+        if owner is None or recipient is None:
+            return RedirectResponse(url=f"/admin/teacher/{owner_teacher_id}", status_code=303)
+        active_value = str(recipient["is_active"]).strip().lower() in {"1", "true", "t", "yes", "y"}
+        if not active_value:
+            return RedirectResponse(url=f"/admin/teacher/{owner_teacher_id}", status_code=303)
+        existing = db.execute(text("""
+            SELECT id FROM teacher_history_shares
+            WHERE owner_teacher_id = :owner_teacher_id
+              AND shared_with_teacher_id = :shared_with_teacher_id
+            LIMIT 1
+        """), {"owner_teacher_id": owner_teacher_id, "shared_with_teacher_id": shared_with_teacher_id}).first()
+        if existing is None:
+            db.execute(text("""
+                INSERT INTO teacher_history_shares
+                    (owner_teacher_id, shared_with_teacher_id, created_by_main_id)
+                VALUES (:owner_teacher_id, :shared_with_teacher_id, :created_by_main_id)
+            """), {
+                "owner_teacher_id": owner_teacher_id,
+                "shared_with_teacher_id": shared_with_teacher_id,
+                "created_by_main_id": int(payload.get("sub") or 0),
+            })
+            db.commit()
+    return RedirectResponse(url=f"/admin/teacher/{owner_teacher_id}?history_shared=1", status_code=303)
+
+
+@app.post("/admin/teacher-history-shares/delete")
+def admin_delete_teacher_history_share(
+    request: Request,
+    share_id: int = Form(...),
+    return_teacher_id: int = Form(0),
+):
+    if get_admin_payload(request) is None:
+        return RedirectResponse(url="/", status_code=303)
+    with SessionLocal() as db:
+        db.execute(text("""
+            DELETE FROM teacher_history_shares
+            WHERE id = :share_id AND owner_teacher_id = :owner_teacher_id
+        """), {"share_id": share_id, "owner_teacher_id": return_teacher_id})
+        db.commit()
+    return RedirectResponse(url=f"/admin/teacher/{return_teacher_id}?history_unshared=1", status_code=303)
+
+
 @app.get("/admin/class/{class_id}", response_class=HTMLResponse)
 def admin_class_detail(request: Request, class_id: int):
     if get_admin_payload(request) is None:
         return RedirectResponse(url="/", status_code=303)
     with SessionLocal() as db:
         cls = db.execute(text("""
-            SELECT c.*, COALESCE(NULLIF(t.full_name, ''), t.username, 'Main Account') AS teacher_name
+            SELECT c.*, COALESCE(NULLIF(t.full_name, ''), t.username, 'Main Account') AS owner_name
             FROM classes c LEFT JOIN teacher_accounts t ON t.id = c.teacher_id
             WHERE c.id = :class_id LIMIT 1
         """), {"class_id": class_id}).mappings().first()
@@ -2962,8 +3130,8 @@ def admin_class_detail(request: Request, class_id: int):
     ) or '<tr><td colspan="5"><div class="empty-state">Chưa có buổi học cho lớp này.</div></td></tr>'
     content = f"""
         <section class="card section-card admin-detail-panel">
-            <div class="admin-profile-head"><div><div class="admin-breadcrumb">CHI TIẾT LỚP HỌC</div><h2>{escape(str(cls['name']))}</h2><p>Mã lớp: {escape(str(cls['code']))} · Chủ sở hữu: {escape(str(cls['teacher_name']))}</p></div><a class="admin-secondary" href="/admin?section=classes">Quay lại lớp học</a></div>
-            <div class="admin-class-meta">{escape(location or 'Chưa khai báo địa điểm')}</div>
+            <div class="admin-profile-head"><div><div class="admin-breadcrumb">CHI TIẾT LỚP HỌC</div><h2>{escape(str(cls['name']))}</h2><p>Mã lớp: {escape(str(cls['code']))} · Chủ sở hữu: {escape(str(cls['owner_name']))}</p></div><a class="admin-secondary" href="/admin?section=classes">Quay lại lớp học</a></div>
+            <div class="admin-class-meta">{escape(location or 'Chưa khai báo địa điểm')}<br>Giáo viên phụ trách: {escape(str(cls['teacher_name'] or 'Chưa khai báo'))}</div>
             <p class="admin-student-muted">{escape(str(cls['description'] or 'Chưa có mô tả'))}</p>
         </section>
         <section class="card section-card admin-detail-panel"><div class="section-head"><div><h2>Học sinh</h2><span>{len(students)} học sinh trong lớp</span></div><a class="admin-secondary" href="/admin?section=students&class_id={class_id}">Quản lý học sinh</a></div>
@@ -3749,6 +3917,7 @@ def delete_teacher_page(
 
         if teacher is not None:
             db.execute(text("DELETE FROM class_shares WHERE owner_teacher_id = :teacher_id OR shared_with_teacher_id = :teacher_id"), {"teacher_id": teacher_id})
+            db.execute(text("DELETE FROM teacher_history_shares WHERE owner_teacher_id = :teacher_id OR shared_with_teacher_id = :teacher_id"), {"teacher_id": teacher_id})
             db.delete(teacher)
             db.commit()
 
@@ -3764,7 +3933,7 @@ def get_admin_class_rows():
         rows = db.execute(
             text("""
                 SELECT id, teacher_id, owner_type, owner_id, name, code, description,
-                       school_name, province, district, ward, created_at
+                       teacher_name, school_name, province, district, ward, created_at
                 FROM classes
                 ORDER BY id DESC
             """)
@@ -3789,17 +3958,53 @@ def get_admin_class_rows():
         return result
 
 
-def admin_classes_content(admin_id: int) -> str:
-    rows = get_admin_class_rows()
-    total = len(rows)
+def admin_classes_content(admin_id: int, request: Request | None = None) -> str:
+    all_rows = get_admin_class_rows()
+    total = len(all_rows)
     own = sum(
-        1 for row in rows
+        1 for row in all_rows
         if row["owner_type"] == "MAIN_ADMIN" and int(row["owner_id"] or 0) == admin_id
     )
     teacher_owned = total - own
 
+    params = request.query_params if request is not None else {}
+    q = str(params.get("q", "") or "").strip()
+    school_filter = str(params.get("school", "") or "").strip()
+    province_filter = str(params.get("province", "") or "").strip()
+    district_filter = str(params.get("district", "") or "").strip()
+    sort_by = str(params.get("sort", "newest") or "newest").strip().lower()
+
+    filtered_rows = []
+    for row in all_rows:
+        owner_name = str(row.get("owner_name") or "")
+        teacher_name = str(row.get("teacher_name") or "")
+        blob = " ".join(str(row.get(k) or "") for k in ("name", "code", "teacher_name", "owner_name", "school_name", "province", "district", "ward", "description"))
+        if q and q.casefold() not in blob.casefold():
+            continue
+        if school_filter and school_filter.casefold() not in str(row.get("school_name") or "").casefold():
+            continue
+        if province_filter and province_filter.casefold() not in str(row.get("province") or "").casefold():
+            continue
+        if district_filter and district_filter.casefold() not in str(row.get("district") or "").casefold():
+            continue
+        filtered_rows.append(row)
+
+    if sort_by == "name_asc":
+        filtered_rows.sort(key=lambda row: str(row.get("name") or "").casefold())
+    elif sort_by == "name_desc":
+        filtered_rows.sort(key=lambda row: str(row.get("name") or "").casefold(), reverse=True)
+    elif sort_by == "school":
+        filtered_rows.sort(key=lambda row: (str(row.get("school_name") or "").casefold(), str(row.get("name") or "").casefold()))
+    elif sort_by == "province":
+        filtered_rows.sort(key=lambda row: (str(row.get("province") or "").casefold(), str(row.get("school_name") or "").casefold(), str(row.get("name") or "").casefold()))
+    elif sort_by == "teacher":
+        filtered_rows.sort(key=lambda row: (str(row.get("teacher_name") or row.get("owner_name") or "").casefold(), str(row.get("name") or "").casefold()))
+    else:
+        sort_by = "newest"
+        filtered_rows.sort(key=lambda row: int(row.get("id") or 0), reverse=True)
+
     cards = ""
-    for row in rows:
+    for row in filtered_rows:
         created = str(row["created_at"] or "").replace("T", " ")[:16]
         owner_label = "Main Account" if row["owner_type"] == "MAIN_ADMIN" else row["owner_name"]
         owner_class = "main-owner" if row["owner_type"] == "MAIN_ADMIN" else "teacher-owner"
@@ -3812,7 +4017,7 @@ def admin_classes_content(admin_id: int) -> str:
                 <div class="admin-class-code">{escape(row['code'])}</div>
                 <h3>{escape(row['name'])}</h3>
                 <p>{escape(row['description']) if row['description'] else 'Chưa có mô tả cho lớp học này.'}</p>
-                <div class="admin-class-meta">{escape(' · '.join(str(row[k] or '') for k in ('school_name','province','district','ward') if str(row[k] or '').strip()) or 'Chưa khai báo địa điểm')}<br>Tạo ngày {escape(created) if created else '-'}</div>
+                <div class="admin-class-meta">{escape(' · '.join(str(row[k] or '') for k in ('school_name','province','district','ward') if str(row[k] or '').strip()) or 'Chưa khai báo địa điểm')}<br>Giáo viên phụ trách: {escape(str(row.get('teacher_name') or 'Chưa khai báo'))}<br>Tạo ngày {escape(created) if created else '-'}</div>
                 <div class="admin-class-actions">
                     <a class="admin-secondary" href="/admin/class/{int(row['id'])}">Mở lớp</a>
                     <a class="admin-secondary" href="/admin/classes/edit?class_id={row['id']}">Chỉnh sửa</a>
@@ -3825,13 +4030,16 @@ def admin_classes_content(admin_id: int) -> str:
         """
 
     if not cards:
-        cards = f"""
-            <div class="admin-empty-classes">
-                <div class="admin-empty-icon">{ICON_CLASSES}</div>
-                <h3>Chưa có lớp học</h3>
-                <p>Main Account có thể tạo lớp học tại đây để quản lý tập trung trên hệ thống.</p>
-            </div>
-        """
+        if total == 0:
+            cards = f"""
+                <div class="admin-empty-classes">
+                    <div class="admin-empty-icon">{ICON_CLASSES}</div>
+                    <h3>Chưa có lớp học</h3>
+                    <p>Main Account có thể tạo lớp học tại đây để quản lý tập trung trên hệ thống.</p>
+                </div>
+            """
+        else:
+            cards = "<div class='admin-empty-classes'><h3>Không tìm thấy lớp phù hợp</h3><p>Thử đổi tên trường, tỉnh/thành phố, quận/huyện hoặc từ khóa tìm kiếm.</p></div>"
 
     return f"""
         <section class="admin-page-title">
@@ -3862,6 +4070,10 @@ def admin_classes_content(admin_id: int) -> str:
                     <input id="admin-class-name" name="name" type="text" maxlength="120" placeholder="Ví dụ: 9A1" required>
                 </div>
                 <div class="admin-field">
+                    <label for="admin-class-teacher-name">Giáo viên phụ trách lớp/tiết</label>
+                    <input id="admin-class-teacher-name" name="teacher_name" type="text" maxlength="180" placeholder="Tên giáo viên phụ trách">
+                </div>
+                <div class="admin-field">
                     <label for="admin-class-school">Trường học</label>
                     <input id="admin-class-school" name="school_name" type="text" maxlength="180" placeholder="Tên trường">
                 </div>
@@ -3888,8 +4100,20 @@ def admin_classes_content(admin_id: int) -> str:
         <section class="admin-class-list-head">
             <div>
                 <h3>Danh sách lớp học</h3>
-                <p>Có {total} lớp đang được lưu trên server.</p>
+                <p>Hiển thị {len(filtered_rows)} / {total} lớp đang được lưu trên server.</p>
             </div>
+        </section>
+
+        <section class="admin-class-filter">
+            <form method="get" action="/admin" class="admin-class-filter-form">
+                <input type="hidden" name="section" value="classes">
+                <div class="admin-field"><label for="filter-class-q">Tìm lớp</label><input id="filter-class-q" name="q" value="{escape(q, quote=True)}" placeholder="Tên lớp, mã lớp, giáo viên"></div>
+                <div class="admin-field"><label for="filter-school">Trường học</label><input id="filter-school" name="school" value="{escape(school_filter, quote=True)}" placeholder="Nhập tên trường"></div>
+                <div class="admin-field"><label for="filter-province">Tỉnh/Thành phố</label><input id="filter-province" name="province" value="{escape(province_filter, quote=True)}" placeholder="Nhập tỉnh/thành phố"></div>
+                <div class="admin-field"><label for="filter-district">Quận/Huyện</label><input id="filter-district" name="district" value="{escape(district_filter, quote=True)}" placeholder="Nhập quận/huyện cũ"></div>
+                <div class="admin-field"><label for="filter-sort">Sắp xếp</label><select id="filter-sort" name="sort"><option value="newest" {'selected' if sort_by == 'newest' else ''}>Mới tạo trước</option><option value="name_asc" {'selected' if sort_by == 'name_asc' else ''}>Tên lớp A–Z</option><option value="name_desc" {'selected' if sort_by == 'name_desc' else ''}>Tên lớp Z–A</option><option value="school" {'selected' if sort_by == 'school' else ''}>Theo trường</option><option value="province" {'selected' if sort_by == 'province' else ''}>Theo tỉnh/thành</option><option value="teacher" {'selected' if sort_by == 'teacher' else ''}>Theo giáo viên</option></select></div>
+                <div class="admin-class-filter-actions"><button class="admin-primary" type="submit">Tìm / Sắp xếp</button><a class="admin-secondary" href="/admin?section=classes">Xóa bộ lọc</a></div>
+            </form>
         </section>
 
         <section class="admin-classes-grid">
@@ -3921,6 +4145,11 @@ def admin_classes_content(admin_id: int) -> str:
             .admin-primary {{ min-height:44px; padding:0 16px; border:1px solid #2f73ad; border-radius:10px; background:#2f73ad; color:#fff; font:inherit; font-size:13px; font-weight:750; cursor:pointer; white-space:nowrap; }}
             .admin-primary:hover {{ background:#255f91; border-color:#255f91; }}
             .admin-class-list-head {{ margin:0 0 12px; }}
+            .admin-class-filter {{ background:#fff; border:1px solid #e3e6ea; border-radius:14px; padding:16px; margin-bottom:15px; }}
+            .admin-class-filter-form {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; align-items:end; }}
+            .admin-class-filter .admin-field input, .admin-class-filter .admin-field select {{ height:42px; width:100%; border:1px solid #d8dee5; border-radius:10px; background:#fff; color:#252a30; font:inherit; font-size:12px; outline:none; padding:9px 11px; }}
+            .admin-class-filter-actions {{ display:flex; align-items:center; gap:9px; }}
+            .admin-class-filter-actions .admin-secondary {{ display:inline-flex; align-items:center; justify-content:center; min-height:44px; padding:0 13px; border:1px solid #d8dee5; border-radius:10px; color:#4b5968; text-decoration:none; font-size:12px; font-weight:700; }}
             .admin-classes-grid {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }}
             .admin-class-card {{ background:#fff; border:1px solid #e3e6ea; border-radius:16px; padding:18px; box-shadow:0 8px 24px rgba(24,28,32,.045); }}
             .admin-class-top {{ display:flex; align-items:center; justify-content:space-between; gap:10px; }}
@@ -3945,8 +4174,8 @@ def admin_classes_content(admin_id: int) -> str:
             .admin-empty-icon svg {{ width:27px; height:27px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }}
             .admin-empty-classes h3 {{ margin:0; font-size:18px; }}
             .admin-empty-classes p {{ margin:8px auto 0; max-width:480px; color:#7b848d; font-size:12px; line-height:1.55; }}
-            @media (max-width:1050px) {{ .admin-classes-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} .admin-create-form {{ grid-template-columns:1fr 1fr; }} .admin-primary {{ grid-column:1/-1; justify-self:start; }} }}
-            @media (max-width:760px) {{ .admin-class-stats {{ grid-template-columns:1fr; }} .admin-create-form {{ grid-template-columns:1fr; }} .admin-primary {{ grid-column:auto; width:100%; }} .admin-classes-grid {{ grid-template-columns:1fr; }} }}
+            @media (max-width:1050px) {{ .admin-classes-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} .admin-create-form {{ grid-template-columns:1fr 1fr; }} .admin-primary {{ grid-column:1/-1; justify-self:start; }} .admin-class-filter-form {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} }}
+            @media (max-width:760px) {{ .admin-class-stats {{ grid-template-columns:1fr; }} .admin-create-form {{ grid-template-columns:1fr; }} .admin-primary {{ grid-column:auto; width:100%; }} .admin-classes-grid {{ grid-template-columns:1fr; }} .admin-class-filter-form {{ grid-template-columns:1fr; }} .admin-class-filter-actions {{ flex-direction:column; align-items:stretch; }} }}
         </style>
     """
 
@@ -3956,6 +4185,7 @@ def admin_create_class(
     request: Request,
     name: str = Form(...),
     description: str = Form(""),
+    teacher_name: str = Form(""),
     school_name: str = Form(""),
     province: str = Form(""),
     district: str = Form(""),
@@ -3967,6 +4197,7 @@ def admin_create_class(
 
     name = name.strip()
     description = description.strip()
+    teacher_name = teacher_name.strip()
     school_name = school_name.strip()
     province = province.strip()
     district = district.strip()
@@ -3980,15 +4211,16 @@ def admin_create_class(
         db.execute(
             text("""
                 INSERT INTO classes
-                    (teacher_id, owner_type, owner_id, name, code, description, school_name, province, district, ward)
+                    (teacher_id, owner_type, owner_id, name, code, description, teacher_name, school_name, province, district, ward)
                 VALUES
-                    (0, 'MAIN_ADMIN', :owner_id, :name, :code, :description, :school_name, :province, :district, :ward)
+                    (0, 'MAIN_ADMIN', :owner_id, :name, :code, :description, :teacher_name, :school_name, :province, :district, :ward)
             """),
             {
                 "owner_id": admin_id,
                 "name": name,
                 "code": code,
                 "description": description,
+                "teacher_name": teacher_name,
                 "school_name": school_name,
                 "province": province,
                 "district": district,
@@ -4009,7 +4241,7 @@ def admin_edit_class_page(request: Request, class_id: int):
     with SessionLocal() as db:
         row = db.execute(
             text("""
-                SELECT id, name, code, description, school_name, province, district, ward
+                SELECT id, name, code, description, teacher_name, school_name, province, district, ward
                 FROM classes
                 WHERE id = :class_id
             """),
@@ -4040,6 +4272,10 @@ def admin_edit_class_page(request: Request, class_id: int):
                 <div class="admin-edit-field">
                     <label for="admin-edit-name">Tên lớp</label>
                     <input id="admin-edit-name" name="name" type="text" value="{escape(row['name'])}" maxlength="120" required autofocus>
+                </div>
+                <div class="admin-edit-field">
+                    <label for="admin-edit-teacher-name">Giáo viên phụ trách lớp/tiết</label>
+                    <input id="admin-edit-teacher-name" name="teacher_name" type="text" maxlength="180" value="{escape(row['teacher_name'] or '')}">
                 </div>
                 <div class="admin-edit-field">
                     <label for="admin-edit-description">Mô tả <span>(không bắt buộc)</span></label>
@@ -4093,6 +4329,7 @@ def admin_edit_class(
     class_id: int = Form(...),
     name: str = Form(...),
     description: str = Form(""),
+    teacher_name: str = Form(""),
     school_name: str = Form(""),
     province: str = Form(""),
     district: str = Form(""),
@@ -4103,6 +4340,7 @@ def admin_edit_class(
 
     name = name.strip()
     description = description.strip()
+    teacher_name = teacher_name.strip()
     school_name = school_name.strip()
     province = province.strip()
     district = district.strip()
@@ -4115,13 +4353,13 @@ def admin_edit_class(
             text("""
                 UPDATE classes
                 SET name = :name, description = :description,
-                    school_name = :school_name, province = :province,
+                    teacher_name = :teacher_name, school_name = :school_name, province = :province,
                     district = :district, ward = :ward, updated_at = CURRENT_TIMESTAMP
                 WHERE id = :class_id
             """),
             {
                 "name": name, "description": description,
-                "school_name": school_name, "province": province,
+                "teacher_name": teacher_name, "school_name": school_name, "province": province,
                 "district": district, "ward": ward, "class_id": class_id,
             }
         )
@@ -5041,27 +5279,6 @@ def teacher_shared_class_session_view(request: Request, session_id: int):
     """
     return teacher_shell(title="Chi tiết buổi học chia sẻ", content=content, section="classes", full_name=full_name, teacher_id=teacher_id)
 
-@app.post("/teacher/profile/update-name")
-def update_teacher_profile_name(request: Request, teacher_name: str = Form(...)):
-    payload = get_teacher_payload(request)
-    if payload is None:
-        return RedirectResponse(url="/", status_code=303)
-
-    teacher_id = int(payload["sub"])
-    teacher_name = str(teacher_name or "").strip()
-    if not teacher_name:
-        return RedirectResponse(url="/teacher?section=classes", status_code=303)
-
-    with SessionLocal() as db:
-        db.execute(
-            text("UPDATE teacher_accounts SET full_name = :full_name WHERE id = :teacher_id"),
-            {"full_name": teacher_name, "teacher_id": teacher_id},
-        )
-        db.commit()
-
-    return RedirectResponse(url="/teacher?section=classes&name_updated=1", status_code=303)
-
-
 @app.post("/teacher/classes/create")
 def create_class(
     request: Request,
@@ -5087,18 +5304,13 @@ def create_class(
 
     teacher_id = int(payload["sub"])
     with SessionLocal() as db:
-        if teacher_name:
-            db.execute(
-                text("UPDATE teacher_accounts SET full_name = :full_name WHERE id = :teacher_id"),
-                {"full_name": teacher_name, "teacher_id": teacher_id},
-            )
         code = generate_class_code(db)
         db.execute(
             text("""
                 INSERT INTO classes
-                    (teacher_id, owner_type, owner_id, name, code, description, school_name, province, district)
+                    (teacher_id, owner_type, owner_id, name, code, description, teacher_name, school_name, province, district)
                 VALUES
-                    (:teacher_id, 'TEACHER', :owner_id, :name, :code, :description, :school_name, :province, :district)
+                    (:teacher_id, 'TEACHER', :owner_id, :name, :code, :description, :teacher_name, :school_name, :province, :district)
             """),
             {
                 "teacher_id": teacher_id,
@@ -5106,6 +5318,7 @@ def create_class(
                 "name": name,
                 "code": code,
                 "description": description,
+                "teacher_name": teacher_name,
                 "school_name": school_name,
                 "province": province,
                 "district": district,
@@ -5127,7 +5340,7 @@ def edit_class_page(request: Request, class_id: int):
         teacher_account = db.get(TeacherAccount, teacher_id)
         row = db.execute(
             text("""
-                SELECT id, name, code, description, school_name, province, district, ward
+                SELECT id, name, code, description, teacher_name, school_name, province, district, ward
                 FROM classes
                 WHERE id = :class_id AND teacher_id = :teacher_id
             """),
@@ -5167,6 +5380,10 @@ def edit_class_page(request: Request, class_id: int):
                     <label for="teacher-edit-name">Tên lớp</label>
                     <input id="teacher-edit-name" name="name" type="text" value="{escape(row['name'])}" maxlength="120" required autofocus>
                     <small>Tên lớp sẽ được hiển thị trong danh sách lớp học của bạn.</small>
+                </div>
+                <div class="teacher-edit-field">
+                    <label for="teacher-edit-teacher-name">Tên giáo viên phụ trách lớp/tiết</label>
+                    <input id="teacher-edit-teacher-name" name="teacher_name" type="text" maxlength="180" value="{escape(str(row['teacher_name'] or ''), quote=True)}" placeholder="Tên giáo viên phụ trách">
                 </div>
                 <div class="teacher-edit-field">
                     <label for="teacher-edit-province">Tỉnh/Thành phố</label>
@@ -5240,6 +5457,7 @@ def edit_class(
     class_id: int = Form(...),
     name: str = Form(...),
     description: str = Form(""),
+    teacher_name: str = Form(""),
     school_name: str = Form(""),
     province: str = Form(""),
     district: str = Form(""),
@@ -5250,6 +5468,7 @@ def edit_class(
 
     name = name.strip()
     description = description.strip()
+    teacher_name = teacher_name.strip()
     school_name = school_name.strip()
     province = province.strip()
     district = district.strip()
@@ -5263,6 +5482,7 @@ def edit_class(
                 UPDATE classes
                 SET name = :name,
                     description = :description,
+                    teacher_name = :teacher_name,
                     school_name = :school_name,
                     province = :province,
                     district = :district,
@@ -5272,6 +5492,7 @@ def edit_class(
             {
                 "name": name,
                 "description": description,
+                "teacher_name": teacher_name,
                 "school_name": school_name,
                 "province": province,
                 "district": district,
@@ -8311,7 +8532,7 @@ def teacher_classes_content(teacher_id: int) -> str:
         ) or "Giáo viên"
         own_rows = db.execute(
             text("""
-                SELECT id, name, code, description, created_at, FALSE AS is_shared, '' AS owner_name
+                SELECT id, name, code, description, teacher_name, school_name, province, district, created_at, FALSE AS is_shared, '' AS owner_name
                 FROM classes
                 WHERE teacher_id = :teacher_id
                 ORDER BY id DESC
@@ -8320,7 +8541,7 @@ def teacher_classes_content(teacher_id: int) -> str:
         ).mappings().all()
         shared_rows = db.execute(
             text("""
-                SELECT c.id, c.name, c.code, c.description, c.created_at, TRUE AS is_shared,
+                SELECT c.id, c.name, c.code, c.description, c.teacher_name, c.school_name, c.province, c.district, c.created_at, TRUE AS is_shared,
                        COALESCE(NULLIF(owner.full_name, ''), owner.username, 'Giáo viên') AS owner_name
                 FROM class_shares sh
                 JOIN classes c ON c.id = sh.class_id
@@ -8358,7 +8579,7 @@ def teacher_classes_content(teacher_id: int) -> str:
                     </div>
                     <h3>{escape(row['name'])}</h3>
                     <p>{escape(row['description']) if row['description'] else 'Chưa có mô tả cho lớp học này.'}</p>
-                    <div class="class-meta">Tạo ngày {escape(created) if created else '-'}</div>
+                    <div class="class-meta">Giáo viên phụ trách: {escape(str(row.get('teacher_name') or 'Chưa nhập'))}<br>{escape(' · '.join(str(row.get(k) or '').strip() for k in ('school_name','province','district') if str(row.get(k) or '').strip()) or 'Chưa khai báo địa điểm')}<br>Tạo ngày {escape(created) if created else '-'}</div>
                     <div class="class-actions">
                         <a class="secondary-button" href="/teacher/classes/edit?class_id={row['id']}">Chỉnh sửa</a>
                         <form method="post" action="/teacher/classes/delete" onsubmit="return confirm('Bạn có chắc muốn xóa lớp học này không?');">
@@ -8402,9 +8623,8 @@ def teacher_classes_content(teacher_id: int) -> str:
                         <input id="new-class-name" name="name" type="text" maxlength="120" placeholder="Ví dụ: 9A1" required>
                     </div>
                     <div class="form-field">
-                        <label for="new-class-teacher">Tên giáo viên</label>
-                        <input id="new-class-teacher" name="teacher_name" type="text" maxlength="180" value="{escape(str(teacher_name), quote=True)}" required>
-                        <button class="secondary-button teacher-name-save" type="submit" formaction="/teacher/profile/update-name" formnovalidate>Lưu tên giáo viên</button>
+                        <label for="new-class-teacher">Tên giáo viên phụ trách lớp/tiết</label>
+                        <input id="new-class-teacher" name="teacher_name" type="text" maxlength="180" value="{escape(str(teacher_name), quote=True)}" placeholder="Tên giáo viên phụ trách" required>
                     </div>
                     <div class="form-field">
                         <label for="teacher-class-province">Tỉnh/Thành phố</label>
@@ -9181,6 +9401,27 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
     en = language == 'en'
     query = str(search_query or '').strip()
     rows = _history_daily_rows(teacher_id, query)
+    with SessionLocal() as db:
+        shared_history = db.execute(text("""
+            SELECT hs.owner_teacher_id,
+                   COALESCE(NULLIF(owner.full_name, ''), owner.username, 'Giáo viên') AS owner_name,
+                   (SELECT COUNT(*) FROM sessions s WHERE s.teacher_id = hs.owner_teacher_id AND COALESCE(s.deleted_at, '') = '') AS session_count,
+                   (SELECT COUNT(*) FROM observations o JOIN sessions s ON s.id = o.session_id WHERE s.teacher_id = hs.owner_teacher_id AND COALESCE(s.deleted_at, '') = '') AS observation_count
+            FROM teacher_history_shares hs
+            JOIN teacher_accounts owner ON owner.id = hs.owner_teacher_id
+            WHERE hs.shared_with_teacher_id = :teacher_id
+            ORDER BY LOWER(COALESCE(NULLIF(owner.full_name, ''), owner.username))
+        """), {"teacher_id": int(teacher_id)}).mappings().all()
+
+    shared_history_panel = ''
+    if shared_history:
+        shared_cards = ''.join(
+            f'''<a class="hx-shared-history-card" href="/teacher/shared-history/{int(item['owner_teacher_id'])}">
+                <span class="hx-shared-history-icon">OB</span><span class="hx-shared-history-name"><strong>{escape(str(item['owner_name']))}</strong><small>{int(item['session_count'] or 0)} buổi học · {int(item['observation_count'] or 0)} Observation</small></span><span class="hx-shared-history-open">→</span>
+            </a>'''
+            for item in shared_history
+        )
+        shared_history_panel = f'''<section class="hx-shared-history"><div class="hx-shared-history-head"><div><span class="eyebrow-small">SHARED HISTORY</span><h3>{'Shared teacher history' if en else 'Lịch sử được chia sẻ'}</h3><p>{'Read-only history shared by other teachers.' if en else 'Lịch sử OB được giáo viên khác chia sẻ cho bạn ở chế độ chỉ xem.'}</p></div></div><div class="hx-shared-history-list">{shared_cards}</div></section>'''
 
     from collections import OrderedDict
     class_groups = OrderedDict()
@@ -9298,6 +9539,7 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
                 <div class="hx-count"><b>{len(class_groups)}</b><span>{labels['classes']}</span></div>
             </div>
             {notice}
+            {shared_history_panel}
             <form class="hx-search-form" method="get" action="/teacher">
                 <input type="hidden" name="section" value="history">
                 <div class="hx-search-input"><span>⌕</span><input name="q" value="{escape(query)}" placeholder="{escape(labels['search_placeholder'])}" autocomplete="off"></div>
@@ -9317,6 +9559,14 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
             .hx-count {{ min-width:82px; padding:10px 13px; border-radius:14px; background:#f2f8ff; border:1px solid #d7e9f8; text-align:center; color:#276a9f; box-shadow:0 6px 16px rgba(51,111,156,.06); }}
             .hx-count b {{ display:block; font-size:20px; font-weight:900; line-height:1; }}
             .hx-count span {{ display:block; margin-top:4px; font-size:9px; font-weight:800; color:#7a94aa; text-transform:uppercase; letter-spacing:.35px; }}
+            .hx-shared-history {{ margin-top:20px; padding:16px; border:1px solid #dbe9f4; border-radius:18px; background:#f8fbff; }}
+            .hx-shared-history-head h3 {{ margin:5px 0 3px; color:#183650; font-size:16px; }}
+            .hx-shared-history-head p {{ margin:0; color:#8296a8; font-size:11px; }}
+            .hx-shared-history-list {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin-top:12px; }}
+            .hx-shared-history-card {{ display:flex; align-items:center; gap:10px; padding:12px; border:1px solid #e0ebf3; border-radius:13px; background:#fff; color:#28465f; text-decoration:none; }}
+            .hx-shared-history-icon {{ display:grid; place-items:center; width:38px; height:38px; flex:0 0 38px; border-radius:12px; background:#eaf4ff; color:#276b9f; font-size:10px; font-weight:900; }}
+            .hx-shared-history-name {{ min-width:0; flex:1; }} .hx-shared-history-name strong {{ display:block; font-size:11px; }} .hx-shared-history-name small {{ display:block; margin-top:3px; color:#8397a8; font-size:9px; }}
+            .hx-shared-history-open {{ color:#6690ad; font-size:18px; }}
             .hx-search-form {{ display:flex; align-items:center; gap:10px; margin-top:22px; }}
             .hx-search-input {{ flex:1; height:48px; display:flex; align-items:center; gap:10px; padding:0 14px; border:1px solid #dbe7f1; border-radius:14px; background:#fff; }}
             .hx-search-input span {{ color:#6d8ca7; font-size:18px; }}
@@ -9363,9 +9613,120 @@ def teacher_history_content(teacher_id: int, status_message: str = "", search_qu
             .hx-open.small {{ width:30px; height:30px; border-radius:10px; }}
             .hx-empty {{ padding:30px; border:1px dashed #cfdfeb; border-radius:18px; text-align:center; color:#8094a7; background:#fbfdff; font-size:12px; }}
             @media (max-width:900px) {{ .hx-class-card {{ grid-template-columns:1fr auto; }} .hx-class-main {{ display:grid; grid-column:1/-1; grid-template-columns:1fr; gap:10px; }} .hx-class-stats {{ border:0; border-top:1px solid #edf2f6; padding-top:10px; }} .hx-class-delete-form {{ grid-column:1; }} }}
-            @media (max-width:620px) {{ .hx-history-page {{ padding:20px; }} .hx-history-top {{ flex-direction:column; }} .hx-search-form {{ flex-wrap:wrap; }} .hx-search-input {{ min-width:100%; }} .hx-search-form button {{ flex:1; }} .hx-class-card {{ grid-template-columns:1fr auto; padding:12px; border-radius:17px; }} .hx-class-main {{ grid-column:1/-1; }} .hx-class-identity {{ gap:10px; }} .hx-class-mark {{ width:44px; height:44px; border-radius:14px; }} .hx-class-copy h3 {{ font-size:15px; }} .hx-stat {{ padding:0 6px; }} .hx-stat b {{ font-size:16px; }} }}
+            @media (max-width:620px) {{ .hx-history-page {{ padding:20px; }} .hx-history-top {{ flex-direction:column; }} .hx-shared-history-list {{ grid-template-columns:1fr; }} .hx-search-form {{ flex-wrap:wrap; }} .hx-search-input {{ min-width:100%; }} .hx-search-form button {{ flex:1; }} .hx-class-card {{ grid-template-columns:1fr auto; padding:12px; border-radius:17px; }} .hx-class-main {{ grid-column:1/-1; }} .hx-class-identity {{ gap:10px; }} .hx-class-mark {{ width:44px; height:44px; border-radius:14px; }} .hx-class-copy h3 {{ font-size:15px; }} .hx-stat {{ padding:0 6px; }} .hx-stat b {{ font-size:16px; }} }}
         </style>
     '''
+
+@app.get("/teacher/shared-history/session/{session_id}", response_class=HTMLResponse)
+def teacher_shared_history_session_view(request: Request, session_id: int):
+    payload = get_teacher_payload(request)
+    if payload is None:
+        return RedirectResponse(url="/", status_code=303)
+    viewer_id = int(payload["sub"])
+    with SessionLocal() as db:
+        session = db.execute(text("""
+            SELECT s.id, s.teacher_id AS owner_teacher_id, s.class_id, s.status, s.started_at, s.ended_at,
+                   s.duration_seconds, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
+                   COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
+                   COALESCE(NULLIF(owner.full_name, ''), owner.username, 'Giáo viên') AS owner_name
+            FROM sessions s
+            JOIN teacher_history_shares hs ON hs.owner_teacher_id = s.teacher_id AND hs.shared_with_teacher_id = :viewer_id
+            JOIN teacher_accounts owner ON owner.id = s.teacher_id
+            LEFT JOIN classes c ON c.id = s.class_id
+            WHERE s.id = :session_id AND COALESCE(s.deleted_at, '') = ''
+            LIMIT 1
+        """), {"viewer_id": viewer_id, "session_id": session_id}).mappings().first()
+        if session is None:
+            return RedirectResponse(url="/teacher?section=history", status_code=303)
+        observations = db.execute(text("""
+            SELECT o.id, o.student_id, COALESCE(NULLIF(o.full_name, ''), st.full_name, 'Học sinh') AS student_name,
+                   o.student_code, o.observed_at, o.event_type, o.confidence, o.details, o.evidence_id
+            FROM observations o LEFT JOIN students st ON st.id = o.student_id
+            WHERE o.session_id = :session_id ORDER BY o.observed_at, o.id
+        """), {"session_id": session_id}).mappings().all()
+    full_name = str(payload.get("username") or "Giáo viên")
+    observation_rows = []
+    for row in observations:
+        evidence_id = int(row["evidence_id"] or 0)
+        evidence_link = f'<a href="/teacher/shared-history/evidence/{evidence_id}" target="_blank" rel="noopener">Xem ảnh</a>' if evidence_id else '—'
+        observation_rows.append(
+            f"""<tr><td>{escape(str(row['student_name']))}</td><td>{escape(str(row['student_code'] or ''))}</td><td>{escape(format_godeyes_datetime(row['observed_at']))}</td><td>{escape(str(row['event_type'] or 'Observation'))}</td><td>{round(float(row['confidence'] or 0) * 100)}%</td><td>{escape(str(row['details'] or ''))}</td><td>{evidence_link}</td></tr>"""
+        )
+    rows_html = ''.join(observation_rows) or '<tr><td colspan="7">Buổi học này chưa có Observation.</td></tr>'
+    content = f"""
+        <section class="panel" style="padding:22px;margin-bottom:18px;">
+            <a class="secondary-button" href="/teacher/shared-history/{int(session['owner_teacher_id'])}">Quay lại lịch sử giáo viên</a>
+            <h2 class="page-section-title" style="margin-top:18px;">Lịch sử buổi học #{int(session['id'])}</h2>
+            <p class="page-section-subtitle">{escape(str(session['owner_name']))} · {escape(str(session['class_name']))} · {escape(str(session['class_code'] or ''))}</p>
+            <p style="color:var(--muted);font-size:12px;">{escape(format_godeyes_datetime(session['started_at']))} · Trạng thái: {escape(str(session['status']))} · Thời lượng: {int(session['duration_seconds'] or 0)} giây · Chỉ xem</p>
+        </section>
+        <section class="panel" style="padding:22px;"><div class="panel-head"><div><h2 class="panel-title">Observation</h2><div class="panel-subtitle">{len(observations)} bản ghi · quyền xem do Main Account cấp</div></div></div><div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;min-width:950px"><thead><tr><th style="text-align:left;padding:11px">Học sinh</th><th style="text-align:left;padding:11px">Mã</th><th style="text-align:left;padding:11px">Thời điểm</th><th style="text-align:left;padding:11px">Loại</th><th style="text-align:left;padding:11px">Độ tin cậy</th><th style="text-align:left;padding:11px">Chi tiết</th><th style="text-align:left;padding:11px">Evidence</th></tr></thead><tbody>{rows_html}</tbody></table></div></section>
+        <style>.panel table td,.panel table th{{border-bottom:1px solid var(--line)}} .panel table td{{padding:11px;font-size:12px}} .panel table a{{font-weight:750;color:#2b78c5;text-decoration:none}}</style>
+    """
+    return teacher_shell(title="Lịch sử OB được chia sẻ", content=content, section="history", full_name=full_name, teacher_id=viewer_id)
+
+
+@app.get("/teacher/shared-history/{owner_teacher_id}", response_class=HTMLResponse)
+def teacher_shared_history_teacher_view(request: Request, owner_teacher_id: int):
+    payload = get_teacher_payload(request)
+    if payload is None:
+        return RedirectResponse(url="/", status_code=303)
+    viewer_id = int(payload["sub"])
+    if viewer_id == int(owner_teacher_id):
+        return RedirectResponse(url="/teacher?section=history", status_code=303)
+    with SessionLocal() as db:
+        owner = db.execute(text("""
+            SELECT t.id, COALESCE(NULLIF(t.full_name, ''), t.username, 'Giáo viên') AS owner_name
+            FROM teacher_accounts t JOIN teacher_history_shares hs ON hs.owner_teacher_id = t.id
+            WHERE hs.owner_teacher_id = :owner_id AND hs.shared_with_teacher_id = :viewer_id LIMIT 1
+        """), {"owner_id": owner_teacher_id, "viewer_id": viewer_id}).mappings().first()
+        if owner is None:
+            return RedirectResponse(url="/teacher?section=history", status_code=303)
+        sessions = db.execute(text("""
+            SELECT s.id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
+                   COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
+                   s.started_at, s.status, s.duration_seconds,
+                   (SELECT COUNT(*) FROM observations o WHERE o.session_id = s.id) AS observation_count,
+                   (SELECT COUNT(*) FROM evidence e WHERE e.session_id = s.id) AS evidence_count
+            FROM sessions s LEFT JOIN classes c ON c.id = s.class_id
+            WHERE s.teacher_id = :owner_id AND COALESCE(s.deleted_at, '') = ''
+            ORDER BY s.started_at DESC, s.id DESC LIMIT 500
+        """), {"owner_id": owner_teacher_id}).mappings().all()
+    rows_html = ''.join(
+        f"""<tr><td><a href="/teacher/shared-history/session/{int(row['id'])}">#{int(row['id'])}</a></td><td>{escape(str(row['class_name']))}<div style="color:var(--muted);font-size:10px">{escape(str(row['class_code'] or ''))}</div></td><td>{escape(format_godeyes_datetime(row['started_at']))}</td><td>{escape(str(row['status'] or ''))}</td><td>{int(row['observation_count'] or 0)}</td><td>{int(row['evidence_count'] or 0)}</td></tr>"""
+        for row in sessions
+    ) or '<tr><td colspan="6">Giáo viên này chưa có lịch sử buổi học được lưu.</td></tr>'
+    content = f"""
+        <section class="panel" style="padding:22px;margin-bottom:18px;"><a class="secondary-button" href="/teacher?section=history">Quay lại lịch sử</a><h2 class="page-section-title" style="margin-top:18px;">Lịch sử được chia sẻ</h2><p class="page-section-subtitle">Giáo viên: {escape(str(owner['owner_name']))} · {len(sessions)} buổi gần nhất · chế độ chỉ xem</p></section>
+        <section class="panel" style="padding:22px;"><div class="panel-head"><div><h2 class="panel-title">Buổi học và Observation</h2><div class="panel-subtitle">Tối đa 500 buổi gần nhất</div></div></div><div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;min-width:780px"><thead><tr><th style="text-align:left;padding:11px">Session</th><th style="text-align:left;padding:11px">Lớp</th><th style="text-align:left;padding:11px">Ngày giờ</th><th style="text-align:left;padding:11px">Trạng thái</th><th style="text-align:left;padding:11px">Observation</th><th style="text-align:left;padding:11px">Evidence</th></tr></thead><tbody>{rows_html}</tbody></table></div></section>
+        <style>.panel table td,.panel table th{{border-bottom:1px solid var(--line)}} .panel table td{{padding:11px;font-size:12px}} .panel table a{{font-weight:750;text-decoration:none}}</style>
+    """
+    return teacher_shell(title="Lịch sử được chia sẻ", content=content, section="history", full_name=str(payload.get("username") or "Giáo viên"), teacher_id=viewer_id)
+
+
+@app.get("/teacher/shared-history/evidence/{evidence_id}")
+def teacher_shared_history_evidence(request: Request, evidence_id: int):
+    payload = get_teacher_payload(request)
+    if payload is None:
+        return RedirectResponse(url="/", status_code=303)
+    viewer_id = int(payload["sub"])
+    with SessionLocal() as db:
+        row = db.execute(text("""
+            SELECT e.file_path, e.mime_type
+            FROM evidence e
+            JOIN sessions s ON s.id = e.session_id
+            JOIN teacher_history_shares hs ON hs.owner_teacher_id = s.teacher_id AND hs.shared_with_teacher_id = :viewer_id
+            WHERE e.id = :evidence_id AND COALESCE(s.deleted_at, '') = ''
+            LIMIT 1
+        """), {"viewer_id": viewer_id, "evidence_id": evidence_id}).mappings().first()
+    if row is None:
+        return Response(status_code=404)
+    path = Path(str(row["file_path"] or "")).resolve()
+    root = SESSION_EVIDENCE_DIR.resolve()
+    if root not in path.parents or not path.is_file():
+        return Response(status_code=404)
+    return FileResponse(str(path), media_type=str(row["mime_type"] or "image/jpeg"))
+
 
 def teacher_history_class_content(teacher_id: int, class_id: int) -> str | None:
     prefs = get_teacher_preferences(int(teacher_id))
