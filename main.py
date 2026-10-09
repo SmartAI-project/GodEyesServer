@@ -442,13 +442,13 @@ def ensure_class_shares_table():
                     owner_teacher_id INTEGER NOT NULL,
                     shared_with_teacher_id INTEGER NOT NULL,
                     created_by_main_id INTEGER NOT NULL DEFAULT 0,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT (CURRENT_TIMESTAMP),
                     UNIQUE (class_id, shared_with_teacher_id)
                 )
             """))
             # Repair a previously-created text-cast default without changing rows.
             db.execute(text(
-                "ALTER TABLE class_shares ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP"
+                "ALTER TABLE class_shares ALTER COLUMN created_at SET DEFAULT (CURRENT_TIMESTAMP)"
             ))
         else:
             db.execute(text("""
