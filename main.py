@@ -428,30 +428,44 @@ ensure_class_table()
 
 
 def ensure_class_shares_table():
-    """Create the narrowly scoped read-only class-sharing relation for Main Account."""
+    """Create the read-only class-sharing relation with dialect-safe timestamp defaults."""
     with SessionLocal() as db:
-        dialect_name = str(getattr(getattr(db, "bind", None), "dialect", None).name or "").lower()
+        dialect = getattr(getattr(db, "bind", None), "dialect", None)
+        dialect_name = str(getattr(dialect, "name", "") or "").lower()
+
         if dialect_name == "postgresql":
-            id_type = "BIGSERIAL PRIMARY KEY"
-            created_type = "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            # Keep the default as a timestamp expression; do not cast it to text.
+            db.execute(text("""
+                CREATE TABLE IF NOT EXISTS class_shares (
+                    id BIGSERIAL PRIMARY KEY,
+                    class_id INTEGER NOT NULL,
+                    owner_teacher_id INTEGER NOT NULL,
+                    shared_with_teacher_id INTEGER NOT NULL,
+                    created_by_main_id INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (class_id, shared_with_teacher_id)
+                )
+            """))
+            # Repair a previously-created text-cast default without changing rows.
+            db.execute(text(
+                "ALTER TABLE class_shares ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP"
+            ))
         else:
-            id_type = "INTEGER PRIMARY KEY AUTOINCREMENT"
-            created_type = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
-        db.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS class_shares (
-                id {id_type},
-                class_id INTEGER NOT NULL,
-                owner_teacher_id INTEGER NOT NULL,
-                shared_with_teacher_id INTEGER NOT NULL,
-                created_by_main_id INTEGER NOT NULL DEFAULT 0,
-                created_at {created_type},
-                UNIQUE (class_id, shared_with_teacher_id)
-            )
-        """))
+            db.execute(text("""
+                CREATE TABLE IF NOT EXISTS class_shares (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    class_id INTEGER NOT NULL,
+                    owner_teacher_id INTEGER NOT NULL,
+                    shared_with_teacher_id INTEGER NOT NULL,
+                    created_by_main_id INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (class_id, shared_with_teacher_id)
+                )
+            """))
+
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_class_shares_recipient ON class_shares(shared_with_teacher_id)"))
         db.execute(text("CREATE INDEX IF NOT EXISTS idx_class_shares_class ON class_shares(class_id)"))
         db.commit()
-
 
 ensure_class_shares_table()
 
