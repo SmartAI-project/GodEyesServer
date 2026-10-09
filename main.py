@@ -2184,58 +2184,57 @@ def admin_shell(title: str, content: str, section: str) -> str:
             .action-grid {{ grid-template-columns: 1fr; }}
         }}
 
-        /* Main Account dark theme. Scope is limited to pages rendered by admin_shell. */
-        :root {{ color-scheme: dark; }}
-        body {{ background: radial-gradient(ellipse at 15% 0%, #172333 0%, #0b1017 46%, #080b10 100%) !important; color: #e6edf5 !important; }}
-        .particles .particle {{ background: rgba(89, 159, 225, .20) !important; box-shadow: 0 0 0 3px rgba(89,159,225,.05) !important; }}
-        .sidebar {{ background: rgba(13,18,26,.97) !important; border-right-color: #263241 !important; box-shadow: 8px 0 28px rgba(0,0,0,.20) !important; }}
-        .sidebar-head {{ border-bottom-color: #273342 !important; }}
-        .sidebar-head .kicker, .eyebrow, .status-label, .logo-sub {{ color: #8fa0b3 !important; }}
-        .sidebar-head .title, .logo-title, h1, h2, h3, .section-head h2, .admin-page-title h2, .admin-class-card h3 {{ color: #eef4fb !important; }}
-        .nav-button {{ color: #a9b8c8 !important; }}
-        .nav-button:hover, .nav-button.active {{ background: #1b2b3d !important; color: #dceeff !important; border-color: #2b4663 !important; box-shadow: none !important; }}
-        .server-status {{ background: #111923 !important; border-color: #283545 !important; color: #e6edf5 !important; }}
-        .logout, .secondary, .admin-secondary, .row-button, .secondary-button, .admin-history-button {{ background: #151e29 !important; color: #d1dce8 !important; border-color: #344354 !important; }}
-        .logout:hover, .secondary:hover, .admin-secondary:hover, .row-button:hover, .secondary-button:hover, .admin-history-button:hover {{ background: #202c3a !important; }}
-        .admin-chip {{ background: #14263a !important; color: #9ecbfa !important; border-color: #2b4969 !important; box-shadow: none !important; }}
+        /* Main Account white/gray theme with black borders. Scoped to admin_shell only. */
+        :root {{ color-scheme: light; }}
+        body {{ background: #f3f4f5 !important; color: #171717 !important; }}
+        .particles .particle {{ background: rgba(30,30,30,.045) !important; box-shadow: 0 0 0 3px rgba(30,30,30,.025) !important; }}
+        .sidebar {{ background: #ffffff !important; border-right: 1px solid #222222 !important; box-shadow: none !important; }}
+        .sidebar-head {{ border-bottom-color: #222222 !important; }}
+        .sidebar-head .kicker, .eyebrow, .status-label, .logo-sub {{ color: #666666 !important; }}
+        .sidebar-head .title, .logo-title, h1, h2, h3, .section-head h2, .admin-page-title h2, .admin-class-card h3 {{ color: #111111 !important; }}
+        .nav-button {{ color: #444444 !important; border: 1px solid transparent !important; }}
+        .nav-button:hover, .nav-button.active {{ background: #e7e7e7 !important; color: #111111 !important; border-color: #222222 !important; box-shadow: none !important; }}
+        .server-status {{ background: #f1f1f1 !important; border: 1px solid #333333 !important; color: #222222 !important; }}
+        .logout, .secondary, .admin-secondary, .row-button, .secondary-button, .admin-history-button {{ background: #f7f7f7 !important; color: #171717 !important; border: 1px solid #333333 !important; box-shadow: none !important; }}
+        .logout:hover, .secondary:hover, .admin-secondary:hover, .row-button:hover, .secondary-button:hover, .admin-history-button:hover {{ background: #e7e7e7 !important; color: #111111 !important; }}
+        .admin-chip {{ background: #eeeeee !important; color: #222222 !important; border: 1px solid #222222 !important; box-shadow: none !important; }}
         .card, .metric, .section-card, .action, .admin-stat, .admin-class-create, .admin-class-card, .admin-empty-classes,
         .admin-student-card, .admin-edit-panel, .admin-code-row, .admin-history-panel, .admin-history-table-wrap,
         .admin-student-form-panel, .admin-student-editor, .admin-detail-panel, .admin-profile-panel, .admin-class-detail-panel,
-        .admin-analytics-panel, .admin-share-panel, .admin-shared-row {{ background: #111923 !important; border-color: #273544 !important; box-shadow: 0 10px 26px rgba(0,0,0,.14) !important; color: #e6edf5 !important; }}
+        .admin-analytics-panel, .admin-share-panel, .admin-shared-row {{ background: #ffffff !important; border: 1px solid #292929 !important; box-shadow: 0 3px 12px rgba(0,0,0,.045) !important; color: #171717 !important; }}
         .metric-label, .section-head span, .action-text, .admin-breadcrumb, .admin-page-title p, .admin-class-card p,
         .admin-class-meta, .admin-create-head p, .admin-class-list-head p, .admin-field label, .admin-field label span,
         .admin-edit-hero p, .admin-edit-kicker, .admin-edit-field label span, .admin-history-header p,
-        .admin-history-secondary, .admin-student-class, .admin-student-muted, .empty-state, .admin-empty-classes p {{ color: #94a5b8 !important; }}
-        .action {{ color: #e6edf5 !important; }}
-        .action:hover {{ background: #182331 !important; border-color: #38536e !important; }}
-        .action-title, .admin-class-card strong, .admin-student-name {{ color: #edf4fc !important; }}
-        .admin-class-icon, .admin-create-mark, .admin-edit-icon, .admin-empty-icon, .admin-student-avatar-empty {{ background: #18293b !important; color: #a7d0fa !important; border-color: #2c455f !important; }}
-        .admin-class-code {{ background: #172535 !important; color: #b9d9f9 !important; border-color: #2a4055 !important; }}
-        .owner-badge.main-owner {{ background: #202833 !important; color: #ccd5df !important; }}
-        .owner-badge.teacher-owner {{ background: #142b42 !important; color: #acd5ff !important; }}
-        .admin-code-row {{ background: #151f2a !important; }}
-        .admin-code-row strong {{ background: #142a3e !important; color: #b8dcff !important; border-color: #2b4965 !important; }}
-        input:not([type="hidden"]), select, textarea {{ background: #0b1118 !important; color: #e6edf5 !important; border-color: #344252 !important; }}
-        input::placeholder, textarea::placeholder {{ color: #708298 !important; }}
-        input:focus, select:focus, textarea:focus {{ border-color: #4d8ecb !important; box-shadow: 0 0 0 3px rgba(77,142,203,.16) !important; }}
-        label {{ color: #cbd7e4 !important; }}
-        .table-wrap, .admin-history-table-wrap {{ border-color: #273544 !important; }}
-        table {{ color: #dce5ef !important; }}
-        table th, .admin-history-table th {{ background: #18222e !important; color: #9fb0c2 !important; border-color: #273544 !important; }}
-        table td, .admin-history-table td {{ border-color: #253240 !important; color: #dce5ef !important; }}
-        .admin-history-primary {{ color: #eef4fb !important; }}
-        .admin-history-count {{ background: #18222e !important; border-color: #2c3c4d !important; color: #dce5ef !important; }}
-        .data-tab {{ color: #a8b8c9 !important; }}
-        .data-tab:hover, .data-tab.active {{ background: #203247 !important; color: #e6f2ff !important; }}
-        .status.active {{ background: #123526 !important; color: #82e1ad !important; }}
-        .status.locked {{ background: #3b2024 !important; color: #ffabb1 !important; }}
-        .admin-student-notice.success {{ background: #123526 !important; color: #92e7b4 !important; border-color: #24563c !important; }}
-        .admin-student-notice.error {{ background: #3b2024 !important; color: #ffb7bc !important; border-color: #613038 !important; }}
-        .admin-primary, .primary {{ background: #2878bd !important; border-color: #2878bd !important; color: #fff !important; }}
-        .admin-danger, .admin-student-danger, .row-button.danger, .admin-history-button.danger {{ background: #321d22 !important; color: #ffb2ba !important; border-color: #63323b !important; }}
-        .admin-danger:hover, .admin-student-danger:hover, .admin-history-button.danger:hover {{ background: #47232b !important; }}
-        .admin-class-meta, .admin-edit-actions {{ border-top-color: #273544 !important; }}
-        .admin-share-recipient {{ color: #cbd7e4 !important; background: #172330 !important; border-color: #2a3b4c !important; }}
+        .admin-history-secondary, .admin-student-class, .admin-student-muted, .empty-state, .admin-empty-classes p {{ color: #606060 !important; }}
+        .action {{ color: #171717 !important; }}
+        .action:hover {{ background: #f0f0f0 !important; border-color: #111111 !important; }}
+        .action-title, .admin-class-card strong, .admin-student-name {{ color: #111111 !important; }}
+        .admin-class-icon, .admin-create-mark, .admin-edit-icon, .admin-empty-icon, .admin-student-avatar-empty {{ background: #e8e8e8 !important; color: #222222 !important; border: 1px solid #333333 !important; }}
+        .admin-class-code {{ background: #eeeeee !important; color: #222222 !important; border: 1px solid #333333 !important; }}
+        .owner-badge.main-owner, .owner-badge.teacher-owner {{ background: #eeeeee !important; color: #222222 !important; border: 1px solid #777777 !important; }}
+        .admin-code-row {{ background: #f4f4f4 !important; }}
+        .admin-code-row strong {{ background: #e6e6e6 !important; color: #111111 !important; border: 1px solid #333333 !important; }}
+        input:not([type="hidden"]), select, textarea {{ background: #ffffff !important; color: #111111 !important; border: 1px solid #333333 !important; }}
+        input::placeholder, textarea::placeholder {{ color: #777777 !important; }}
+        input:focus, select:focus, textarea:focus {{ border-color: #111111 !important; box-shadow: 0 0 0 3px rgba(0,0,0,.10) !important; }}
+        label {{ color: #333333 !important; }}
+        .table-wrap, .admin-history-table-wrap {{ border: 1px solid #292929 !important; }}
+        table {{ color: #222222 !important; }}
+        table th, .admin-history-table th {{ background: #e9e9e9 !important; color: #222222 !important; border-color: #777777 !important; }}
+        table td, .admin-history-table td {{ border-color: #cccccc !important; color: #222222 !important; }}
+        .admin-history-primary {{ color: #111111 !important; }}
+        .admin-history-count {{ background: #eeeeee !important; border: 1px solid #777777 !important; color: #222222 !important; }}
+        .data-tab {{ color: #444444 !important; border: 1px solid transparent !important; }}
+        .data-tab:hover, .data-tab.active {{ background: #e5e5e5 !important; color: #111111 !important; border-color: #333333 !important; }}
+        .status.active {{ background: #eeeeee !important; color: #222222 !important; border: 1px solid #777777 !important; }}
+        .status.locked {{ background: #e5e5e5 !important; color: #222222 !important; border: 1px solid #555555 !important; }}
+        .admin-student-notice.success {{ background: #eeeeee !important; color: #222222 !important; border-color: #777777 !important; }}
+        .admin-student-notice.error {{ background: #e9e9e9 !important; color: #222222 !important; border-color: #555555 !important; }}
+        .admin-primary, .primary {{ background: #171717 !important; border-color: #111111 !important; color: #ffffff !important; }}
+        .admin-danger, .admin-student-danger, .row-button.danger, .admin-history-button.danger {{ background: #eeeeee !important; color: #222222 !important; border-color: #555555 !important; }}
+        .admin-danger:hover, .admin-student-danger:hover, .admin-history-button.danger:hover {{ background: #dcdcdc !important; color: #111111 !important; }}
+        .admin-class-meta, .admin-edit-actions {{ border-top-color: #333333 !important; }}
+        .admin-share-recipient {{ color: #222222 !important; background: #f1f1f1 !important; border: 1px solid #777777 !important; }}
         @media (max-width: 1050px) {{ .main {{ padding: 26px 22px 36px !important; }} }}
         @media (max-width: 760px) {{ .main {{ padding: 20px 14px 28px !important; }} .sidebar {{ width: 205px !important; }} }}
 
