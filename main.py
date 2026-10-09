@@ -1843,6 +1843,130 @@ def get_admin_payload(request: Request):
     return payload
 
 
+_GODEYES_ADMIN_LOCATION_SELECT_SCRIPT = r'''
+<script id="godeyes-admin-location-selects">
+(() => {
+    const pairs = [
+        { provinceId: "admin-class-province", wardId: "admin-class-ward" },
+        { provinceId: "admin-edit-province", wardId: "admin-edit-ward" }
+    ].map(item => ({
+        province: document.getElementById(item.provinceId),
+        ward: document.getElementById(item.wardId)
+    })).filter(item => item.province && item.ward);
+
+    if (!pairs.length) return;
+
+    const endpoint = "https://openadmindata.org/api/v1/countries/vn.json";
+    const labelOf = item => String(item?.name_local || item?.name?.local || item?.name || "").trim();
+    const idOf = item => String(item?.id ?? item?.code ?? "");
+    const parentIdOf = item => String(item?.parent_id ?? item?.parent?.id ?? "");
+
+    function option(value, label, extra = {}) {
+        const node = document.createElement("option");
+        node.value = value;
+        node.textContent = label;
+        Object.entries(extra).forEach(([key, value]) => { node.dataset[key] = String(value); });
+        return node;
+    }
+
+    function addSourceNote(provinceSelect) {
+        const field = provinceSelect.closest(".admin-field, .admin-edit-field");
+        if (!field || field.querySelector(".admin-location-source-note")) return;
+        const note = document.createElement("small");
+        note.className = "admin-location-source-note";
+        note.textContent = "Danh mục hành chính: Open Admin Data (CC BY 4.0).";
+        note.style.cssText = "display:block;margin-top:5px;color:#777;font-size:10px;";
+        field.appendChild(note);
+    }
+
+    function fallbackToText(select, placeholder) {
+        const input = document.createElement("input");
+        input.id = select.id;
+        input.name = select.name;
+        input.type = "text";
+        input.maxLength = 120;
+        input.placeholder = placeholder;
+        input.value = select.dataset.currentValue || "";
+        input.className = select.className;
+        select.replaceWith(input);
+        const field = input.closest(".admin-field, .admin-edit-field");
+        if (field && !field.querySelector(".admin-location-fallback-note")) {
+            const note = document.createElement("small");
+            note.className = "admin-location-fallback-note";
+            note.textContent = "Không tải được danh sách địa giới; bạn có thể nhập địa chỉ thủ công.";
+            note.style.cssText = "display:block;margin-top:5px;color:#666;font-size:11px;";
+            field.appendChild(note);
+        }
+    }
+
+    function populateWards(pair, wards, provincesByName, savedWard = "", keepSaved = false) {
+        const selectedProvince = pair.province.value;
+        const provinceRecord = provincesByName.get(selectedProvince);
+        pair.ward.replaceChildren(option("", selectedProvince ? "Chọn phường/xã" : "Chọn tỉnh/thành phố trước"));
+        const provinceId = provinceRecord ? idOf(provinceRecord) : "";
+        const matchingWards = provinceId
+            ? wards.filter(item => parentIdOf(item) === provinceId)
+            : [];
+
+        matchingWards.forEach(item => {
+            const label = labelOf(item);
+            if (label) pair.ward.appendChild(option(label, label));
+        });
+
+        if (keepSaved && savedWard) {
+            const exists = Array.from(pair.ward.options).some(item => item.value === savedWard);
+            if (!exists) pair.ward.appendChild(option(savedWard, savedWard + " (địa chỉ đã lưu)"));
+            pair.ward.value = savedWard;
+        }
+        pair.ward.disabled = !provinceId;
+    }
+
+    async function initialize() {
+        pairs.forEach(pair => addSourceNote(pair.province));
+        try {
+            const response = await fetch(endpoint, {
+                headers: { Accept: "application/json" },
+                cache: "force-cache"
+            });
+            if (!response.ok) throw new Error("Danh mục địa giới trả về HTTP " + response.status);
+            const payload = await response.json();
+            const data = payload && payload.data ? payload.data : payload;
+            const provinces = data.province || data.provinces;
+            const wards = data.ward || data.wards;
+            if (!Array.isArray(provinces) || !Array.isArray(wards) || provinces.length === 0 || wards.length === 0) {
+                throw new Error("Cấu trúc danh mục địa giới không hợp lệ");
+            }
+
+            const provincesByName = new Map(provinces.map(item => [labelOf(item), item]));
+            pairs.forEach(pair => {
+                const savedProvince = pair.province.dataset.currentValue || "";
+                const savedWard = pair.ward.dataset.currentValue || "";
+                pair.province.replaceChildren(option("", "Chọn tỉnh/thành phố"));
+                provinces.forEach(item => {
+                    const name = labelOf(item);
+                    if (name) pair.province.appendChild(option(name, name, { adminId: idOf(item) }));
+                });
+                if (savedProvince && !provincesByName.has(savedProvince)) {
+                    pair.province.appendChild(option(savedProvince, savedProvince + " (địa chỉ đã lưu)", { legacy: "true" }));
+                }
+                pair.province.value = savedProvince;
+                populateWards(pair, wards, provincesByName, savedWard, Boolean(savedWard));
+                pair.province.addEventListener("change", () => populateWards(pair, wards, provincesByName));
+            });
+        } catch (error) {
+            console.warn("GodEyes administrative lists unavailable; switching to manual location entry.", error);
+            pairs.forEach(pair => {
+                fallbackToText(pair.province, "Tỉnh hoặc thành phố");
+                fallbackToText(pair.ward, "Phường hoặc xã");
+            });
+        }
+    }
+
+    initialize();
+})();
+</script>
+'''
+
 def admin_shell(title: str, content: str, section: str) -> str:
     nav_items = [
         ("dashboard", "Tổng quan"),
@@ -2300,6 +2424,7 @@ def admin_shell(title: str, content: str, section: str) -> str:
             {content}
         </main>
     </div>
+{_GODEYES_ADMIN_LOCATION_SELECT_SCRIPT}
 </body>
 </html>
 """
@@ -2546,7 +2671,12 @@ def home():
     landing_file = BASE_DIR / "templates" / "landing.html"
 
     if landing_file.exists():
-        return FileResponse(str(landing_file), media_type="text/html")
+        landing_html = landing_file.read_text(encoding="utf-8-sig")
+        landing_html = landing_html.replace(
+            "Classroom Intelligence â€¢ AI Observation â€¢ Teacher Review",
+            "Classroom Intelligence • AI Observation • Teacher Review",
+        )
+        return HTMLResponse(landing_html, media_type="text/html")
 
     return LOGIN_PAGE
 
@@ -3737,15 +3867,15 @@ def admin_classes_content(admin_id: int) -> str:
                 </div>
                 <div class="admin-field">
                     <label for="admin-class-province">Tỉnh/Thành phố</label>
-                    <input id="admin-class-province" name="province" type="text" maxlength="120" placeholder="Tỉnh hoặc thành phố">
+                    <select id="admin-class-province" name="province"><option value="">Đang tải danh sách tỉnh/thành phố...</option></select>
                 </div>
                 <div class="admin-field">
-                    <label for="admin-class-district">Quận/Huyện</label>
+                    <label for="admin-class-district">Quận/Huyện (không bắt buộc, dùng cho địa chỉ cũ)</label>
                     <input id="admin-class-district" name="district" type="text" maxlength="120" placeholder="Quận hoặc huyện">
                 </div>
                 <div class="admin-field">
                     <label for="admin-class-ward">Phường/Xã</label>
-                    <input id="admin-class-ward" name="ward" type="text" maxlength="120" placeholder="Phường hoặc xã">
+                    <select id="admin-class-ward" name="ward" disabled><option value="">Chọn tỉnh/thành phố trước</option></select>
                 </div>
                 <div class="admin-field admin-field-wide">
                     <label for="admin-class-description">Mô tả <span>(không bắt buộc)</span></label>
@@ -3917,9 +4047,9 @@ def admin_edit_class_page(request: Request, class_id: int):
                 </div>
                 <div class="admin-edit-location-grid">
                     <div class="admin-edit-field"><label for="admin-edit-school">Trường học</label><input id="admin-edit-school" name="school_name" type="text" maxlength="180" value="{escape(row['school_name'] or '')}"></div>
-                    <div class="admin-edit-field"><label for="admin-edit-province">Tỉnh/Thành phố</label><input id="admin-edit-province" name="province" type="text" maxlength="120" value="{escape(row['province'] or '')}"></div>
-                    <div class="admin-edit-field"><label for="admin-edit-district">Quận/Huyện</label><input id="admin-edit-district" name="district" type="text" maxlength="120" value="{escape(row['district'] or '')}"></div>
-                    <div class="admin-edit-field"><label for="admin-edit-ward">Phường/Xã</label><input id="admin-edit-ward" name="ward" type="text" maxlength="120" value="{escape(row['ward'] or '')}"></div>
+                    <div class="admin-edit-field"><label for="admin-edit-province">Tỉnh/Thành phố</label><select id="admin-edit-province" name="province" data-current-value="{escape(row['province'] or '')}"><option value="">Đang tải danh sách tỉnh/thành phố...</option></select></div>
+                    <div class="admin-edit-field"><label for="admin-edit-district">Quận/Huyện (không bắt buộc, dùng cho địa chỉ cũ)</label><input id="admin-edit-district" name="district" type="text" maxlength="120" value="{escape(row['district'] or '')}"></div>
+                    <div class="admin-edit-field"><label for="admin-edit-ward">Phường/Xã</label><select id="admin-edit-ward" name="ward" data-current-value="{escape(row['ward'] or '')}" disabled><option value="">Chọn tỉnh/thành phố trước</option></select></div>
                 </div>
                 <div class="admin-edit-actions">
                     <a class="admin-secondary large" href="/admin?section=classes">Quay lại danh sách</a>
