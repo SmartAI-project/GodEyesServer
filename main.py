@@ -15,7 +15,9 @@ import subprocess
 import sys
 import time
 import base64
+import mimetypes
 from urllib.parse import quote as url_quote, urlencode
+from functools import lru_cache
 
 from base64 import urlsafe_b64encode, b64decode
 try:
@@ -4412,7 +4414,7 @@ def get_main_class_options(admin_id: int):
 
 def admin_student_avatar(row) -> str:
     if row["photo_path"]:
-        filename = Path(row["photo_path"]).name
+        filename = str(row["photo_path"] or "").replace("\\", "/").rsplit("/", 1)[-1]
         return f'<div class="admin-student-avatar"><img src="/admin/student-photo/{escape(filename)}" alt="Ảnh học sinh"></div>'
     initial = escape((row["full_name"] or "H").strip()[:1].upper())
     return f'<div class="admin-student-avatar admin-student-avatar-empty">{initial}</div>'
@@ -4893,32 +4895,32 @@ def admin_create_student(
 
 @app.get("/admin/student-photo/{filename}")
 def admin_student_photo(request: Request, filename: str):
-    from fastapi.responses import FileResponse
-
     payload = get_admin_payload(request)
     if payload is None:
         return RedirectResponse(url="/", status_code=303)
 
-    safe_name = Path(filename).name
-    file_path = STUDENT_PHOTO_DIR / safe_name
-    if not file_path.exists():
-        return RedirectResponse(url="/admin?section=students", status_code=303)
+    safe_name = str(filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    if not safe_name or safe_name in {".", ".."}:
+        return Response(status_code=404)
+    r2_ref = f"r2://student-photos/{safe_name}"
+    fallback_path = STUDENT_PHOTO_DIR / safe_name
 
     with SessionLocal() as db:
-        allowed = db.scalar(
+        row = db.execute(
             text("""
-                SELECT s.id
+                SELECT s.photo_path
                 FROM students s
-                WHERE s.photo_path = :photo_path
+                WHERE s.photo_path = :r2_ref
+                   OR lower(replace(s.photo_path, '\\', '/')) LIKE :photo_match
                 LIMIT 1
             """),
-            {"photo_path": str(file_path)}
-        )
+            {"r2_ref": r2_ref, "photo_match": "%" + safe_name.lower()}
+        ).mappings().first()
 
-    if allowed is None:
-        return RedirectResponse(url="/admin?section=students", status_code=303)
-
-    return FileResponse(str(file_path))
+    if row is None:
+        return Response(status_code=404)
+    return _private_image_response(str(row["photo_path"] or ""), fallback_path=fallback_path,
+                                   allowed_root=STUDENT_PHOTO_DIR)
 
 
 @app.post("/admin/students/edit")
@@ -5695,8 +5697,10 @@ def _read_student_image(path_value: str):
     if not path_value:
         raise ValueError("no_photo")
     try:
-        data = Path(path_value).read_bytes()
-    except OSError:
+        normalized = str(path_value)
+        fallback = STUDENT_PHOTO_DIR / normalized.replace("\\", "/").rsplit("/", 1)[-1]
+        data, _mime = _read_stored_image(normalized, fallback_path=fallback, allowed_root=STUDENT_PHOTO_DIR)
+    except Exception:
         raise ValueError("invalid_image")
     image = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
     if image is None or image.size == 0:
@@ -5822,16 +5826,37 @@ def face_validation_notice(code: str) -> tuple[str, str]:
 
 def save_student_photo(photo: UploadFile) -> str:
     allowed_types = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
-    suffix = allowed_types.get((photo.content_type or "").lower())
+    mime = (photo.content_type or "").lower()
+    suffix = allowed_types.get(mime)
     if suffix is None:
         raise ValueError("Chỉ chấp nhận ảnh JPG, PNG hoặc WEBP.")
 
     data = photo.file.read()
     if len(data) > 5 * 1024 * 1024:
         raise ValueError("Ảnh học sinh không được vượt quá 5 MB.")
+    image = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None or image.size == 0:
+        raise ValueError("Ảnh học sinh không hợp lệ.")
+
+    try:
+        use_r2 = _r2_is_configured()
+    except R2StorageError as exc:
+        raise ValueError("Cấu hình R2 chưa đầy đủ. Hãy kiểm tra Environment Variables trên Render.") from exc
+    if use_r2:
+        data, _optimized_image = _optimize_image_jpeg(image, max_side=1600, quality=90)
+        mime, suffix = "image/jpeg", ".jpg"
 
     filename = f"{uuid.uuid4().hex}{suffix}"
+    r2_key = f"student-photos/{filename}"
+    if use_r2:
+        try:
+            _r2_put_object(r2_key, data, mime)
+        except R2StorageError as exc:
+            raise ValueError("Không thể lưu ảnh vào R2. Hãy kiểm tra bucket, quyền API và Environment Variables trên Render.") from exc
+        return f"r2://{r2_key}"
+
     destination = STUDENT_PHOTO_DIR / filename
+    destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(data)
     return str(destination)
 
@@ -5840,8 +5865,14 @@ def remove_student_photo(path_value: str):
     if not path_value:
         return
     try:
-        Path(path_value).unlink(missing_ok=True)
-    except OSError:
+        value = str(path_value)
+        _delete_stored_image(value, allowed_root=STUDENT_PHOTO_DIR)
+        if not _is_r2_ref(value):
+            fallback = _local_candidate(value, STUDENT_PHOTO_DIR)
+            if fallback.is_file():
+                _delete_stored_image(str(fallback), allowed_root=STUDENT_PHOTO_DIR)
+    except Exception:
+        # Deletion is best-effort, but never expose storage credentials/errors to the UI.
         pass
 
 
@@ -5857,7 +5888,7 @@ def student_face_label(status: str) -> tuple[str, str]:
 
 def student_avatar(row) -> str:
     if row["photo_path"]:
-        filename = Path(row["photo_path"]).name
+        filename = str(row["photo_path"] or "").replace("\\", "/").rsplit("/", 1)[-1]
         return f'<div class="student-avatar"><img src="/teacher/student-photo/{escape(filename)}" alt="Ảnh học sinh"></div>'
     initial = escape((row["full_name"] or "H").strip()[:1].upper())
     return f'<div class="student-avatar student-avatar-empty">{initial}</div>'
@@ -5865,24 +5896,20 @@ def student_avatar(row) -> str:
 
 @app.get("/teacher/student-photo/{filename}")
 def teacher_student_photo(request: Request, filename: str):
-    from fastapi.responses import FileResponse
-
     payload = get_teacher_payload(request)
     if payload is None:
         return RedirectResponse(url="/", status_code=303)
 
-    safe_name = Path(filename).name
-    file_path = STUDENT_PHOTO_DIR / safe_name
-    if not file_path.exists():
-        return RedirectResponse(url="/teacher?section=students", status_code=303)
-
+    safe_name = str(filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    if not safe_name or safe_name in {".", ".."}:
+        return Response(status_code=404)
     teacher_id = int(payload["sub"])
+    fallback_path = STUDENT_PHOTO_DIR / safe_name
+
     with SessionLocal() as db:
-        # The existing database may contain Windows paths while Render runs on Linux.
-        # Authorize by normalized filename so the photo remains accessible after deployment.
-        allowed = db.scalar(
+        row = db.execute(
             text("""
-                SELECT s.id
+                SELECT s.photo_path
                 FROM students s
                 WHERE s.owner_type = 'TEACHER'
                   AND s.owner_id = :teacher_id
@@ -5890,12 +5917,12 @@ def teacher_student_photo(request: Request, filename: str):
                 LIMIT 1
             """),
             {"teacher_id": teacher_id, "photo_match": "%" + safe_name.lower()}
-        )
+        ).mappings().first()
 
-    if allowed is None:
-        return RedirectResponse(url="/teacher?section=students", status_code=303)
-
-    return FileResponse(str(file_path))
+    if row is None:
+        return Response(status_code=404)
+    return _private_image_response(str(row["photo_path"] or ""), fallback_path=fallback_path,
+                                   allowed_root=STUDENT_PHOTO_DIR)
 
 
 @app.get("/teacher/students/create")
@@ -9794,12 +9821,19 @@ def teacher_shared_history_evidence(request: Request, evidence_id: int):
             LIMIT 1
         """), {"viewer_id": viewer_id, "evidence_id": evidence_id}).mappings().first()
     if row is None:
-        return Response(status_code=404)
-    path = Path(str(row["file_path"] or "")).resolve()
-    root = SESSION_EVIDENCE_DIR.resolve()
-    if root not in path.parents or not path.is_file():
-        return Response(status_code=404)
-    return FileResponse(str(path), media_type=str(row["mime_type"] or "image/jpeg"))
+        return Response(status_code=404, headers={"Cache-Control": "private, no-store"})
+    file_path = str(row["file_path"] or "")
+    fallback = None
+    if not _is_r2_ref(file_path):
+        fallback = _local_candidate(file_path, SESSION_EVIDENCE_DIR / str(evidence_id))
+        # Older path layouts store evidence below a session-id subfolder; use the
+        # stored path first, then safely try its basename within the evidence root.
+        with SessionLocal() as db:
+            session_row = db.execute(text("SELECT session_id FROM evidence WHERE id=:id LIMIT 1"), {"id": evidence_id}).mappings().first()
+        if session_row:
+            fallback = _local_candidate(file_path, SESSION_EVIDENCE_DIR / str(session_row["session_id"]))
+    return _private_image_response(file_path, fallback_path=fallback, allowed_root=SESSION_EVIDENCE_DIR,
+                                   media_type=str(row["mime_type"] or "image/jpeg"))
 
 
 def teacher_history_class_content(teacher_id: int, class_id: int) -> str | None:
@@ -11228,13 +11262,11 @@ def _hard_delete_session(session_id: int) -> bool:
         db.execute(text("DELETE FROM sessions WHERE id = :session_id"), {"session_id": session_id})
         db.commit()
 
-    root = SESSION_EVIDENCE_DIR.resolve()
     for raw_path in evidence_paths:
         try:
-            path = Path(raw_path).resolve()
-            if root in path.parents and path.exists() and path.is_file():
-                path.unlink()
+            _delete_stored_image(raw_path, allowed_root=SESSION_EVIDENCE_DIR)
         except Exception:
+            # Keep the database deletion completed even if storage cleanup must be retried.
             pass
     try:
         session_dir = (SESSION_EVIDENCE_DIR / str(session_id)).resolve()
@@ -12490,6 +12522,216 @@ def teacher_placeholder_content(title: str, description: str) -> str:
 SESSION_EVIDENCE_DIR = Path(__file__).resolve().parent.parent / "data" / "evidence"
 SESSION_EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
+# Private Cloudflare R2 object storage. All R2 access happens on the Server;
+# credentials are never sent to GodEyes Desktop or the browser. If no R2 vars
+# are configured, local development keeps using the legacy local-file storage.
+class R2StorageError(RuntimeError):
+    pass
+
+_R2_CLIENT = None
+_R2_CLIENT_FINGERPRINT = None
+_R2_REF_PREFIX = "r2://"
+
+
+def _r2_config():
+    def env(primary, fallback):
+        return str(os.environ.get(primary) or os.environ.get(fallback) or "").strip()
+    cfg = {
+        "account_id": str(os.environ.get("GODEYES_R2_ACCOUNT_ID") or os.environ.get("CLOUDFLARE_R2_ACCOUNT_ID") or os.environ.get("R2_ACCOUNT_ID") or "").strip(),
+        "access_key_id": str(os.environ.get("GODEYES_R2_ACCESS_KEY_ID") or os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID") or os.environ.get("R2_ACCESS_KEY_ID") or "").strip(),
+        "secret_access_key": str(os.environ.get("GODEYES_R2_SECRET_ACCESS_KEY") or os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY") or os.environ.get("R2_SECRET_ACCESS_KEY") or "").strip(),
+        "bucket": str(os.environ.get("GODEYES_R2_BUCKET") or os.environ.get("CLOUDFLARE_R2_BUCKET") or os.environ.get("R2_BUCKET_NAME") or "").strip(),
+        "endpoint_url": str(os.environ.get("GODEYES_R2_ENDPOINT_URL") or os.environ.get("CLOUDFLARE_R2_ENDPOINT_URL") or "").strip(),
+    }
+    required = ("account_id", "access_key_id", "secret_access_key", "bucket")
+    present = [bool(cfg[k]) for k in required]
+    if not any(present):
+        if str(os.environ.get("GODEYES_R2_REQUIRED", "")).strip().lower() in {"1", "true", "yes", "on"}:
+            raise R2StorageError("R2 is required but not configured. Set the four GODEYES_R2_* variables in Render.")
+        return None
+    missing = [k for k in required if not cfg[k]]
+    if missing:
+        raise R2StorageError("R2 configuration is incomplete. Set all GODEYES_R2_ACCOUNT_ID, GODEYES_R2_ACCESS_KEY_ID, GODEYES_R2_SECRET_ACCESS_KEY and GODEYES_R2_BUCKET variables in Render.")
+    if not cfg["endpoint_url"]:
+        cfg["endpoint_url"] = f"https://{cfg['account_id']}.r2.cloudflarestorage.com"
+    return cfg
+
+
+def _r2_is_configured() -> bool:
+    return _r2_config() is not None
+
+
+def _r2_client():
+    global _R2_CLIENT, _R2_CLIENT_FINGERPRINT
+    cfg = _r2_config()
+    if cfg is None:
+        raise R2StorageError("R2 is not configured. Set the GODEYES_R2_* variables on the Server.")
+    fingerprint = (cfg["account_id"], cfg["access_key_id"], cfg["secret_access_key"], cfg["bucket"], cfg["endpoint_url"])
+    if _R2_CLIENT is not None and _R2_CLIENT_FINGERPRINT == fingerprint:
+        return _R2_CLIENT, cfg
+    try:
+        import boto3
+        from botocore.config import Config
+    except Exception as exc:
+        raise R2StorageError("Missing dependency boto3. Add boto3>=1.34,<2 to requirements.txt and redeploy.") from exc
+    try:
+        _R2_CLIENT = boto3.client(
+            "s3",
+            endpoint_url=cfg["endpoint_url"],
+            aws_access_key_id=cfg["access_key_id"],
+            aws_secret_access_key=cfg["secret_access_key"],
+            region_name="auto",
+            config=Config(signature_version="s3v4", connect_timeout=6, read_timeout=25,
+                          retries={"max_attempts": 2, "mode": "standard"}),
+        )
+        _R2_CLIENT_FINGERPRINT = fingerprint
+        return _R2_CLIENT, cfg
+    except Exception as exc:
+        raise R2StorageError("Unable to initialize private image storage client.") from exc
+
+
+def _r2_put_object(key: str, data: bytes, content_type: str) -> None:
+    key = str(key or "").lstrip("/")
+    if not key or ".." in key.split("/"):
+        raise R2StorageError("Invalid storage object key.")
+    client, cfg = _r2_client()
+    try:
+        client.put_object(
+            Bucket=cfg["bucket"], Key=key, Body=bytes(data),
+            ContentType=str(content_type or "application/octet-stream"),
+            CacheControl="private, no-store, max-age=0",
+        )
+    except Exception as exc:
+        raise R2StorageError("Image upload to private R2 storage failed. Check bucket name, API token permissions and Render environment variables.") from exc
+
+
+def _r2_get_object(key: str) -> tuple[bytes, str]:
+    key = str(key or "").lstrip("/")
+    if not key or ".." in key.split("/"):
+        raise FileNotFoundError("Invalid storage object key")
+    client, cfg = _r2_client()
+    try:
+        result = client.get_object(Bucket=cfg["bucket"], Key=key)
+        body = result["Body"]
+        try:
+            data = body.read()
+        finally:
+            body.close()
+        return data, str(result.get("ContentType") or mimetypes.guess_type(key)[0] or "application/octet-stream")
+    except Exception as exc:
+        # Do not disclose bucket credentials, endpoint details, or provider response bodies.
+        provider_error = getattr(exc, "response", {}) or {}
+        error_code = str((provider_error.get("Error") or {}).get("Code") or "")
+        status_code = str((provider_error.get("ResponseMetadata") or {}).get("HTTPStatusCode") or "")
+        if exc.__class__.__name__ in {"NoSuchKey", "NotFound"} or error_code in {"NoSuchKey", "NotFound", "404"} or status_code == "404":
+            raise FileNotFoundError("Stored image not found") from exc
+        raise R2StorageError("Could not read image from private R2 storage.") from exc
+
+
+def _r2_delete_object(key: str) -> None:
+    key = str(key or "").lstrip("/")
+    if not key or ".." in key.split("/"):
+        return
+    client, cfg = _r2_client()
+    try:
+        client.delete_object(Bucket=cfg["bucket"], Key=key)
+    except Exception as exc:
+        raise R2StorageError("Could not delete image from private R2 storage.") from exc
+
+
+def _is_r2_ref(value: str) -> bool:
+    return str(value or "").startswith(_R2_REF_PREFIX)
+
+
+def _r2_ref_key(value: str) -> str:
+    key = str(value or "")[len(_R2_REF_PREFIX):].lstrip("/")
+    if not key or ".." in key.split("/"):
+        raise FileNotFoundError("Invalid R2 image reference")
+    return key
+
+
+def _read_stored_image(path_value: str, fallback_path: Path | None = None, allowed_root: Path | None = None) -> tuple[bytes, str]:
+    value = str(path_value or "")
+    if _is_r2_ref(value):
+        return _r2_get_object(_r2_ref_key(value))
+
+    candidates = []
+    if value:
+        try:
+            candidates.append(Path(value))
+        except Exception:
+            pass
+    if fallback_path is not None:
+        candidates.append(Path(fallback_path))
+    root = Path(allowed_root).resolve() if allowed_root is not None else None
+    seen = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+            if str(resolved) in seen:
+                continue
+            seen.add(str(resolved))
+            if root is not None and root not in resolved.parents:
+                continue
+            if resolved.is_file():
+                return resolved.read_bytes(), mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
+        except (OSError, RuntimeError):
+            continue
+    raise FileNotFoundError("Stored image is unavailable")
+
+
+def _delete_stored_image(path_value: str, allowed_root: Path | None = None) -> None:
+    value = str(path_value or "")
+    if not value:
+        return
+    if _is_r2_ref(value):
+        _r2_delete_object(_r2_ref_key(value))
+        return
+    try:
+        path = Path(value).resolve()
+        root = Path(allowed_root).resolve() if allowed_root is not None else None
+        if path.is_file() and (root is None or root in path.parents):
+            path.unlink()
+    except (OSError, RuntimeError):
+        pass
+
+
+def _private_image_response(path_value: str, fallback_path: Path | None = None,
+                            allowed_root: Path | None = None, media_type: str | None = None):
+    try:
+        data, stored_type = _read_stored_image(path_value, fallback_path=fallback_path, allowed_root=allowed_root)
+    except FileNotFoundError:
+        return Response(status_code=404, headers={"Cache-Control": "private, no-store"})
+    except R2StorageError:
+        return JSONResponse({"detail": "Private image storage is unavailable. Check the Server storage configuration."}, status_code=503,
+                            headers={"Cache-Control": "private, no-store"})
+    return Response(content=data, media_type=media_type or stored_type,
+                    headers={"Cache-Control": "private, no-store, max-age=0", "Pragma": "no-cache",
+                             "X-Content-Type-Options": "nosniff"})
+
+
+def _local_candidate(path_value: str, base_dir: Path) -> Path:
+    name = str(path_value or "").replace("\\", "/").rsplit("/", 1)[-1]
+    return Path(base_dir) / name
+
+
+def _optimize_image_jpeg(image, max_side: int = 1280, quality: int = 82) -> tuple[bytes, object]:
+    """Remove metadata and compress an image for R2 without changing recognition logic."""
+    if image is None or not getattr(image, "size", 0):
+        raise ValueError("Invalid image data")
+    height, width = image.shape[:2]
+    longest = max(height, width)
+    max_side = max(640, min(1920, int(max_side)))
+    quality = max(60, min(92, int(quality)))
+    if longest > max_side:
+        scale = max_side / float(longest)
+        image = cv2.resize(image, (max(1, int(round(width * scale))), max(1, int(round(height * scale)))), interpolation=cv2.INTER_AREA)
+    ok, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), quality, int(cv2.IMWRITE_JPEG_OPTIMIZE), 1])
+    if not ok or encoded is None or encoded.size == 0:
+        raise ValueError("Could not compress image")
+    return encoded.tobytes(), image
+
+
 API_MAX_EVENT_BATCH = 200
 API_MAX_EVIDENCE_BYTES = 5 * 1024 * 1024
 API_ALLOWED_EVIDENCE_TYPES = {"image/png", "image/jpeg", "image/webp"}
@@ -13532,40 +13774,69 @@ async def api_upload_evidence(
 
         student_code = snapshot["student_code"] if snapshot else ""
         full_name = snapshot["full_name"] if snapshot else ""
+        try:
+            use_r2 = _r2_is_configured()
+        except R2StorageError:
+            return JSONResponse({"detail": "Could not store evidence image. Check private R2 storage configuration."}, status_code=503)
+        if use_r2:
+            try:
+                raw, optimized_image = _optimize_image_jpeg(image, max_side=1280, quality=82)
+            except ValueError:
+                return JSONResponse({"detail": "Could not optimize evidence image."}, status_code=400)
+            image = optimized_image
+            height, width = image.shape[:2]
+            mime = "image/jpeg"
         suffix = safe_evidence_suffix(mime)
         file_name = f"session_{session_id}_{uuid.uuid4().hex}{suffix}"
-        session_dir = SESSION_EVIDENCE_DIR / str(session_id)
-        session_dir.mkdir(parents=True, exist_ok=True)
-        file_path = session_dir / file_name
-        file_path.write_bytes(raw)
+        if use_r2:
+            storage_key = f"evidence/{session_id}/{file_name}"
+            try:
+                _r2_put_object(storage_key, raw, mime)
+            except R2StorageError:
+                return JSONResponse({"detail": "Could not store evidence image. Check private R2 storage configuration."}, status_code=503)
+            file_path_value = f"r2://{storage_key}"
+        else:
+            session_dir = SESSION_EVIDENCE_DIR / str(session_id)
+            session_dir.mkdir(parents=True, exist_ok=True)
+            file_path = session_dir / file_name
+            file_path.write_bytes(raw)
+            file_path_value = str(file_path)
 
-        result = db.execute(
-            text("""
-                INSERT INTO evidence
-                    (session_id, student_id, student_code, full_name, captured_at,
-                     event_type, confidence, file_name, file_path, mime_type, width, height)
-                VALUES
-                    (:session_id, :student_id, :student_code, :full_name, :captured_at,
-                     :event_type, :confidence, :file_name, :file_path, :mime_type, :width, :height)
-                RETURNING id
-            """),
-            {
-                "session_id": session_id,
-                "student_id": student_id if snapshot else 0,
-                "student_code": student_code,
-                "full_name": full_name,
-                "captured_at": captured_at,
-                "event_type": event_type,
-                "confidence": confidence,
-                "file_name": file_name,
-                "file_path": str(file_path),
-                "mime_type": mime,
-                "width": width,
-                "height": height,
-            }
-        )
-        evidence_id = int(result.scalar_one())
-        db.commit()
+        try:
+            result = db.execute(
+                text("""
+                    INSERT INTO evidence
+                        (session_id, student_id, student_code, full_name, captured_at,
+                         event_type, confidence, file_name, file_path, mime_type, width, height)
+                    VALUES
+                        (:session_id, :student_id, :student_code, :full_name, :captured_at,
+                         :event_type, :confidence, :file_name, :file_path, :mime_type, :width, :height)
+                    RETURNING id
+                """),
+                {
+                    "session_id": session_id,
+                    "student_id": student_id if snapshot else 0,
+                    "student_code": student_code,
+                    "full_name": full_name,
+                    "captured_at": captured_at,
+                    "event_type": event_type,
+                    "confidence": confidence,
+                    "file_name": file_name,
+                    "file_path": file_path_value,
+                    "mime_type": mime,
+                    "width": width,
+                    "height": height,
+                }
+            )
+            evidence_id = int(result.scalar_one())
+            db.commit()
+        except Exception:
+            db.rollback()
+            try:
+                _delete_stored_image(file_path_value, allowed_root=SESSION_EVIDENCE_DIR)
+            except Exception:
+                pass
+            raise
 
     return {
         "id": evidence_id,
@@ -13599,7 +13870,7 @@ def api_get_evidence(request: Request, evidence_id: int):
         if role == "MAIN_ADMIN":
             row = db.execute(
                 text("""
-                    SELECT e.id, e.file_path
+                    SELECT e.id, e.file_path, e.mime_type
                     FROM evidence e
                     JOIN sessions s ON s.id = e.session_id
                     WHERE e.id = :evidence_id
@@ -13610,7 +13881,7 @@ def api_get_evidence(request: Request, evidence_id: int):
         elif role == "TEACHER":
             row = db.execute(
                 text("""
-                    SELECT e.id, e.file_path
+                    SELECT e.id, e.file_path, e.mime_type
                     FROM evidence e
                     JOIN sessions s ON s.id = e.session_id
                     WHERE e.id = :evidence_id
@@ -13625,13 +13896,147 @@ def api_get_evidence(request: Request, evidence_id: int):
 
     if row is None:
         return JSONResponse({"detail": "Evidence not found."}, status_code=404)
+    file_path = str(row["file_path"] or "")
+    fallback = None
+    if not _is_r2_ref(file_path):
+        with SessionLocal() as db:
+            detail = db.execute(text("SELECT session_id FROM evidence WHERE id=:id LIMIT 1"), {"id": evidence_id}).mappings().first()
+        if detail:
+            fallback = _local_candidate(file_path, SESSION_EVIDENCE_DIR / str(detail["session_id"]))
+    return _private_image_response(file_path, fallback_path=fallback, allowed_root=SESSION_EVIDENCE_DIR,
+                                   media_type=str(row["mime_type"] or "image/jpeg"))
 
-    path = Path(row["file_path"]).resolve()
-    root = SESSION_EVIDENCE_DIR.resolve()
-    if root not in path.parents or not path.exists():
-        return JSONResponse({"detail": "Evidence file unavailable."}, status_code=404)
 
-    return FileResponse(str(path))
+@app.get("/admin/storage/r2-migration", response_class=HTMLResponse)
+def admin_r2_migration_page(request: Request, migrated: int = 0, missing: int = 0, failed: int = 0):
+    payload = get_admin_payload(request)
+    if payload is None:
+        return RedirectResponse(url="/", status_code=303)
+    try:
+        configured = _r2_is_configured()
+        config_error = ""
+    except R2StorageError as exc:
+        configured = False
+        config_error = str(exc)
+    student_count = evidence_count = 0
+    try:
+        with SessionLocal() as db:
+            student_count = int(db.scalar(text("SELECT COUNT(*) FROM students WHERE COALESCE(photo_path, '') <> '' AND photo_path NOT LIKE 'r2://%'")) or 0)
+            evidence_count = int(db.scalar(text("SELECT COUNT(*) FROM evidence WHERE COALESCE(file_path, '') <> '' AND file_path NOT LIKE 'r2://%'")) or 0)
+    except Exception:
+        pass
+    status = ""
+    if any((migrated, missing, failed)):
+        status = f"<div style='padding:12px;border:1px solid #d8e5ef;border-radius:12px;background:#f7fbff;margin:12px 0'>Đợt vừa rồi: chuyển thành công <b>{int(migrated)}</b> ảnh; thiếu file cục bộ <b>{int(missing)}</b>; lỗi <b>{int(failed)}</b>. Các file gốc cục bộ chưa bị xóa.</div>"
+    if configured:
+        storage_status = "<b style='color:#16804a'>R2 đã được cấu hình.</b> Mỗi lần bấm sẽ chuyển tối đa 20 ảnh cũ và giữ file gốc để an toàn."
+    elif config_error:
+        storage_status = f"<b style='color:#b4232d'>Cấu hình chưa đủ:</b> {escape(config_error)}"
+    else:
+        storage_status = "<b style='color:#b4232d'>R2 chưa được cấu hình.</b> Hãy thêm bốn biến GODEYES_R2_* trong Render trước khi chuyển ảnh."
+    button = "<button type='submit' style='padding:11px 16px;border:0;border-radius:10px;background:#215f96;color:white;font-weight:800;cursor:pointer'>Chuyển tối đa 20 ảnh sang R2</button>" if configured and (student_count + evidence_count) else ""
+    content = f"""
+    <main style='max-width:900px;margin:30px auto;padding:24px;font-family:system-ui,sans-serif;color:#1f2937;background:white;border:1px solid #e5e7eb;border-radius:18px'>
+      <a href='/admin' style='color:#315774;text-decoration:none'>← Quay lại Admin</a>
+      <h1 style='margin:18px 0 6px;font-size:25px'>Lưu trữ ảnh GodEyes · Cloudflare R2</h1>
+      <p style='color:#667085'>Bucket phải để riêng tư. Server sẽ tiếp tục kiểm tra đăng nhập và quyền xem ảnh; URL của bucket không được hiển thị cho trình duyệt.</p>
+      {status}<div style='padding:14px;background:#f9fafb;border-radius:12px;margin:14px 0'>{storage_status}</div>
+      <div style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0'>
+        <div style='padding:18px;border:1px solid #e5e7eb;border-radius:12px'><small>Ảnh hồ sơ học sinh / Face ID còn lưu cục bộ</small><div style='font-size:28px;font-weight:850'>{student_count}</div></div>
+        <div style='padding:18px;border:1px solid #e5e7eb;border-radius:12px'><small>Ảnh minh chứng còn lưu cục bộ</small><div style='font-size:28px;font-weight:850'>{evidence_count}</div></div>
+      </div>
+      <p style='font-size:13px;color:#667085'>Nhấn nút nhiều lần để xử lý theo từng đợt. Nếu Render đã làm mất file tạm trong một lần deploy trước, các file đó không thể được khôi phục bằng chức năng này. Khi đã cấu hình đầy đủ R2, đặt GODEYES_R2_REQUIRED=true trên Render để tránh lưu ảnh mới vào ổ đĩa tạm nếu biến cấu hình bị thiếu.</p>
+      <form method='post' action='/admin/storage/r2-migration'>{button}</form>
+    </main>"""
+    return HTMLResponse(content, headers={"Cache-Control": "private, no-store"})
+
+
+@app.post("/admin/storage/r2-migration")
+def admin_r2_migrate_local_images(request: Request):
+    payload = get_admin_payload(request)
+    if payload is None:
+        return RedirectResponse(url="/", status_code=303)
+    try:
+        if not _r2_is_configured():
+            return RedirectResponse(url="/admin/storage/r2-migration?failed=1", status_code=303)
+    except R2StorageError:
+        return RedirectResponse(url="/admin/storage/r2-migration?failed=1", status_code=303)
+
+    migrated = missing = failed = processed = 0
+    batch_size = 20
+    with SessionLocal() as db:
+        # Scan more candidates than the per-request upload limit so stale/missing
+        # legacy paths do not permanently block later assets from being migrated.
+        students = db.execute(text("""
+            SELECT id, photo_path FROM students
+            WHERE COALESCE(photo_path, '') <> '' AND photo_path NOT LIKE 'r2://%'
+            ORDER BY id ASC LIMIT 10000
+        """)).mappings().all()
+        evidences = db.execute(text("""
+            SELECT id, session_id, file_name, file_path, mime_type FROM evidence
+            WHERE COALESCE(file_path, '') <> '' AND file_path NOT LIKE 'r2://%'
+            ORDER BY id ASC LIMIT 10000
+        """)).mappings().all()
+
+        for row in students:
+            if migrated >= batch_size:
+                break
+            old_ref = str(row["photo_path"] or "")
+            safe_name = old_ref.replace("\\", "/").rsplit("/", 1)[-1]
+            fallback = STUDENT_PHOTO_DIR / safe_name
+            try:
+                data, mime = _read_stored_image(old_ref, fallback_path=fallback, allowed_root=STUDENT_PHOTO_DIR)
+            except FileNotFoundError:
+                missing += 1
+                processed += 1
+                continue
+            except Exception:
+                failed += 1
+                processed += 1
+                continue
+            new_ref = f"r2://student-photos/{safe_name}"
+            try:
+                _r2_put_object(_r2_ref_key(new_ref), data, mime)
+                db.execute(text("UPDATE students SET photo_path=:new_ref WHERE id=:id AND photo_path=:old_ref"),
+                           {"new_ref": new_ref, "id": int(row["id"]), "old_ref": old_ref})
+                db.commit()
+                migrated += 1
+            except Exception:
+                db.rollback()
+                failed += 1
+            processed += 1
+
+        for row in evidences:
+            if migrated >= batch_size:
+                break
+            old_ref = str(row["file_path"] or "")
+            safe_name = str(row["file_name"] or old_ref.replace("\\", "/").rsplit("/", 1)[-1])
+            safe_name = safe_name.replace("\\", "/").rsplit("/", 1)[-1]
+            fallback = _local_candidate(old_ref, SESSION_EVIDENCE_DIR / str(row["session_id"]))
+            try:
+                data, mime = _read_stored_image(old_ref, fallback_path=fallback, allowed_root=SESSION_EVIDENCE_DIR)
+            except FileNotFoundError:
+                missing += 1
+                processed += 1
+                continue
+            except Exception:
+                failed += 1
+                processed += 1
+                continue
+            new_ref = f"r2://evidence/{int(row['session_id'])}/{safe_name}"
+            try:
+                _r2_put_object(_r2_ref_key(new_ref), data, str(row["mime_type"] or mime))
+                db.execute(text("UPDATE evidence SET file_path=:new_ref WHERE id=:id AND file_path=:old_ref"),
+                           {"new_ref": new_ref, "id": int(row["id"]), "old_ref": old_ref})
+                db.commit()
+                migrated += 1
+            except Exception:
+                db.rollback()
+                failed += 1
+            processed += 1
+
+    # Migration screen works in bounded batches; counts left guide repeat-clicks.
+    return RedirectResponse(url=f"/admin/storage/r2-migration?migrated={migrated}&missing={missing}&failed={failed}", status_code=303)
 
 
 @app.post("/api/v1/sessions/{session_id}/finish")
