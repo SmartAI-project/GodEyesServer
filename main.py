@@ -9268,6 +9268,7 @@ def _history_daily_rows(teacher_id: int, search_query: str = ""):
                     s.started_at,
                     s.ended_at,
                     s.duration_seconds,
+                    s.avg_decibel_dbfs,
                     s.status,
                     s.scan_date,
                     COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
@@ -9291,7 +9292,7 @@ def _history_daily_rows(teacher_id: int, search_query: str = ""):
                   AND ss.student_id > 0
                   AND (:query = '' OR LOWER(COALESCE(ss.full_name, '')) LIKE LOWER(:like_query))
                 GROUP BY
-                    s.id, s.class_id, s.started_at, s.ended_at, s.duration_seconds, s.status, s.scan_date,
+                    s.id, s.class_id, s.started_at, s.ended_at, s.duration_seconds, s.avg_decibel_dbfs, s.status, s.scan_date,
                     s.class_name_snapshot, s.class_code_snapshot, c.name, c.code,
                     ss.student_id, ss.student_code, ss.full_name
                 ORDER BY s.started_at DESC, s.id DESC, LOWER(ss.full_name), ss.student_id
@@ -9330,6 +9331,7 @@ def _history_group_daily(rows):
             'started_at': row.get('started_at'),
             'ended_at': row.get('ended_at'),
             'duration_seconds': row.get('duration_seconds'),
+            'avg_decibel_dbfs': row.get('avg_decibel_dbfs'),
             'status': row.get('status'),
             'class_name': str(row.get('class_name') or 'Lớp đã xóa'),
             'class_code': str(row.get('class_code') or ''),
@@ -9394,6 +9396,39 @@ def _history_focus_meta(focus: float, language: str = 'vi'):
         return ('ATTENTION', 'attention', 'Review context' if language == 'en' else 'ĐÁNG CHÚ Ý')
     return ('SAFE', 'safe', 'Low priority' if language == 'en' else 'Mức ưu tiên thấp')
 
+
+
+def _audio_level_display(value, language: str = 'vi') -> tuple[str, str]:
+    """Format saved dBFS and optionally a calibrated dB SPL estimate.
+
+    dBFS does not imply a fixed dB SPL value. Configure
+    GODEYES_DBFS_TO_SPL_OFFSET_DB only after a reference-meter calibration
+    with the same camera/microphone gain and audio processing settings.
+    """
+    en = str(language or 'vi').lower() == 'en'
+    no_data = 'No audio data' if en else 'Chưa có dữ liệu'
+    if value is None:
+        return no_data, ('Available after a session records audio' if en else 'Cần có dữ liệu âm thanh của buổi học')
+    try:
+        dbfs = float(value)
+    except (TypeError, ValueError):
+        return no_data, ('Available after a session records audio' if en else 'Cần có dữ liệu âm thanh của buổi học')
+    if not math.isfinite(dbfs):
+        return no_data, ('Available after a session records audio' if en else 'Cần có dữ liệu âm thanh của buổi học')
+    dbfs = max(-120.0, min(0.0, dbfs))
+    note = 'dB SPL not calibrated' if en else 'Chưa hiệu chuẩn dB SPL'
+    raw_offset = str(os.environ.get('GODEYES_DBFS_TO_SPL_OFFSET_DB', '') or '').strip()
+    if raw_offset:
+        try:
+            offset = float(raw_offset)
+            if math.isfinite(offset):
+                spl = dbfs + offset
+                if -20.0 <= spl <= 140.0:
+                    note = (f'≈ {spl:.1f} dB SPL (calibrated estimate)' if en
+                            else f'≈ {spl:.1f} dB SPL (ước tính đã hiệu chuẩn)')
+        except (TypeError, ValueError):
+            pass
+    return f'{dbfs:.1f} dBFS', note
 
 def teacher_history_content(teacher_id: int, status_message: str = "", search_query: str = "") -> str:
     prefs = get_teacher_preferences(int(teacher_id))
@@ -9918,10 +9953,11 @@ def teacher_history_day_student_content(teacher_id: int, date_str: str, student_
         obs_count = int(student['session_obs'].get(sess_id, 0))
         evidence_count = int(student['session_evidence'].get(sess_id, 0))
         focus = max(0.0, 100.0 - obs_count)
+        audio_dbfs_text, _audio_note = _audio_level_display(sess.get('avg_decibel_dbfs'), language)
         session_cards += f'''
             <a class="history-session-card" href="/teacher/history/session/{sess_id}/student/{int(student_id)}">
                 <div class="history-session-id">#{sess_id}</div>
-                <div class="history-session-info"><strong>{escape(sess['class_name'])}</strong><span>{escape(format_server_dt(sess['started_at']))} · {escape(format_duration(sess['duration_seconds']))}</span></div>
+                <div class="history-session-info"><strong>{escape(sess['class_name'])}</strong><span>{escape(format_server_dt(sess['started_at']))} · {escape(format_duration(sess['duration_seconds']))} · {'Audio avg: ' if en else 'Âm thanh TB: '}{escape(audio_dbfs_text)}</span></div>
                 <div class="history-session-stat"><b>{obs_count}</b><span>OB</span></div>
                 <div class="history-session-stat"><b>{evidence_count}</b><span>Evidence</span></div>
                 <div class="history-session-focus"><b>{focus:.1f}%</b><span>Focus</span></div>
@@ -10421,7 +10457,7 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
                 SELECT s.id, s.teacher_id, s.class_id,
                        COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                        COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
-                       s.status, s.started_at, s.ended_at, s.duration_seconds,
+                       s.status, s.started_at, s.ended_at, s.duration_seconds, s.avg_decibel_dbfs,
                        (SELECT COUNT(*) FROM observations o WHERE o.session_id = s.id) AS observation_count,
                        (SELECT COUNT(*) FROM evidence e WHERE e.session_id = s.id) AS evidence_count
                 FROM sessions s
@@ -10506,6 +10542,7 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
             str(x.get("full_name") or "").casefold(),
         ))
 
+    audio_dbfs_text, audio_note = _audio_level_display(session.get('avg_decibel_dbfs'), 'en' if _en else 'vi')
     danger_students = sum(1 for x in student_cards if x["focus"] < 50.0)
     attention_students = sum(1 for x in student_cards if 50.0 <= x["focus"] < 80.0)
     safe_students = len(student_cards) - danger_students - attention_students
@@ -10612,6 +10649,8 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
                 <div class="overview-card"><span>{"SAFE" if _en else "BÌNH THƯỜNG"}</span><strong>{safe_students}</strong><small>không có tín hiệu đáng chú ý</small></div>
             </div>
 
+            <div class="history-audio-summary"><div><span>{'CLASSROOM SOUND LEVEL' if _en else 'MỨC ÂM THANH TRUNG BÌNH'}</span><strong>{escape(audio_dbfs_text)}</strong></div><small>{escape(audio_note)}</small></div>
+
             <div class="history-focus-section-head">
                 <div><div class="eyebrow-small">{L_CLASS_OVERVIEW}</div><h3>Học sinh trong buổi học</h3><p>Mỗi học sinh chỉ xuất hiện một lần. Chọn một dòng để xem các frame quan trọng.</p></div>
                 <div class="session-meta-pill">{len(student_cards)} học sinh · {int(session['observation_count'] or 0)} {L_OBSERVATIONS} · {evidence_count} {L_EVIDENCE}</div>
@@ -10680,6 +10719,10 @@ def teacher_history_detail_content(teacher_id: int, session_id: int, student_sea
             .overview-card small {{ display:block; margin-top:8px; color:#8a9aad; font-size:11px; }}
             .overview-card-main {{ border-color:#f0c9cd; background:linear-gradient(135deg,#fffafa 0%,#fff 100%); }}
             .overview-card-main strong {{ color:#b4232d; }}
+            .history-audio-summary {{ display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; margin:14px 0 6px; padding:16px 20px; border:1px solid #dce8f3; border-radius:18px; background:linear-gradient(135deg,#f7fbff 0%,#ffffff 100%); }}
+            .history-audio-summary span {{ display:block; color:#7890a6; font-size:10px; font-weight:900; letter-spacing:.7px; }}
+            .history-audio-summary strong {{ display:block; margin-top:6px; color:#1f65a0; font-size:24px; font-weight:850; }}
+            .history-audio-summary small {{ color:#8395a5; font-size:11px; }}
             .history-focus-section-head {{ display:flex; justify-content:space-between; align-items:flex-end; gap:20px; margin:30px 2px 14px; }}
             .history-focus-section-head h3 {{ margin:4px 0 4px; color:#18344f; font-size:20px; }}
             .history-focus-section-head p {{ margin:0; color:#7a8d9f; font-size:12px; }}
@@ -11455,7 +11498,7 @@ def admin_history_content(view: str = "history") -> str:
                     SELECT s.id, s.class_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                            COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
                            s.teacher_id, COALESCE(t.full_name, t.username, '') AS teacher_name,
-                           s.status, s.started_at, s.ended_at, s.duration_seconds,
+                           s.status, s.started_at, s.ended_at, s.duration_seconds, s.avg_decibel_dbfs,
                            s.deleted_at, s.deleted_by_username,
                            (SELECT COUNT(*) FROM observations o WHERE o.session_id = s.id) AS observation_count,
                            (SELECT COUNT(*) FROM evidence e WHERE e.session_id = s.id) AS evidence_count
@@ -11472,7 +11515,7 @@ def admin_history_content(view: str = "history") -> str:
                     SELECT s.id, s.class_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                            COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
                            s.teacher_id, COALESCE(t.full_name, t.username, '') AS teacher_name,
-                           s.status, s.started_at, s.ended_at, s.duration_seconds,
+                           s.status, s.started_at, s.ended_at, s.duration_seconds, s.avg_decibel_dbfs,
                            (SELECT COUNT(*) FROM observations o WHERE o.session_id = s.id) AS observation_count,
                            (SELECT COUNT(*) FROM evidence e WHERE e.session_id = s.id) AS evidence_count
                     FROM sessions s
@@ -11521,6 +11564,7 @@ def admin_history_content(view: str = "history") -> str:
                 <td>{escape(teacher_name)}</td>
                 <td>{format_server_dt(row['started_at'])}</td>
                 <td>{format_duration(row['duration_seconds'])}</td>
+                <td>{escape(_audio_level_display(row.get('avg_decibel_dbfs'), 'vi')[0])}</td>
                 <td>{int(row['observation_count'] or 0)}</td>
                 <td>{int(row['evidence_count'] or 0)}</td>
                 <td><span class="admin-history-status {status_class}">{status_label}</span>{extra}</td>
@@ -11528,7 +11572,7 @@ def admin_history_content(view: str = "history") -> str:
             </tr>
         """
 
-    body = rows_html if rows_html else '<tr><td colspan="9"><div class="admin-history-empty">Không có session.</div></td></tr>'
+    body = rows_html if rows_html else '<tr><td colspan="10"><div class="admin-history-empty">Không có session.</div></td></tr>'
     title = "Thùng rác" if view == "trash" else "Lịch sử server"
     subtitle = "Các session đã bị đưa vào thùng rác. Chỉ Main Admin mới có thể xóa vĩnh viễn." if view == "trash" else "Toàn bộ session trên server. Không có tự động xóa dữ liệu."
 
@@ -11558,7 +11602,7 @@ def admin_history_content(view: str = "history") -> str:
             <div class="admin-history-tabs">{"".join(tabs)}</div>
             <div class="admin-history-table-wrap">
                 <table class="admin-history-table">
-                    <thead><tr><th>Session</th><th>Lớp</th><th>Giáo viên</th><th>Bắt đầu</th><th>Thời lượng</th><th>OB</th><th>Evidence</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+                    <thead><tr><th>Session</th><th>Lớp</th><th>Giáo viên</th><th>Bắt đầu</th><th>Thời lượng</th><th>Âm thanh TB</th><th>OB</th><th>Evidence</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
                     <tbody>{body}</tbody>
                 </table>
             </div>
@@ -11603,7 +11647,7 @@ def admin_history_detail_content(session_id: int) -> str | None:
                 SELECT s.id, s.teacher_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                        COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
                        COALESCE(t.full_name, t.username, '') AS teacher_name,
-                       s.status, s.started_at, s.ended_at, s.duration_seconds,
+                       s.status, s.started_at, s.ended_at, s.duration_seconds, s.avg_decibel_dbfs,
                        s.deleted_at, s.deleted_by_username,
                        (SELECT COUNT(*) FROM observations o WHERE o.session_id = s.id) AS observation_count,
                        (SELECT COUNT(*) FROM evidence e WHERE e.session_id = s.id) AS evidence_count
@@ -11652,6 +11696,7 @@ def admin_history_detail_content(session_id: int) -> str | None:
         """
 
     trash_notice = f"<div class='admin-trash-notice'>Đã vào thùng rác lúc {format_server_dt(session['deleted_at'])} bởi {escape(session['deleted_by_username'] or '-')}.</div>" if session["deleted_at"] else ""
+    audio_dbfs_text, audio_note = _audio_level_display(session.get('avg_decibel_dbfs'), 'vi')
     back_view = "trash" if session["deleted_at"] else "history"
 
     return f"""
@@ -11661,7 +11706,7 @@ def admin_history_detail_content(session_id: int) -> str | None:
                 <div class="admin-history-actions">{action_html}</div>
             </div>
             {trash_notice}
-            <div class="admin-detail-metrics"><div><span>Thời lượng</span><strong>{format_duration(session['duration_seconds'])}</strong></div><div><span>Học sinh</span><strong>{len(roster)}</strong></div><div><span>Observation</span><strong>{int(session['observation_count'] or 0)}</strong></div><div><span>Evidence</span><strong>{int(session['evidence_count'] or 0)}</strong></div></div>
+            <div class="admin-detail-metrics"><div><span>Thời lượng</span><strong>{format_duration(session['duration_seconds'])}</strong></div><div><span>Học sinh</span><strong>{len(roster)}</strong></div><div><span>Observation</span><strong>{int(session['observation_count'] or 0)}</strong></div><div><span>Evidence</span><strong>{int(session['evidence_count'] or 0)}</strong></div><div><span>Âm thanh trung bình</span><strong>{escape(audio_dbfs_text)}</strong><small>{escape(audio_note)}</small></div></div>
             <div class="admin-detail-section"><div class="admin-detail-head"><h3>Danh sách trong session</h3><span>{len(roster)} học sinh</span></div><div class="admin-roster-grid">{roster_html or '<div class="admin-history-empty">Không có dữ liệu.</div>'}</div></div>
             <div class="admin-detail-section"><div class="admin-detail-head"><h3>Observation</h3><span>{len(observations)} bản ghi</span></div><div class="admin-history-table-wrap"><table class="admin-history-table"><thead><tr><th>Thời gian</th><th>Học sinh</th><th>Loại</th><th>Confidence</th><th>Chi tiết</th><th>Evidence</th></tr></thead><tbody>{obs_html if obs_html else '<tr><td colspan="6"><div class="admin-history-empty">Chưa có observation.</div></td></tr>'}</tbody></table></div></div>
             <div class="admin-detail-section"><div class="admin-detail-head"><h3>Evidence</h3><span>{len(evidence)} ảnh</span></div><div class="admin-evidence-grid">{evidence_html if evidence_html else '<div class="admin-history-empty">Chưa có evidence.</div>'}</div></div>
@@ -11672,10 +11717,11 @@ def admin_history_detail_content(session_id: int) -> str | None:
             .admin-history-detail-top h2 {{ margin:0; font-size:22px; }}
             .admin-history-detail-top p {{ margin:6px 0 0; color:#7b828b; font-size:12px; }}
             .admin-back-link {{ display:inline-block; margin-bottom:11px; color:#5d6670; font-size:12px; font-weight:750; text-decoration:none; }}
-            .admin-detail-metrics {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:20px 0 24px; }}
+            .admin-detail-metrics {{ display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; margin:20px 0 24px; }}
             .admin-detail-metrics > div {{ background:#f7f8f9; border:1px solid #e5e7eb; border-radius:12px; padding:13px; }}
             .admin-detail-metrics span {{ display:block; color:#7b828b; font-size:10px; font-weight:700; }}
             .admin-detail-metrics strong {{ display:block; margin-top:6px; font-size:18px; }}
+             .admin-detail-metrics small {{ display:block; margin-top:4px; color:#7b828b; font-size:9px; line-height:1.3; }}
             .admin-detail-section {{ margin-top:22px; }}
             .admin-detail-head {{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px; }}
             .admin-detail-head h3 {{ margin:0; font-size:14px; }}
@@ -12423,6 +12469,7 @@ def ensure_session_tables():
                 started_at TEXT NOT NULL,
                 ended_at TEXT NOT NULL DEFAULT '',
                 duration_seconds INTEGER NOT NULL DEFAULT 0,
+                avg_decibel_dbfs REAL,
                 client_version TEXT NOT NULL DEFAULT '',
                 camera_type TEXT NOT NULL DEFAULT 'WEBCAM',
                 scan_date TEXT NOT NULL DEFAULT '',
@@ -12513,6 +12560,8 @@ def ensure_session_tables():
                 "ALTER TABLE sessions ADD COLUMN deleted_by_username TEXT NOT NULL DEFAULT ''",
             "deleted_from":
                 "ALTER TABLE sessions ADD COLUMN deleted_from TEXT NOT NULL DEFAULT ''",
+            "avg_decibel_dbfs":
+                "ALTER TABLE sessions ADD COLUMN avg_decibel_dbfs REAL",
         }
 
         for column, statement in session_migrations.items():
@@ -13555,13 +13604,27 @@ async def api_finish_session(request: Request, session_id: int):
         body = {}
 
     requested_duration = api_int(body.get("duration_seconds"), 0) if isinstance(body, dict) else 0
+    requested_avg_dbfs = None
+    if isinstance(body, dict) and body.get('avg_decibel_dbfs') is not None:
+        try:
+            candidate_dbfs = float(body.get('avg_decibel_dbfs'))
+            if math.isfinite(candidate_dbfs):
+                requested_avg_dbfs = max(-120.0, min(0.0, candidate_dbfs))
+        except (TypeError, ValueError):
+            requested_avg_dbfs = None
     with SessionLocal() as db:
         session = get_session_for_teacher(db, teacher_id, session_id)
         if session is None:
             return JSONResponse({"detail": "Session not found."}, status_code=404)
 
         if session["status"] != "RUNNING":
-            return {"session_id": session_id, "status": session["status"], "duration_seconds": int(session["duration_seconds"] or 0)}
+            if requested_avg_dbfs is not None:
+                db.execute(
+                    text("UPDATE sessions SET avg_decibel_dbfs = COALESCE(avg_decibel_dbfs, :dbfs) WHERE id = :session_id AND teacher_id = :teacher_id"),
+                    {"dbfs": requested_avg_dbfs, "session_id": session_id, "teacher_id": teacher_id},
+                )
+                db.commit()
+            return {"session_id": session_id, "status": session["status"], "duration_seconds": int(session["duration_seconds"] or 0), "avg_decibel_dbfs": requested_avg_dbfs}
 
         ended_at = utc_now_iso()
         duration = max(0, requested_duration)
@@ -13577,12 +13640,13 @@ async def api_finish_session(request: Request, session_id: int):
             text("""
                 UPDATE sessions
                 SET status = 'COMPLETED', ended_at = :ended_at, duration_seconds = :duration,
-                    last_heartbeat_at = :ended_at
+                    avg_decibel_dbfs = :avg_dbfs, last_heartbeat_at = :ended_at
                 WHERE id = :session_id AND teacher_id = :teacher_id
             """),
             {
                 "ended_at": ended_at,
                 "duration": duration,
+                "avg_dbfs": requested_avg_dbfs,
                 "session_id": session_id,
                 "teacher_id": teacher_id,
             }
@@ -13594,6 +13658,7 @@ async def api_finish_session(request: Request, session_id: int):
         "status": "COMPLETED",
         "ended_at": ended_at,
         "duration_seconds": duration,
+        "avg_decibel_dbfs": requested_avg_dbfs,
     }
 
 
@@ -13610,7 +13675,7 @@ def api_history(request: Request, limit: int = 50):
             text("""
                 SELECT s.id, s.class_id, COALESCE(NULLIF(s.class_name_snapshot, ''), c.name, 'Lớp đã xóa') AS class_name,
                        COALESCE(NULLIF(s.class_code_snapshot, ''), c.code, '') AS class_code,
-                       s.status, s.started_at, s.ended_at, s.duration_seconds,
+                       s.status, s.started_at, s.ended_at, s.duration_seconds, s.avg_decibel_dbfs,
                        s.client_version, s.camera_type,
                        (SELECT COUNT(*) FROM observations o WHERE o.session_id = s.id) AS observation_count,
                        (SELECT COUNT(*) FROM evidence e WHERE e.session_id = s.id) AS evidence_count
