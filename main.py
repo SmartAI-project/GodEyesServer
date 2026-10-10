@@ -9367,6 +9367,7 @@ def _history_group_daily(rows):
             student['daily_focus'] = round(sum(focuses) / len(focuses), 1) if focuses else 100.0
             student['session_count'] = len(focuses)
         day_item['session_list'] = list(day_item['sessions'].values())
+        day_item['avg_decibel_dbfs'] = _audio_average_dbfs(day_item['session_list'])
         day_item['student_list'] = sorted(
             day_item['students'].values(),
             key=lambda item: (item['daily_focus'], -item['observation_count'], item['full_name'].casefold())
@@ -9429,6 +9430,44 @@ def _audio_level_display(value, language: str = 'vi') -> tuple[str, str]:
         except (TypeError, ValueError):
             pass
     return f'{dbfs:.1f} dBFS', note
+
+
+def _audio_average_dbfs(session_items) -> float | None:
+    """Combine per-session dBFS means as mean power, weighted by session duration when available."""
+    samples = []
+    for item in session_items or []:
+        try:
+            value = item.get('avg_decibel_dbfs')
+            if value is None:
+                continue
+            dbfs = float(value)
+            if not math.isfinite(dbfs):
+                continue
+            dbfs = max(-120.0, min(0.0, dbfs))
+            duration = float(item.get('duration_seconds') or 0.0)
+            if not math.isfinite(duration) or duration < 0:
+                duration = 0.0
+            samples.append((dbfs, duration))
+        except (AttributeError, TypeError, ValueError):
+            continue
+
+    if not samples:
+        return None
+
+    # Use duration weighting only when all included sessions have a usable duration.
+    use_duration = all(duration > 0 for _, duration in samples)
+    weighted_power = 0.0
+    total_weight = 0.0
+    for dbfs, duration in samples:
+        weight = duration if use_duration else 1.0
+        power = 10.0 ** (dbfs / 10.0)
+        weighted_power += power * weight
+        total_weight += weight
+    if total_weight <= 0 or weighted_power <= 0:
+        return None
+    average = 10.0 * math.log10(weighted_power / total_weight)
+    return max(-120.0, min(0.0, average)) if math.isfinite(average) else None
+
 
 def teacher_history_content(teacher_id: int, status_message: str = "", search_query: str = "") -> str:
     prefs = get_teacher_preferences(int(teacher_id))
@@ -9775,6 +9814,7 @@ def teacher_history_class_content(teacher_id: int, class_id: int) -> str | None:
     class_code = str(rows[0].get('class_code') or '')
     day_cards = ''
     for index, (day, item) in enumerate(days.items(), start=1):
+        audio_dbfs_text, _audio_note = _audio_level_display(item.get('avg_decibel_dbfs'), language)
         day_cards += f'''            <a class="hc-day-card" href="/teacher/history/day/{url_quote(day)}?class_id={int(class_id)}">
                 <div class="hc-day-index">{index:02d}</div>
                 <div class="hc-day-date"><div class="hc-day-week">{escape(_history_weekday_label(day, language))}</div><div class="hc-day-number">{escape(_display_date(day))}</div></div>
@@ -9782,6 +9822,7 @@ def teacher_history_class_content(teacher_id: int, class_id: int) -> str | None:
                 <div class="hc-day-metric"><b>{item['student_count']}</b><span>{'students' if en else 'học sinh'}</span></div>
                 <div class="hc-day-metric"><b>{item['total_ob']}</b><span>OB</span></div>
                 <div class="hc-day-metric focus"><b>{item['avg_focus']:.1f}%</b><span>{'Average focus' if en else 'Tập trung TB'}</span></div>
+                <div class="hc-day-metric sound"><b>{escape(audio_dbfs_text)}</b><span>{'Average sound (dBFS)' if en else 'Âm thanh TB (dBFS)'}</span></div>
                 <div class="hc-arrow">→</div>
             </a>
         '''
@@ -9807,13 +9848,13 @@ def teacher_history_class_content(teacher_id: int, class_id: int) -> str | None:
             .hc-section-head {{ display:flex; align-items:flex-end; gap:14px; margin:28px 0 14px; }} .hc-section-head h3 {{ margin:2px 0; color:#173752; font-size:18px; font-weight:900; }} .hc-section-head p {{ margin:0; color:#889bab; font-size:9px; }}
             .hc-line {{ flex:1; height:1px; background:linear-gradient(90deg,#dceaf3,rgba(220,234,243,0)); margin-bottom:5px; }} .hc-week-pill {{ padding:7px 10px; border-radius:999px; border:1px solid #dbe9f2; background:#f7fbfe; color:#66849c; font-size:8px; font-weight:850; letter-spacing:.45px; }}
             .hc-days {{ display:flex; flex-direction:column; gap:10px; }}
-            .hc-day-card {{ display:grid; grid-template-columns:42px minmax(240px,1.6fr) repeat(4,minmax(85px,1fr)) 38px; align-items:center; gap:10px; min-height:88px; padding:12px 13px; border:1px solid #dbe8f1; border-radius:19px; background:#fff; color:#21384f; text-decoration:none; box-shadow:0 8px 18px rgba(43,89,123,.035); transition:.18s ease; }}
+            .hc-day-card {{ display:grid; grid-template-columns:42px minmax(220px,1.5fr) repeat(5,minmax(82px,1fr)) 38px; align-items:center; gap:10px; min-height:88px; padding:12px 13px; border:1px solid #dbe8f1; border-radius:19px; background:#fff; color:#21384f; text-decoration:none; box-shadow:0 8px 18px rgba(43,89,123,.035); transition:.18s ease; }}
             .hc-day-card:hover {{ transform:translateY(-2px); border-color:#acd0e7; box-shadow:0 14px 28px rgba(40,93,139,.085); }}
             .hc-day-index {{ width:34px; height:34px; display:grid; place-items:center; border-radius:11px; background:#f0f7fd; border:1px solid #d9eaf6; color:#4c7d9f; font-size:9px; font-weight:900; }}
             .hc-day-week {{ color:#7791a5; font-size:8px; font-weight:850; text-transform:uppercase; letter-spacing:.55px; }} .hc-day-number {{ margin-top:3px; color:#183754; font-size:17px; font-weight:900; }}
             .hc-day-metric {{ min-height:48px; display:flex; flex-direction:column; align-items:center; justify-content:center; border-left:1px solid #edf2f6; }} .hc-day-metric b {{ color:#205f97; font-size:18px; line-height:1; font-weight:900; }} .hc-day-metric span {{ margin-top:5px; color:#8b9dab; font-size:8px; font-weight:760; }} .hc-day-metric.focus b {{ color:#2374b5; }}
             .hc-arrow {{ width:34px; height:34px; display:grid; place-items:center; border-radius:11px; border:1px solid #dfebf3; background:#f5f9fc; color:#6887a0; font-size:17px; }} .hc-day-card:hover .hc-arrow {{ background:#eaf5ff; border-color:#c4e0f2; color:#266da8; }}
-            @media (max-width:1000px) {{ .hc-day-card {{ grid-template-columns:40px minmax(200px,1.4fr) repeat(4,minmax(72px,1fr)) 36px; }} }}
+            @media (max-width:1000px) {{ .hc-day-card {{ grid-template-columns:40px minmax(190px,1.3fr) repeat(5,minmax(68px,1fr)) 36px; }} }}
             @media (max-width:800px) {{ .hc-hero {{ flex-direction:column; }} .hc-day-count {{ align-self:flex-start; }} .hc-day-card {{ grid-template-columns:40px 1fr 36px; }} .hc-day-metric {{ border-left:0; border-top:1px solid #edf2f6; padding-top:9px; }} }}
             @media (max-width:620px) {{ .hc-page {{ padding:20px; }} .hc-section-head {{ flex-wrap:wrap; }} .hc-line {{ display:none; }} .hc-day-card {{ padding:11px; border-radius:16px; }} .hc-day-number {{ font-size:15px; }} }}
         </style>
@@ -9835,6 +9876,7 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
     student_label = 'students' if en else 'học sinh'
     session_label = 'sessions' if en else 'buổi học'
     focus_label = 'Average focus' if en else 'Tập trung TB ngày'
+    audio_dbfs_text, _audio_note = _audio_level_display(day_item.get('avg_decibel_dbfs'), language)
     evidence_label = 'Evidence' if en else 'Evidence'
     back_href = f'/teacher/history/class/{int(class_id)}' if class_id is not None else '/teacher?section=history'
     back = 'Back to Class' if en and class_id is not None else ('Quay lại lớp' if class_id is not None else ('Back to History' if en else 'Quay lại Lịch sử'))
@@ -9873,6 +9915,7 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
                 <div><span>{student_label}</span><b>{day_item['student_count']}</b></div>
                 <div><span>OB</span><b>{day_item['total_ob']}</b></div>
                 <div><span>{focus_label}</span><b>{day_item['avg_focus']:.1f}%</b></div>
+                <div><span>{'Average sound (dBFS)' if en else 'Âm thanh TB (dBFS)'}</span><b>{escape(audio_dbfs_text)}</b></div>
             </div>
             <div class="history-divider"></div>
             <div class="history-section-title"><div><strong>{'Students' if en else 'Học sinh'}</strong><span>{'Click a student to see every session from this day.' if en else 'Bấm vào học sinh để xem toàn bộ session của em trong ngày.'}</span></div></div>
@@ -9887,7 +9930,7 @@ def teacher_history_day_content(teacher_id: int, date_str: str, class_id: int | 
             .daily-detail-head .eyebrow-small {{ margin-bottom:5px; color:#6f879d; font-size:9px; font-weight:850; letter-spacing:1px; text-transform:uppercase; }}
             .daily-detail-head .history-title {{ margin:0; color:#142d49; font-size:29px; line-height:1.1; font-weight:860; letter-spacing:-.45px; }}
             .daily-detail-head .history-subtitle {{ margin:8px 0 0; max-width:820px; color:#72879b; font-size:13px; line-height:1.6; }}
-            .daily-summary-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:11px; margin:20px 0; }}
+            .daily-summary-grid {{ display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:11px; margin:20px 0; }}
             .daily-summary-grid > div {{ min-height:78px; padding:13px 15px; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; border:1px solid #dfe9f2; border-radius:14px; background:linear-gradient(180deg,#fff 0%,#fbfdff 100%); box-shadow:0 7px 18px rgba(46,88,123,.045); }}
             .daily-summary-grid span {{ display:block; color:#8093a4; font-size:9px; font-weight:760; }}
             .daily-summary-grid b {{ display:block; margin-top:7px; color:#1e609b; font-size:22px; line-height:1; font-weight:860; }}
